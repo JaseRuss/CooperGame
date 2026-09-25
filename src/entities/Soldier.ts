@@ -4,6 +4,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { surfaceHeightAt } from '../world/Terrain';
 import { plastic } from '../utils/plastic';
 import type { Faction } from './Tank';
+import { createJammedTag, createMuzzleGlob } from '../combat/JamCannon';
 
 const UP = new THREE.Vector3(0, 1, 0);
 const ENGAGE_RANGE = 120;
@@ -150,6 +151,17 @@ export function createFigureMesh(pose: 0 | 1, color: number): THREE.Mesh {
   return mesh;
 }
 
+/** Glossy strawberry jam, for soldiers caught by the jam cannon. */
+export const JAM_MATERIAL = new THREE.MeshPhysicalMaterial({
+  color: 0xe0294f,
+  emissive: 0x5a0616,
+  roughness: 0.1,
+  clearcoat: 1,
+  clearcoatRoughness: 0.05,
+  sheen: 0.4,
+  sheenColor: new THREE.Color(0xff5070),
+});
+
 /** A plastic army man: hops around, shoots at the other side, gets knocked flat by blasts. */
 export class Soldier {
   readonly mesh: THREE.Mesh;
@@ -167,6 +179,12 @@ export class Soldier {
   private readonly tipAxis = new THREE.Vector3(1, 0, 0);
   private tipAngle = 0;
   private tipTarget = Math.PI / 2;
+  /** Seconds left stuck in jam (0 = free). */
+  private jamTime = 0;
+  private jamWobble = 0;
+  /** Seconds left with jam blocking the rifle (friendly fire): he still moves, but can't shoot. */
+  private gunJamTime = 0;
+  private gunJamVisuals: THREE.Object3D[] = [];
 
   constructor(
     x: number,
@@ -199,9 +217,47 @@ export class Soldier {
     return this.state === 'down' && this.downTime > DOWN_LINGER;
   }
 
+  get isJammed(): boolean {
+    return this.jamTime > 0;
+  }
+
+  /**
+   * Splattered by the jam cannon: coated in jam and stuck fast, unable to move or shoot, until
+   * `duration` runs out and he slips over. Returns true if he wasn't already jammed.
+   */
+  jam(duration: number): boolean {
+    if (this.state !== 'active' || this.jamTime > 0) return false;
+    this.jamTime = duration;
+    this.jamWobble = this.rng() * 10;
+    this.mesh.material = JAM_MATERIAL;
+    this.tipAxis.set(Math.cos(this.heading), 0, -Math.sin(this.heading)); // sways side to side
+    return true;
+  }
+
+  /** Friendly fire from the jam cannon: a glob over the rifle's muzzle stops him shooting for a while. */
+  jamGun(duration: number): boolean {
+    if (this.state !== 'active' || this.jamTime > 0 || this.gunJamTime > 0) return false;
+    this.gunJamTime = duration;
+    const glob = createMuzzleGlob(0.55);
+    glob.position.set(0.12, MUZZLE_HEIGHT[this.pose] + 0.02, -1.02);
+    const tag = createJammedTag(2.4);
+    tag.position.y = MUZZLE_HEIGHT[this.pose] + 1.0;
+    this.mesh.add(glob, tag);
+    this.gunJamVisuals = [glob, tag];
+    return true;
+  }
+
+  private clearGunJam(): void {
+    this.gunJamTime = 0;
+    for (const v of this.gunJamVisuals) v.removeFromParent();
+    this.gunJamVisuals = [];
+  }
+
   /** Blast or run over: fly away from `from` and land flat on the ground. */
   knockDown(from: THREE.Vector3, strength: number): void {
     if (this.state !== 'active') return;
+    this.jamTime = 0;
+    this.clearGunJam();
     const away = new THREE.Vector3(this.pos.x - from.x, 0, this.pos.z - from.z);
     if (away.lengthSq() < 0.01) away.set(this.rng() - 0.5, 0, this.rng() - 0.5);
     away.normalize();
@@ -234,6 +290,21 @@ export class Soldier {
       return null;
     }
 
+    if (this.jamTime > 0) {
+      // Stuck in jam: struggling from side to side, sinking a little, then slipping over.
+      this.jamTime -= dt;
+      this.jamWobble += dt * (9 + (4 - Math.min(4, this.jamTime)) * 2);
+      this.tipAngle = Math.sin(this.jamWobble) * 0.16;
+      this.pos.y = surfaceHeightAt(this.pos.x, this.pos.z) - 0.06;
+      this.applyTransform(0);
+      if (this.jamTime <= 0) {
+        this.jamTime = 0;
+        const slip = new THREE.Vector3(this.rng() - 0.5, 0, this.rng() - 0.5).add(this.pos);
+        this.knockDown(slip, 0.15);
+      }
+      return null;
+    }
+
     const dx = target ? target.x - this.pos.x : 0;
     const dz = target ? target.z - this.pos.z : 0;
     const dist = target ? Math.hypot(dx, dz) : Infinity;
@@ -247,10 +318,15 @@ export class Soldier {
     let hop = 0;
     let shot: Shot | null = null;
 
+    if (this.gunJamTime > 0) {
+      this.gunJamTime -= dt;
+      if (this.gunJamTime <= 0) this.clearGunJam();
+    }
+
     if (this.seesTarget && target && dist < ENGAGE_RANGE) {
       this.heading = Math.atan2(-dx, -dz);
       this.fireTimer -= dt;
-      if (this.fireTimer <= 0) {
+      if (this.fireTimer <= 0 && this.gunJamTime <= 0) {
         this.fireTimer = 1.4 + this.rng() * 1.6;
         shot = this.shootAt(target, dist);
       }

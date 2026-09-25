@@ -59,6 +59,7 @@ const RETICLE_COLORS: Record<AimTarget, string> = {
   building: '#ffb050',
   ground: 'rgba(255,255,255,0.9)',
   none: 'rgba(255,255,255,0.6)',
+  critical: '#ffd24a',
 };
 
 const MINIMAP_SIZE = 200;
@@ -102,6 +103,8 @@ const STYLE = `
 .hud .bases { position:absolute; left:50%; top:12px; transform:translateX(-50%); padding:7px 16px 8px; text-align:center; }
 .hud .bases .title { font-size:13px; color:#e8d9a4; }
 .hud .flags { display:flex; gap:8px; justify-content:center; margin-top:4px; }
+.hud .sides { margin-top:5px; padding-top:4px; border-top:1px solid rgba(214,196,138,0.25); font-size:10.5px; font-weight:700; letter-spacing:0.5px; white-space:nowrap; }
+.hud .sides i { display:inline-block; width:9px; height:9px; border-radius:50%; margin:0 3px 0 6px; vertical-align:-1px; border:1px solid rgba(0,0,0,0.5); }
 .hud .flag { display:flex; flex-direction:column; align-items:center; font-size:9.5px; font-weight:800; letter-spacing:0.5px; }
 
 .hud .minimap { position:absolute; right:18px; top:16px; width:${MINIMAP_SIZE + 12}px; height:${MINIMAP_SIZE + 12}px; border-radius:50%; padding:6px;
@@ -166,6 +169,14 @@ const STYLE = `
 .hud .victory .big { font-size:72px; color:#ffd24a; text-shadow:0 4px 14px #000, 0 0 30px rgba(255,200,60,0.7); }
 `;
 
+/** Who's who, always shown under the enemy-bases counter. */
+const ARMY_KEY =
+  '<div class="sides"><span style="color:#9be27a">FRIENDS</span><i style="background:#4b7a2e"></i>Green<i style="background:#b8392e"></i>Red' +
+  '<span style="color:#ff8a7a; margin-left:12px">ENEMIES</span><i style="background:#c4a468"></i>Tan<i style="background:#3d6fc4"></i>Blue</div>';
+
+const JAM_ICON = `<svg width="22" height="22" viewBox="0 0 24 24"><rect x="6" y="7" width="12" height="14" rx="2.5" fill="#dff4ff" opacity=".5"/>
+<rect x="7" y="10" width="10" height="10" rx="2" fill="#b3142e"/><path d="M4.5 7.5 L12 3 L19.5 7.5 L18 8.5 H6z" fill="#fff"/>
+<path d="M6 5.6h3v2.4H6zM12 4h3v3h-3zM9 3.9h3v2.2H9z" fill="#d33" opacity=".7"/><circle cx="10" cy="13" r="1.2" fill="#ff8aa0"/></svg>`;
 const ROCKET_ICON = `<svg width="22" height="22" viewBox="0 0 24 24"><path d="M12 2c3 2 4.5 5.5 4.5 9.5v5h-9v-5C7.5 7.5 9 4 12 2z" fill="#e8e4d8"/>
 <path d="M12 2c1.6 1 2.8 2.6 3.5 4.5h-7C9.2 4.6 10.4 3 12 2z" fill="#d0463a"/><path d="M7.5 13l-3 4v2l3-1.5zM16.5 13l3 4v2l-3-1.5z" fill="#6fae4a"/>
 <path d="M10 17h4l-.5 2.5h-3z" fill="#555"/><path d="M10.5 20h3l-1.5 3z" fill="#ffb040"/></svg>`;
@@ -195,6 +206,7 @@ export class HUD {
   private readonly rocketFill: HTMLDivElement;
   private readonly rocketText: HTMLSpanElement;
   private readonly buddyFill: HTMLDivElement;
+  private readonly jamText: HTMLSpanElement;
   private readonly buddyText: HTMLSpanElement;
   private readonly buddyChips: HTMLDivElement;
   private readonly modeText: HTMLSpanElement;
@@ -265,6 +277,16 @@ export class HUD {
     this.rocketFill = el('div', 'fill', el('div', 'bar', rocketBody));
     this.rocketFill.style.background = 'linear-gradient(90deg,#c0392b,#ff8a3d)';
 
+    const jamSlot = el('div', 'slot', card);
+    el('div', 'icon', jamSlot).innerHTML = JAM_ICON;
+    const jamBody = el('div', 'body', jamSlot);
+    const jamLabel = el('div', 'row-label', jamBody);
+    jamLabel.style.margin = '0';
+    el('span', '', jamLabel, 'JAM CANNON');
+    this.jamText = el('span', '', jamLabel);
+    this.jamText.style.color = '#ff8aa0';
+    el('div', 'subtle', jamBody, 'Short range · sticks soldiers in jam');
+
     const buddySlot = el('div', 'slot', card);
     el('div', 'icon', buddySlot).innerHTML = TANK_ICON;
     const buddyBody = el('div', 'body', buddySlot);
@@ -323,6 +345,9 @@ export class HUD {
     this.bigMapCanvas = el('canvas', '', this.pages.map);
     this.bigMapCanvas.style.cssText = 'border:3px solid rgba(214,196,138,0.7); border-radius:8px; box-shadow:0 4px 18px rgba(0,0,0,0.6);';
     this.bigMapCtx = this.bigMapCanvas.getContext('2d') as CanvasRenderingContext2D;
+    el('div', 'legend shadow', this.pages.map).innerHTML =
+      '<span><i style="background:#4b7a2e"></i>Green army: you</span><span><i style="background:#b8392e"></i>Red army: friendly</span>' +
+      '<span><i style="background:#c4a468"></i>Tan army: enemy</span><span><i style="background:#3d6fc4"></i>Blue army: enemy</span>';
     el('div', 'legend shadow', this.pages.map).innerHTML =
       '<span><i style="background:#5fe05f"></i>You</span><span><i style="background:#9be27a"></i>Buddies &amp; friendly troops</span>' +
       '<span><i style="background:#ffcc33"></i>Family bases</span><span><i style="background:#d23c32"></i>Enemy bases</span>' +
@@ -455,6 +480,13 @@ export class HUD {
     this.hitMarkerAge = 0;
   }
 
+  /** A short line in the middle of the screen that floats up and fades (like the armour hit markers). */
+  showCallout(text: string, color: string): void {
+    this.hitMarker.textContent = text;
+    this.hitMarker.style.color = color;
+    this.hitMarkerAge = 0;
+  }
+
   showBanner(title: string, subtitle: string): void {
     this.banner.replaceChildren();
     el('div', 'stencil big', this.banner, title);
@@ -505,6 +537,8 @@ export class HUD {
     this.rocketText.style.color = rocketReady ? '#ff9a5a' : '#eef3f8';
     this.rocketSlot.classList.toggle('ready', rocketReady);
 
+    this.jamText.textContent = state.usingGamepad ? 'HOLD LT' : 'HOLD E';
+
     const allOut = state.buddyNames.length >= state.buddyMax;
     const buddyReady = state.buddyCharge >= 1 && !allOut;
     this.buddyFill.style.width = `${Math.floor(state.buddyCharge * 100)}%`;
@@ -523,8 +557,8 @@ export class HUD {
     this.setHTML(
       this.keys,
       state.usingGamepad
-        ? `${k('LS', 'drive')}${k('RS', 'aim')}${k('RT', 'fire')}${k('LB', 'rocket')}<br>${k('X', 'buddy')}${k('Y', 'camera')}${k('Start', 'pause · options')}${k('Back', 'home')}`
-        : `${k('WASD', 'drive')}${k('Mouse', 'aim')}${k('Click', 'fire')}${k('F', 'rocket')}<br>${k('X', 'buddy')}${k('C', 'camera')}${k('M', 'pause · options')}${k('R', 'home')}` +
+        ? `${k('LS', 'drive')}${k('RS', 'aim')}${k('RT', 'fire')}${k('LT', 'jam')}${k('LB', 'rocket')}<br>${k('X', 'buddy')}${k('Y', 'camera')}${k('Start', 'pause · options')}${k('Back', 'home')}`
+        : `${k('WASD', 'drive')}${k('Mouse', 'aim')}${k('Click', 'fire')}${k('E', 'jam')}${k('F', 'rocket')}<br>${k('X', 'buddy')}${k('C', 'camera')}${k('M', 'pause · options')}${k('R', 'home')}` +
             (state.mouseCaptureHint ? '<br><span style="color:#ffd24a">Click the game to capture the mouse for aiming</span>' : ''),
     );
 
@@ -563,7 +597,7 @@ export class HUD {
           ? 'FINAL ASSAULT <span style="color:#ff8a7a">DESTROY THE FORTRESS</span>'
           : `ENEMY BASES LEFT <span style="color:#ff8a7a">${state.enemyBasesLeft}</span> / ${state.enemyBasesTotal}`;
     const fortFlag = `<div class="flag" style="color:${fortColor}; margin-left:6px; padding-left:10px; border-left:1px solid rgba(214,196,138,0.35)">${fortIcon}FORTRESS</div>`;
-    this.setHTML(this.baseCounter, `<div class="stencil title">${title}</div><div class="flags">${flags}${fortFlag}</div>`);
+    this.setHTML(this.baseCounter, `<div class="stencil title">${title}</div><div class="flags">${flags}${fortFlag}</div>${ARMY_KEY}`);
 
     this.updateChecklist(state);
 
@@ -580,7 +614,8 @@ export class HUD {
       const color = RETICLE_COLORS[state.aimTarget];
       this.crosshair.style.borderColor = color;
       this.crosshair.style.color = color;
-      this.rangeLabel.textContent = state.aimRange === null ? 'out of range' : `${Math.round(state.aimRange)} m`;
+      const range = state.aimRange === null ? 'out of range' : `${Math.round(state.aimRange)} m`;
+      this.rangeLabel.textContent = state.aimTarget === 'critical' ? `CRITICAL · ${range}` : range;
     } else {
       this.crosshair.style.display = 'none';
     }

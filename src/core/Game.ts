@@ -26,6 +26,7 @@ import { ProjectileManager } from '../combat/ProjectileManager';
 import { ImpactEffects } from '../combat/ImpactEffects';
 import { predictTrajectory } from '../combat/Projectile';
 import { HomingRocket, type RocketTarget } from '../combat/HomingRocket';
+import { JamCannon } from '../combat/JamCannon';
 import { CameraRig } from '../camera/CameraRig';
 import { HUD, type HUDState } from '../ui/HUD';
 import { WorldMap, type MapMarker, type MapView } from '../ui/WorldMap';
@@ -41,6 +42,11 @@ const BULLET_DAMAGE = 0.7;
 const BLAST_RADIUS = 7; // per unit of explosion size, for knocking soldiers over
 const BULLET_HIT_RADIUS = 1.2; // a rifle round landing this close knocks a soldier over
 const RUN_OVER_RADIUS = 2.8;
+// Jam cannon: short-range lobbed jam that sticks infantry fast, then they slip over.
+const JAM_SPEED = 36;
+const JAM_RADIUS = 3; // per splat; a held spray lays a whole line of them
+const JAM_STUCK_TIME = 5;
+const GUN_JAM_TIME = 4; // friendly fire: a teammate's gun is gummed up this long
 const RED_RESPAWN_DELAY = 40;
 const GARRISON_SQUAD_SIZE = 6;
 // Final assault on the Fortress.
@@ -152,6 +158,7 @@ export class Game {
   private world!: RAPIER.World;
   private projectiles!: ProjectileManager;
   private impacts!: ImpactEffects;
+  private jam!: JamCannon;
   private aimGuide!: AimGuide;
   private landmarks!: LandmarkSet;
   private troops!: TroopManager;
@@ -176,6 +183,8 @@ export class Game {
   private rocketCharge = 0;
   private buddyCharge = 1;
   private rocketSeq: RocketSequence | null = null;
+  /** Delayed secondary explosions (missiles cooking off after a critical hit). */
+  private aftershocks: { at: THREE.Vector3; delay: number; size: number }[] = [];
   private victoryTimer = 0;
   private settings: Settings = loadSettings();
   private wakeTimer = 0;
@@ -227,6 +236,7 @@ export class Game {
     this.world = createWorld();
     this.projectiles = new ProjectileManager(this.scene, this.world, this.hitRegistry);
     this.impacts = new ImpactEffects(this.scene);
+    this.jam = new JamCannon(this.scene);
     this.aimGuide = new AimGuide(this.scene);
 
     const terrain = buildTerrain();
@@ -297,6 +307,7 @@ export class Game {
 
     this.loadingLabel.remove();
     this.ready = true;
+    this.hud.showBanner('GREEN & RED ARE FRIENDS', 'Tan and blue are the enemy. Knock out their bases!');
     if (import.meta.env.DEV) (window as unknown as { game: Game }).game = this;
     this.clock.start();
     requestAnimationFrame(this.animate);
@@ -429,10 +440,22 @@ export class Game {
         else if (result.treeHit) this.impacts.dustPuff(point);
         else this.explode(point, 1, tank.faction);
         if (tank === this.player && result.tankHit) this.hud.showHitMarker(result.tankHit.zone);
+        if (result.critical) this.onCriticalHit(result.critical, point, tank === this.player);
       },
       1,
       tank.faction,
     );
+  }
+
+  /** A shell found a weak point: callout for the player, and missiles cook off in a chain of blasts. */
+  private onCriticalHit(label: string, point: THREE.Vector3, byPlayer: boolean): void {
+    if (byPlayer) this.hud.showCallout(`CRITICAL HIT! ${label.toUpperCase()}`, '#ffd24a');
+    if (label === 'Missiles' || label === 'Fuel tank') {
+      for (let i = 1; i <= 4; i++) {
+        const off = new THREE.Vector3((Math.random() - 0.5) * 12, Math.random() * 3, (Math.random() - 0.5) * 12);
+        this.aftershocks.push({ at: point.clone().add(off), delay: i * 0.22 + Math.random() * 0.15, size: 1.4 + Math.random() });
+      }
+    }
   }
 
   /** Small-arms fire from troops and bunker machine guns; a round landing by a soldier drops him. */
@@ -757,7 +780,9 @@ export class Game {
       this.player.muzzleSpeed,
       this.player.physicsCollider,
     );
-    const target = this.classifyTarget(traj.hitCollider);
+    const pts = traj.points;
+    const travel = pts.length > 1 ? pts[pts.length - 1].clone().sub(pts[pts.length - 2]) : this.player.muzzleWorldDirection;
+    const target = this.classifyTarget(traj.hitCollider, traj.impact, travel);
     this.aimGuide.update(traj, target, this.camera);
     return { screen: this.toScreen(traj.impact), range: traj.normal ? traj.range : null, target };
   }
@@ -768,12 +793,13 @@ export class Game {
     return { x: ((ndc.x + 1) / 2) * window.innerWidth, y: ((1 - ndc.y) / 2) * window.innerHeight };
   }
 
-  private classifyTarget(collider: RAPIER.Collider | null): AimTarget {
+  private classifyTarget(collider: RAPIER.Collider | null, impact: THREE.Vector3, travel: THREE.Vector3): AimTarget {
     if (!collider) return 'none';
     const hit = this.hitRegistry.lookup(collider);
     if (!hit || hit.kind === 'terrain' || hit.kind === 'water' || hit.kind === 'tree') return 'ground';
     if (hit.kind === 'tank') return hit.tank.faction === 'player' ? 'ground' : 'enemy';
     if (hit.building.faction === 'player') return 'ground';
+    if (hit.building.critAt(impact, travel)) return 'critical';
     return hit.building.faction === 'enemy' ? 'enemy' : 'building';
   }
 
@@ -889,7 +915,7 @@ export class Game {
     const inSequence = this.rocketSeq !== null;
     // The tank sits still (and can't be hurt) while the rocket cam plays.
     const input = inSequence
-      ? { ...rawInput, throttle: 0, steer: 0, moveX: 0, moveY: 0, aimYawDelta: 0, aimPitchDelta: 0, firing: false }
+      ? { ...rawInput, throttle: 0, steer: 0, moveX: 0, moveY: 0, aimYawDelta: 0, aimPitchDelta: 0, firing: false, jamFiring: false }
       : rawInput;
 
     if (!inSequence) {
@@ -908,6 +934,24 @@ export class Game {
 
     const playerShot = this.player.step(input, dt);
     if (playerShot) this.fire(this.player, playerShot);
+    if (input.jamFiring) {
+      const glob = this.player.tryJam();
+      if (glob) this.jam.fire(glob.origin, glob.direction, JAM_SPEED * glob.speedScale);
+    }
+    this.jam.update(dt, this.world, this.player.physicsCollider, (point) => {
+      const caught = this.troops.jam(point, JAM_RADIUS, 'player', JAM_STUCK_TIME);
+      this.addRocketCharge(caught * CHARGE_PER_TROOP);
+      // Jam on your own side doesn't hurt, but it gums up their guns for a bit.
+      const fumbled = this.troops.jamGuns(point, JAM_RADIUS, 'player', GUN_JAM_TIME);
+      let jammedTank: string | null = null;
+      for (const tank of [...this.buddies, ...this.redTanks]) {
+        if (tank.position.distanceTo(point) < JAM_RADIUS + 2 && tank.jamGun(GUN_JAM_TIME)) {
+          jammedTank = tank instanceof BuddyTank ? `${tank.name.toUpperCase()}'S` : "A FRIENDLY TANK'S";
+        }
+      }
+      if (jammedTank) this.hud.showCallout(`OOPS! ${jammedTank} GUN IS JAMMED`, '#ff8aa8');
+      else if (fumbled > 0) this.hud.showCallout(fumbled > 1 ? `OOPS! ${fumbled} FRIENDLY GUNS JAMMED` : 'OOPS! FRIENDLY GUN JAMMED', '#ff8aa8');
+    });
 
     // Who's shooting at whom this frame.
     const enemyTargets = this.enemyTargets();
@@ -977,6 +1021,13 @@ export class Game {
     this.world.step();
     this.projectiles.update(dt);
     this.impacts.update(dt);
+    for (let i = this.aftershocks.length - 1; i >= 0; i--) {
+      const a = this.aftershocks[i];
+      a.delay -= dt;
+      if (a.delay > 0) continue;
+      this.explode(a.at, a.size, 'player');
+      this.aftershocks.splice(i, 1);
+    }
     for (const building of this.buildings) building.update(dt);
     this.updateEnemyBases(dt);
 

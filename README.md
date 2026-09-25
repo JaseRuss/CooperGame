@@ -76,6 +76,7 @@ plug one in and press a button so the browser detects it.
 | Drive | Left stick | W A S D or arrow keys |
 | Aim turret | Right stick | Mouse |
 | Fire | RT or A | Left click or Space |
+| Jam cannon (hold, short range) | LT | E |
 | Homing rocket (when charged) | LB | F or right click |
 | Call a buddy tank (when charged) | X | X |
 | Switch first / third person | Y | C |
@@ -90,6 +91,8 @@ and buddy name tags, and your choices are remembered.
 
 ## Playing
 
+- **Who's who:** green (you and your buddies) and **red** are friendly; **tan**
+  and **blue** are the enemy.
 - There are **5 enemy bases** to destroy, held by the **tan** and **blue**
   armies. The red arrow on the minimap points to the nearest one. Get close and
   a checklist shows what's left to knock down.
@@ -100,7 +103,15 @@ and buddy name tags, and your choices are remembered.
   troops joins you for the final assault. Flatten it to win.
 - The **red army** is on your side. Their tanks and soldiers guard every town.
 - **Family bases** sit around the edge of the map. Drive inside one to repair.
+- The **jam cannon** sprays a stream of strawberry jam that lands in a line along
+  your aim; sweep the turret to hose down a whole squad. Enemy soldiers caught in
+  it get stuck, can't shoot, and slip over a few seconds later. Careful with
+  your own side: jam doesn't hurt them, but it gums up their guns for a few
+  seconds.
 - **Rear hits** do double damage to enemy tanks. Front armour takes half damage.
+- **Critical hits:** put a shell through a pillbox's gun slit, or into a parked
+  jet's wing-tip missiles or fuel tanks, and it goes up in one shot. The
+  crosshair turns gold and says CRITICAL when you're lined up on one.
 - **Buddy tanks** (Keston, Max, Innes and Jason) follow you and join the fight.
   You can have all four out at once. The meter starts full and refills over
   five minutes.

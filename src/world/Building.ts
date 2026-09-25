@@ -17,6 +17,13 @@ interface Debris {
   age: number;
 }
 
+/** A weak point: a shell landing on it destroys the building outright. */
+export interface CritSpot {
+  label: string;
+  /** True when a point on the shell's path (travelling along `dir`) is on this spot. */
+  test: (point: THREE.Vector3, dir: THREE.Vector3) => boolean;
+}
+
 /** A single destructible building: GLB visual + static collider, collapsing into debris at 0 HP. */
 export class Building {
   health: number;
@@ -28,6 +35,10 @@ export class Building {
   faction: Faction | null = null;
   /** Indestructible while set (the Fortress, until its gates open). */
   locked = false;
+  /** Weak points (a pillbox's gun slit, a jet's missiles). */
+  readonly critSpots: CritSpot[] = [];
+  /** How much bigger the blast is when it goes up from a critical hit. */
+  critExplosionScale = 1;
 
   private bar: { sprite: THREE.Sprite; canvas: HTMLCanvasElement; texture: THREE.CanvasTexture } | null = null;
   private barTimer = 0;
@@ -63,6 +74,36 @@ export class Building {
 
   get physicsCollider(): RAPIER.Collider | null {
     return this.collider;
+  }
+
+  /**
+   * The weak point a shell entering at `point` along `dir` would reach, if any. The collider is a
+   * plain box round the whole model, so the shell's path is followed on through the box.
+   */
+  critAt(point: THREE.Vector3, dir: THREE.Vector3): CritSpot | null {
+    if (this.destroyed || this.locked || this.critSpots.length === 0) return null;
+    const box = new THREE.Box3().setFromCenterAndSize(this.center, this.halfExtents.clone().multiplyScalar(2)).expandByScalar(0.6);
+    const d = dir.clone().normalize();
+    const p = new THREE.Vector3();
+    for (let k = 0; k <= 40; k++) {
+      p.copy(point).addScaledVector(d, k * 0.4);
+      if (k > 0 && !box.containsPoint(p)) break;
+      const hit = this.critSpots.find((c) => c.test(p, d));
+      if (hit) return hit;
+    }
+    return null;
+  }
+
+  /** A shell hit at `point` travelling along `dir`: normal damage, or instant destruction on a weak point. */
+  strike(amount: number, point: THREE.Vector3, dir: THREE.Vector3): CritSpot | null {
+    const crit = this.critAt(point, dir);
+    if (crit) {
+      this.explosionSize *= this.critExplosionScale;
+      this.takeDamage(this.health + 1);
+      return crit;
+    }
+    this.takeDamage(amount);
+    return null;
   }
 
   takeDamage(amount: number): void {

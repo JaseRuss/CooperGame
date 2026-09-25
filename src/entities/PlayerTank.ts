@@ -4,7 +4,7 @@ import { Tank, type ArmorZone } from './Tank';
 import type { InputState } from '../input/InputManager';
 import { PLAYER_MAX_HEALTH, PLAYER_MAX_SPEED } from '../core/config';
 import { ARMY_GREEN, plastic, shade } from '../utils/plastic';
-import { PartBuilder } from '../utils/modelKit';
+import { PartBuilder, tubeZ } from '../utils/modelKit';
 import { buildRocketModel } from '../combat/HomingRocket';
 import type { DriveStyle } from '../core/Settings';
 import { clamp } from '../utils/math';
@@ -36,6 +36,12 @@ export class PlayerTank extends Tank {
   private readonly readyRocket: THREE.Group;
   private readonly readyLamp: THREE.MeshStandardMaterial;
   private lampTime = 0;
+  /** Tip of the jam cannon's barrel, on the turret's right cheek. */
+  private readonly jamMuzzle = new THREE.Object3D();
+  private jamCooldown = 0;
+  readonly jamInterval = 0.07; // a hose, not a mortar
+  /** Walks each glob's range from near to far and back, so a held spray paints a line of jam. */
+  private jamSweep = 0;
 
   constructor(world: RAPIER.World, spawnX: number, spawnZ: number, facingRadians = 0) {
     super(world, spawnX, spawnZ, PLAYER_MAX_HEALTH, ARMY_GREEN, facingRadians, 'player');
@@ -58,6 +64,58 @@ export class PlayerTank extends Tank {
     this.readyRocket.rotation.y = Math.PI; // the model's nose is +Z; the tank's front is -Z
     this.rocketRail.add(this.readyRocket);
     this.setRocketReady(false);
+    this.buildJamCannon();
+  }
+
+  /** A jam jar with a gingham lid feeding a stubby barrel, on the turret's right cheek. */
+  private buildJamCannon(): void {
+    const mount = new THREE.Group();
+    mount.position.set(0.98, 0.62, 0.1);
+    this.turretPivot.add(mount);
+    const dark = plastic(shade(ARMY_GREEN, 0.6));
+    const jam = new THREE.MeshPhysicalMaterial({ color: 0xe0294f, emissive: 0x5a0616, roughness: 0.1, clearcoat: 1 });
+    const glass = new THREE.MeshPhysicalMaterial({ color: 0xdff4ff, roughness: 0.05, clearcoat: 1, transparent: true, opacity: 0.35 });
+    const b = new PartBuilder();
+    b.add(new THREE.CylinderGeometry(0.2, 0.2, 0.4, 16), glass, 0, 0.32, 0.15);
+    b.add(new THREE.CylinderGeometry(0.17, 0.17, 0.3, 16), jam, 0, 0.27, 0.15);
+    b.add(new THREE.CylinderGeometry(0.23, 0.23, 0.07, 16), plastic(0xe8e0d0), 0, 0.55, 0.15); // lid band
+    b.add(new THREE.BoxGeometry(0.14, 0.16, 0.14), dark, 0, 0.06, 0.15); // feed
+    b.add(tubeZ(0.1, 0.12, 0.8, 12), dark, 0, 0, -0.3); // barrel
+    b.add(tubeZ(0.16, 0.1, 0.14, 12), jam, 0, 0, -0.74); // jammy muzzle
+    b.add(new THREE.BoxGeometry(0.08, 0.3, 0.3), dark, -0.12, -0.1, 0.05); // bracket
+    b.buildInto(mount);
+    // Red-and-white gingham cloth over the lid.
+    const c = document.createElement('canvas');
+    c.width = c.height = 64;
+    const ctx = c.getContext('2d') as CanvasRenderingContext2D;
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, 64, 64);
+    ctx.fillStyle = 'rgba(200,30,40,0.55)';
+    for (let i = 0; i < 8; i += 2) {
+      ctx.fillRect(i * 8, 0, 8, 64);
+      ctx.fillRect(0, i * 8, 64, 8);
+    }
+    const cloth = new THREE.Mesh(new THREE.CylinderGeometry(0.27, 0.3, 0.08, 16), new THREE.MeshStandardMaterial({ map: new THREE.CanvasTexture(c) }));
+    cloth.position.set(0, 0.6, 0.15);
+    cloth.castShadow = true;
+    mount.add(cloth);
+    this.jamMuzzle.position.set(0, 0, -0.85);
+    mount.add(this.jamMuzzle);
+  }
+
+  /**
+   * Sprays jam while the trigger's held. Each glob's speed sweeps between short and long, so they
+   * land in a line along the aim; speedScale is that glob's share of full speed.
+   */
+  tryJam(): { origin: THREE.Vector3; direction: THREE.Vector3; speedScale: number } | null {
+    if (this.jamCooldown > 0) return null;
+    this.jamCooldown = this.jamInterval;
+    this.jamSweep = (this.jamSweep + 0.17) % 2;
+    const t = this.jamSweep < 1 ? this.jamSweep : 2 - this.jamSweep; // 0 → 1 → 0
+    const direction = this.muzzleWorldDirection;
+    direction.x += (Math.random() - 0.5) * 0.03;
+    direction.z += (Math.random() - 0.5) * 0.03;
+    return { origin: this.jamMuzzle.getWorldPosition(new THREE.Vector3()), direction: direction.normalize(), speedScale: 0.62 + 0.45 * t };
   }
 
   /** Shows the rocket on its rail (and blinks the lamp) when it's charged. */
@@ -102,6 +160,7 @@ export class PlayerTank extends Tank {
       this.idleTime += dt;
       this.alignToCamera(dt);
     }
+    this.jamCooldown = Math.max(0, this.jamCooldown - dt);
     if (this.readyRocket.visible) {
       this.lampTime += dt;
       this.readyLamp.emissiveIntensity = Math.sin(this.lampTime * 8) > 0 ? 2.2 : 0.3;

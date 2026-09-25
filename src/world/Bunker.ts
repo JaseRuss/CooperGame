@@ -186,6 +186,19 @@ export class Bunker {
       BUNKER_COLOR,
     );
     this.building.faction = faction;
+    // Weak point: a shell through the firing slit (local -Z face, around slit height).
+    // The shell has to be travelling into the slit (from the front, not dropping onto the roof).
+    const local = new THREE.Vector3();
+    const inward = new THREE.Vector3();
+    this.building.critSpots.push({
+      label: 'Gun slit',
+      test: (p, dir) => {
+        root.worldToLocal(local.copy(p));
+        inward.copy(dir).applyQuaternion(root.quaternion.clone().invert());
+        return inward.z > 0.55 && Math.abs(local.x) < 2.6 && local.y > 1.15 && local.y < 2.15 && local.z < -2.5 && local.z > -3.3;
+      },
+    });
+    this.building.critExplosionScale = 1.4;
   }
 
   get alive(): boolean {

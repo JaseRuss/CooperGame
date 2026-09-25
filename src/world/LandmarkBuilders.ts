@@ -151,11 +151,10 @@ export class LandmarkSet {
   }
 
   /** Registers `mesh` (already inside the site group) as a destructible building. */
-  private destructible(group: THREE.Group, mesh: THREE.Object3D, health: number, debrisColor: number): void {
+  private destructible(group: THREE.Group, mesh: THREE.Object3D, health: number, debrisColor: number): Building {
     group.updateMatrixWorld(true);
     const bb = new THREE.Box3().setFromObject(mesh);
-    this.buildings.push(
-      new Building(
+    const building = new Building(
         this.world,
         this.scene,
         this.hitRegistry,
@@ -164,8 +163,9 @@ export class LandmarkSet {
         bb.getCenter(new THREE.Vector3()),
         health,
         debrisColor,
-      ),
     );
+    this.buildings.push(building);
+    return building;
   }
 
   // ---------- lakes ----------
@@ -408,7 +408,17 @@ export class LandmarkSet {
       jet.position.set(x, 0.05, 52 + (rng() - 0.5) * 10);
       jet.rotation.y = Math.PI + (rng() - 0.5) * 0.3; // noses toward the taxiway
       g.add(jet);
-      this.destructible(g, jet, 70, ARMY_TAN);
+      const plane = this.destructible(g, jet, 70, ARMY_TAN);
+      // Weak points: the wing-tip missiles and the drop tanks under the wings.
+      const spot = (x: number, y: number, z: number, r: number, label: string) => {
+        const c = jet.localToWorld(new THREE.Vector3(x, y, z));
+        plane.critSpots.push({ label, test: (p) => p.distanceTo(c) < r });
+      };
+      for (const s of [-1, 1]) {
+        spot(s * 9.4, 2.7, 3.2, 1.8, 'Missiles');
+        spot(s * 5, 1.9, 1.6, 1.5, 'Fuel tank');
+      }
+      plane.critExplosionScale = 2.2;
     }
   }
 

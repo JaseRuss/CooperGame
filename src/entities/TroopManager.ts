@@ -112,6 +112,32 @@ export class TroopManager {
     return knocked;
   }
 
+  /**
+   * A jam splat at `point`: every standing soldier of the other side within `radius` is stuck
+   * fast for `duration` seconds. Returns how many were caught.
+   */
+  jam(point: THREE.Vector3, radius: number, attacker: Faction, duration: number): number {
+    let caught = 0;
+    for (const s of this.activeSoldiers()) {
+      if (s.faction === attacker) continue;
+      const dx = s.position.x - point.x;
+      const dz = s.position.z - point.z;
+      if (dx * dx + dz * dz < radius * radius && s.jam(duration * (0.85 + Math.random() * 0.3))) caught++;
+    }
+    return caught;
+  }
+
+  /** A jam splat on your own side's soldiers: their rifles are gummed up for `duration`. Returns how many. */
+  jamGuns(point: THREE.Vector3, radius: number, owner: Faction, duration: number): number {
+    let fumbled = 0;
+    for (const s of this.activeSoldiers(owner)) {
+      const dx = s.position.x - point.x;
+      const dz = s.position.z - point.z;
+      if (dx * dx + dz * dz < radius * radius && s.jamGun(duration)) fumbled++;
+    }
+    return fumbled;
+  }
+
   /** A rifle round landing at `point` drops the nearest of the other side's soldiers within `radius`. */
   shoot(point: THREE.Vector3, radius: number, attacker: Faction): void {
     let victim: Soldier | null = null;
