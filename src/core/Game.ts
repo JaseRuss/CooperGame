@@ -294,6 +294,7 @@ export class Game {
 
     this.loadingLabel.remove();
     this.ready = true;
+    this.hud.showBanner('GREEN & RED ARE FRIENDS', 'Tan and blue are the enemy. Knock out their bases!');
     if (import.meta.env.DEV) (window as unknown as { game: Game }).game = this;
     this.clock.start();
     requestAnimationFrame(this.animate);

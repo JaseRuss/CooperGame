@@ -90,6 +90,8 @@ and buddy name tags, and your choices are remembered.
 
 ## Playing
 
+- **Who's who:** green (you and your buddies) and **red** are friendly; **tan**
+  and **blue** are the enemy.
 - There are **5 enemy bases** to destroy, held by the **tan** and **blue**
   armies. The red arrow on the minimap points to the nearest one. Get close and
   a checklist shows what's left to knock down.
