@@ -91,7 +91,7 @@ export class AssetLibrary {
   async load(onProgress?: (loaded: number, total: number) => void): Promise<void> {
     const loader = new GLTFLoader();
     const jobs = (Object.keys(MANIFEST) as AssetGroup[]).flatMap((group) =>
-      MANIFEST[group].names.map((name) => ({ group, name, url: `/models/${MANIFEST[group].dir}/${name}.glb` })),
+      MANIFEST[group].names.map((name) => ({ group, name, url: `${import.meta.env.BASE_URL}models/${MANIFEST[group].dir}/${name}.glb` })),
     );
     let loaded = 0;
 
