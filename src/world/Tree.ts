@@ -2,13 +2,25 @@ import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import type { HitRegistry } from '../combat/HitRegistry';
 
-const COLLIDER_RADIUS = 2.2;
-const COLLIDER_HALF_HEIGHT = 2.8;
-const FALL_DURATION = 0.8;
-const FALL_TRIGGER_RADIUS = 4.8;
 const COLLIDER_RELEASE_ANGLE = (65 * Math.PI) / 180;
 
-/** A tree with a trunk collider that falls over when a tank drives into it. */
+/** How big a toppling thing is and how it goes over. */
+export interface ToppleSize {
+  colliderRadius: number;
+  colliderHalfHeight: number;
+  /** A tank this close (centre to base) knocks it over. */
+  triggerRadius: number;
+  fallDuration: number;
+}
+
+export const TREE_SIZE: ToppleSize = { colliderRadius: 2.2, colliderHalfHeight: 2.8, triggerRadius: 4.8, fallDuration: 0.8 };
+/** Lamp posts: a thin pole that snaps over quickly. */
+export const LAMP_SIZE: ToppleSize = { colliderRadius: 0.35, colliderHalfHeight: 3, triggerRadius: 3.2, fallDuration: 0.55 };
+
+/**
+ * A tree (or lamp post) with a trunk collider that falls over, away from the tank, when a tank
+ * drives into it.
+ */
 export class Tree {
   private readonly pivot = new THREE.Group();
   private fallAxis = new THREE.Vector3(1, 0, 0);
@@ -29,6 +41,7 @@ export class Tree {
     yaw: number,
     scale: number,
     private readonly applyInstanceTransform?: (transform: THREE.Matrix4) => void,
+    private readonly size: ToppleSize = TREE_SIZE,
   ) {
     this.yaw = yaw;
     this.pivot.position.set(x, y, z);
@@ -41,7 +54,7 @@ export class Tree {
     }
 
     this.collider = world.createCollider(
-      RAPIER.ColliderDesc.cylinder(COLLIDER_HALF_HEIGHT, COLLIDER_RADIUS).setTranslation(x, y + COLLIDER_HALF_HEIGHT, z),
+      RAPIER.ColliderDesc.cylinder(size.colliderHalfHeight, size.colliderRadius).setTranslation(x, y + size.colliderHalfHeight, z),
       staticBody,
     );
     hitRegistry.register(this.collider, { kind: 'tree' });
@@ -54,7 +67,7 @@ export class Tree {
       for (const tank of tankPositions) {
         const dx = tank.x - this.pivot.position.x;
         const dz = tank.z - this.pivot.position.z;
-        if (dx * dx + dz * dz > FALL_TRIGGER_RADIUS * FALL_TRIGGER_RADIUS) continue;
+        if (dx * dx + dz * dz > this.size.triggerRadius * this.size.triggerRadius) continue;
         this.falling = true;
         if (Math.hypot(dx, dz) < 1e-4) this.fallAxis.set(1, 0, 0);
         else this.fallAxis.set(-dz, 0, dx).normalize();
@@ -62,9 +75,9 @@ export class Tree {
       }
     }
 
-    if (!this.falling || this.fallT >= FALL_DURATION) return;
-    this.fallT = Math.min(FALL_DURATION, this.fallT + dt);
-    const progress = this.fallT / FALL_DURATION;
+    if (!this.falling || this.fallT >= this.size.fallDuration) return;
+    this.fallT = Math.min(this.size.fallDuration, this.fallT + dt);
+    const progress = this.fallT / this.size.fallDuration;
     const eased = progress * progress * (3 - 2 * progress);
     this.pivot.quaternion.setFromAxisAngle(this.fallAxis, eased * Math.PI / 2);
     this.syncInstance(eased);

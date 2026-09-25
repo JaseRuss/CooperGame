@@ -121,6 +121,7 @@ and right to move, and X to delete. Your choices are remembered.
   your own side: jam doesn't hurt them, but it gums up their guns for a few
   seconds.
 - Your tank (and your buddies) go a bit faster on **roads**.
+- Drive into trees and lamp posts to knock them flat.
 - **Rear hits** do double damage to enemy tanks. Front armour takes half damage.
 - Knocked-out enemy tanks usually just blow up, but sometimes the turret pops
   off like a cork, the tank flips onto its back like a stuck turtle, the crew

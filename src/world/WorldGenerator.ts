@@ -19,7 +19,7 @@ import { mulberry32 } from '../utils/rng';
 import { randRange } from '../utils/math';
 import { ENEMY_ARMY_COLOR, ARMY_RED, ARMY_TAN, ARMY_BLUE, plastic } from '../utils/plastic';
 import { WORLD_HALF, WORLD_SEED, BASE_RADIUS, MAX_ENEMIES, FORTRESS_HALF, distanceToFriendlyBase } from '../core/config';
-import { Tree } from './Tree';
+import { Tree, TREE_SIZE, LAMP_SIZE, type ToppleSize } from './Tree';
 
 export interface EnemySpawnPoint {
   x: number;
@@ -94,18 +94,20 @@ export function generateWorld(
   scene.add(buildHighwayMeshes(highways));
   placePowerLines(scene, assets, highways);
   const landmarks = new LandmarkSet(world, scene, hitRegistry, assets);
+  const town = dressTowns(world, scene, hitRegistry, assets);
   const enemyBases = SITES.filter((s) => s.kind === 'enemyBase').map((s) => new EnemyBase(world, scene, hitRegistry, assets, s));
   const fortress = new Fortress(world, scene, hitRegistry, assets, SITES.find((s) => s.kind === 'fortress') as Site);
   const buildings = [
     ...placeHouses(world, scene, hitRegistry, assets),
-    ...dressTowns(world, scene, hitRegistry, assets),
+    ...town.cars,
     ...landmarks.buildings,
     ...enemyBases.flatMap((b) => b.buildings),
     ...fortress.buildings.filter((b) => !fortress.bunkers.some((k) => k.building === b)),
   ];
   const bunkers = [...placeBunkers(world, scene, hitRegistry, highways), ...enemyBases.map((b) => b.bunker), ...fortress.bunkers];
   const forests = planForests(highways, bunkers);
-  const trees = placeTrees(world, scene, hitRegistry, assets, highways, bunkers, forests);
+  // Everything that topples when a tank drives into it: trees and lamp posts.
+  const trees = [...placeTrees(world, scene, hitRegistry, assets, highways, bunkers, forests), ...town.lamps, ...landmarks.lampPosts];
   const holds = (site: Site) => whileBaseHolds(site, enemyBases, fortress);
   const enemySpawns = placeEnemySpawns(holds);
   const squads = [...planSquads(bunkers, holds), ...planRedSquads()];
@@ -279,10 +281,10 @@ function placeHouses(world: RAPIER.World, scene: THREE.Scene, hitRegistry: HitRe
   return buildings;
 }
 
-/** Street lights along every town street, and cars parked at the kerb (they're destructible). */
-function dressTowns(world: RAPIER.World, scene: THREE.Scene, hitRegistry: HitRegistry, assets: AssetLibrary): Building[] {
+/** Street lights along every town street (they topple like trees), and destructible cars parked at the kerb. */
+function dressTowns(world: RAPIER.World, scene: THREE.Scene, hitRegistry: HitRegistry, assets: AssetLibrary): { cars: Building[]; lamps: Tree[] } {
   const rng = mulberry32(WORLD_SEED + 19);
-  const lights: THREE.Matrix4[] = [];
+  const lights: { x: number; y: number; z: number; yaw: number; scale: number }[] = [];
   const cars: Building[] = [];
   const kerb = ROAD_WIDTH / 2 + 1.5;
 
@@ -293,7 +295,7 @@ function dressTowns(world: RAPIER.World, scene: THREE.Scene, hitRegistry: HitReg
         // Lamps alternate sides; the lamp head overhangs the road.
         const side = Math.round((x - town.cx) / 26) % 2 === 0 ? 1 : -1;
         // The Kenney lamp's arm points along its local -Z, so turn it to face across the road.
-        lights.push(placement(x, heightAt(x, z + side * kerb), z + side * kerb, side > 0 ? 0 : Math.PI, LIGHT_SCALE));
+        lights.push({ x, y: heightAt(x, z + side * kerb), z: z + side * kerb, yaw: side > 0 ? 0 : Math.PI, scale: LIGHT_SCALE });
       }
     }
 
@@ -308,8 +310,9 @@ function dressTowns(world: RAPIER.World, scene: THREE.Scene, hitRegistry: HitReg
     }
   }
 
-  scene.add(instanceTemplate(assets.template('prop', 'light-square'), lights));
-  return cars;
+  const staticBody = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+  const lamps = toppleInstances(world, scene, hitRegistry, staticBody, assets.template('prop', 'light-square'), lights, LAMP_SIZE);
+  return { cars, lamps };
 }
 
 /**
@@ -433,36 +436,57 @@ function placeTrees(world: RAPIER.World, scene: THREE.Scene, hitRegistry: HitReg
   const staticBody = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
   for (const name of names) {
     const modelPlacements = placements.filter((p) => p.name === name);
-    if (modelPlacements.length === 0) continue;
-    const template = assets.template('tree', name).clone(true);
-    template.position.set(0, 0, 0);
-    template.rotation.set(0, 0, 0);
-    template.scale.set(1, 1, 1);
-    template.updateMatrixWorld(true);
-    const meshes: { instanced: THREE.InstancedMesh; local: THREE.Matrix4 }[] = [];
-    template.traverse((child) => {
-      if (!(child instanceof THREE.Mesh)) return;
-      const instanced = new THREE.InstancedMesh(child.geometry, child.material, modelPlacements.length);
-      instanced.castShadow = true;
-      instanced.receiveShadow = true;
-      scene.add(instanced);
-      meshes.push({ instanced, local: child.matrixWorld.clone() });
-    });
-
-    modelPlacements.forEach((p, index) => {
-      const writeTransform = (transform: THREE.Matrix4) => {
-        const combined = new THREE.Matrix4();
-        for (const { instanced, local } of meshes) {
-          instanced.setMatrixAt(index, combined.multiplyMatrices(transform, local));
-          instanced.instanceMatrix.needsUpdate = true;
-        }
-      };
-      trees.push(new Tree(world, hitRegistry, staticBody, scene, null, p.x, p.y, p.z, p.yaw, p.scale, writeTransform));
-    });
-    for (const { instanced } of meshes) instanced.computeBoundingSphere();
+    trees.push(...toppleInstances(world, scene, hitRegistry, staticBody, assets.template('tree', name), modelPlacements, TREE_SIZE));
   }
 
   return trees;
+}
+
+/**
+ * Instanced copies of `template` that each fall over when a tank drives into them (trees, lamp
+ * posts): one InstancedMesh per part, with each Tree rewriting its own instance as it topples.
+ */
+function toppleInstances(
+  world: RAPIER.World,
+  scene: THREE.Scene,
+  hitRegistry: HitRegistry,
+  staticBody: RAPIER.RigidBody,
+  source: THREE.Object3D,
+  placements: { x: number; y: number; z: number; yaw: number; scale: number }[],
+  size: ToppleSize,
+): Tree[] {
+  if (placements.length === 0) return [];
+  const template = source.clone(true);
+  template.position.set(0, 0, 0);
+  template.rotation.set(0, 0, 0);
+  template.scale.set(1, 1, 1);
+  template.updateMatrixWorld(true);
+  const meshes: { instanced: THREE.InstancedMesh; local: THREE.Matrix4 }[] = [];
+  template.traverse((child) => {
+    if (!(child instanceof THREE.Mesh)) return;
+    const instanced = new THREE.InstancedMesh(child.geometry, child.material, placements.length);
+    instanced.castShadow = true;
+    instanced.receiveShadow = true;
+    scene.add(instanced);
+    meshes.push({ instanced, local: child.matrixWorld.clone() });
+  });
+
+  const out = placements.map((p, index) => {
+    const writeTransform = (transform: THREE.Matrix4) => {
+      const combined = new THREE.Matrix4();
+      for (const { instanced, local } of meshes) {
+        instanced.setMatrixAt(index, combined.multiplyMatrices(transform, local));
+        instanced.instanceMatrix.needsUpdate = true;
+      }
+    };
+    return new Tree(world, hitRegistry, staticBody, scene, null, p.x, p.y, p.z, p.yaw, p.scale, writeTransform, size);
+  });
+  // Bounds must cover every instance even once they've toppled, so pad them out.
+  for (const { instanced } of meshes) {
+    instanced.computeBoundingSphere();
+    if (instanced.boundingSphere) instanced.boundingSphere.radius += 20;
+  }
+  return out;
 }
 
 function placeEnemySpawns(holds: HoldFor): EnemySpawnPoint[] {

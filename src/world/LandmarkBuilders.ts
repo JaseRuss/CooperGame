@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { Building } from './Building';
+import { Tree, LAMP_SIZE } from './Tree';
 import type { HitRegistry } from '../combat/HitRegistry';
 import type { AssetLibrary } from './AssetLibrary';
 import { heightAt, LAKE_LEVELS } from './Terrain';
@@ -121,6 +122,9 @@ function toyJet(color: number): THREE.Group {
 /** Builds lakes, shopping malls and the airfield. Returns their destructible pieces. */
 export class LandmarkSet {
   readonly buildings: Building[] = [];
+  /** Car-park lamp posts, which topple like trees. */
+  readonly lampPosts: Tree[] = [];
+  private lampBody!: RAPIER.RigidBody;
   private readonly ducks: { mesh: THREE.Object3D; phase: number; baseY: number; cx: number; cz: number; r: number; speed: number }[] = [];
   private readonly radars: THREE.Object3D[] = [];
   private time = 0;
@@ -132,6 +136,7 @@ export class LandmarkSet {
     private readonly assets: AssetLibrary,
   ) {
     const rng = mulberry32(WORLD_SEED + 1234);
+    this.lampBody = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
     LAKES.forEach((lake, i) => this.buildLake(lake.cx, lake.cz, lake.radius, LAKE_LEVELS[i], rng));
     for (const site of SITES) {
       if (site.kind === 'mall') this.buildMall(site, rng);
@@ -281,12 +286,17 @@ export class LandmarkSet {
       this.destructible(g, car, 26, 0x777777);
     }
 
-    // Lamp posts and a roadside pylon sign.
+    // Lamp posts round the car park (they topple when driven into), and a roadside pylon sign.
     const pole = plastic(0x8d9399);
+    const yaw = siteYaw(site);
+    g.updateMatrixWorld(true);
     for (const x of [-60, -20, 20, 60]) {
       for (const z of [22, 68]) {
-        box(0.35, 9, 0.35, pole, g, x, 4.5, z);
-        box(2.6, 0.35, 0.8, pole, g, x, 9, z);
+        const lamp = new THREE.Group();
+        box(0.35, 9, 0.35, pole, lamp, 0, 4.5, 0);
+        box(2.6, 0.35, 0.8, pole, lamp, 0, 9, 0);
+        const at = g.localToWorld(new THREE.Vector3(x, 0, z));
+        this.lampPosts.push(new Tree(this.world, this.hitRegistry, this.lampBody, this.scene, lamp, at.x, heightAt(at.x, at.z), at.z, yaw, 1, undefined, LAMP_SIZE));
       }
     }
     box(1, 16, 1, pole, g, half.x - 16, 8, half.z - 6);
