@@ -121,6 +121,8 @@ and right to move, and X to delete. Your choices are remembered.
   your own side: jam doesn't hurt them, but it gums up their guns for a few
   seconds.
 - **Rear hits** do double damage to enemy tanks. Front armour takes half damage.
+- Knock out an enemy tank and its turret pops off like a cork, tumbles through
+  the air and bounces to a stop.
 - **Critical hits:** put a shell through a pillbox's gun slit, or into a parked
   jet's wing-tip missiles or fuel tanks, and it goes up in one shot. The
   crosshair turns gold and says CRITICAL when you're lined up on one.

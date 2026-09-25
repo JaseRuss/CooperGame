@@ -29,6 +29,7 @@ import { predictTrajectory } from '../combat/Projectile';
 import { HomingRocket, type RocketTarget } from '../combat/HomingRocket';
 import { JamCannon } from '../combat/JamCannon';
 import { AAMissiles, AA_SALVO, AA_CAPACITY, type AirTrack } from '../combat/AAMissiles';
+import { TurretToss } from '../combat/TurretToss';
 import { CameraRig } from '../camera/CameraRig';
 import { HUD, type HUDState } from '../ui/HUD';
 import { WorldMap, type MapMarker, type MapView } from '../ui/WorldMap';
@@ -168,6 +169,8 @@ export class Game {
   private impacts!: ImpactEffects;
   private jam!: JamCannon;
   private aa!: AAMissiles;
+  /** Turrets of knocked-out tanks, flying off and bouncing about. */
+  private turretToss!: TurretToss;
   /** AA darts left; they only come back by returning to a home base. */
   private aaLoaded = AA_CAPACITY;
   private aaRearm = 0;
@@ -251,6 +254,7 @@ export class Game {
     this.impacts = new ImpactEffects(this.scene);
     this.jam = new JamCannon(this.scene);
     this.aa = new AAMissiles(this.scene);
+    this.turretToss = new TurretToss(this.scene);
     this.aimGuide = new AimGuide(this.scene);
 
     const terrain = buildTerrain();
@@ -344,6 +348,8 @@ export class Game {
   private removeEnemy(slot: EnemySlot): void {
     if (!slot.tank) return;
     this.explode(slot.tank.position.clone(), 2.5, null);
+    // The turret pops off and goes flying (helicopters just blow up).
+    if (!(slot.tank instanceof HelicopterEnemy)) this.turretToss.launch(slot.tank.turretPivot);
     this.addRocketCharge(CHARGE_PER_TANK);
     this.hitRegistry.unregister(slot.tank.physicsCollider);
     this.scene.remove(slot.tank.root);
@@ -1160,6 +1166,14 @@ export class Game {
     this.world.step();
     this.projectiles.update(dt);
     this.impacts.update(dt);
+    this.turretToss.update(dt, {
+      smoke: (p) => this.impacts.trailPuff(p),
+      thud: (p) => {
+        for (let i = 0; i < 3; i++) this.impacts.dustPuff(p);
+        this.cameraRig.addShake(0.25 / Math.max(1, p.distanceTo(this.player.position) / 15));
+      },
+      splash: (p) => this.impacts.splash(p, 0.8),
+    });
     for (let i = this.aftershocks.length - 1; i >= 0; i--) {
       const a = this.aftershocks[i];
       a.delay -= dt;
