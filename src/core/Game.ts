@@ -18,6 +18,7 @@ import { TOWNS } from '../world/TownPlan';
 import { PlayerTank } from '../entities/PlayerTank';
 import type { Tank, Faction } from '../entities/Tank';
 import { EnemyTank } from '../entities/EnemyTank';
+import { HelicopterEnemy } from '../entities/HelicopterEnemy';
 import { BuddyTank, RedTank, type AllyTarget } from '../entities/AllyTank';
 import { TroopManager } from '../entities/TroopManager';
 import type { Shot } from '../entities/Soldier';
@@ -87,7 +88,7 @@ interface RocketSequence {
 
 interface EnemySlot {
   spawn: EnemySpawnPoint;
-  tank: EnemyTank | null;
+  tank: EnemyTank | HelicopterEnemy | null;
   respawnTimer: number;
 }
 
@@ -189,6 +190,7 @@ export class Game {
   private settings: Settings = loadSettings();
   private wakeTimer = 0;
   private ready = false;
+  private assets!: AssetLibrary;
 
   constructor(container: HTMLElement) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -245,12 +247,12 @@ export class Game {
     const terrainCollider = this.world.createCollider(terrain.colliderDesc, terrainBody);
     this.hitRegistry.register(terrainCollider, { kind: 'terrain' });
 
-    const assets = new AssetLibrary();
-    await assets.load((loaded, total) => {
+    this.assets = new AssetLibrary();
+    await this.assets.load((loaded, total) => {
       this.loadingLabel.textContent = `Loading world… ${loaded}/${total}`;
     });
 
-    const content = generateWorld(this.world, this.scene, this.hitRegistry, assets);
+    const content = generateWorld(this.world, this.scene, this.hitRegistry, this.assets);
     this.trees = content.trees;
     this.familyBases = FRIENDLY_BASES.map((info) => {
       const gate = gateAngle(info, content.highways);
@@ -317,7 +319,9 @@ export class Game {
 
   private spawnEnemy(slot: EnemySlot): void {
     const { x, z, patrolCenter, patrolRadius, color } = slot.spawn;
-    const tank = new EnemyTank(this.world, x, z, patrolCenter, patrolRadius, Math.random, color);
+    const tank = slot.spawn.helicopter
+      ? new HelicopterEnemy(this.world, x, z, patrolCenter, patrolRadius, Math.random, this.assets, color)
+      : new EnemyTank(this.world, x, z, patrolCenter, patrolRadius, Math.random, color);
     this.scene.add(tank.root);
     this.hitRegistry.register(tank.physicsCollider, { kind: 'tank', tank });
     slot.tank = tank;
@@ -813,7 +817,12 @@ export class Game {
       if (b.alive) markers.push({ x: b.position.x, z: b.position.z, kind: 'bunker', friendly: true });
     }
     for (const slot of this.enemySlots) {
-      if (slot.tank) markers.push({ x: slot.tank.position.x, z: slot.tank.position.z, kind: 'tank', friendly: false });
+      if (slot.tank) markers.push({
+        x: slot.tank.position.x,
+        z: slot.tank.position.z,
+        kind: slot.tank instanceof HelicopterEnemy ? 'helicopter' : 'tank',
+        friendly: false,
+      });
     }
     for (const tank of this.redTanks) markers.push({ x: tank.position.x, z: tank.position.z, kind: 'tank', friendly: true });
     return markers;

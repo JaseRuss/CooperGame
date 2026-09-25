@@ -351,7 +351,8 @@ export class HUD {
     el('div', 'legend shadow', this.pages.map).innerHTML =
       '<span><i style="background:#5fe05f"></i>You</span><span><i style="background:#9be27a"></i>Buddies &amp; friendly troops</span>' +
       '<span><i style="background:#ffcc33"></i>Family bases</span><span><i style="background:#d23c32"></i>Enemy bases</span>' +
-      '<span><i style="background:linear-gradient(90deg,#ffd44a,#dc2a1a)"></i>Enemies gathered</span>';
+      '<span><i style="background:linear-gradient(90deg,#ffd44a,#dc2a1a)"></i>Enemies gathered</span>' +
+      '<span><i style="background:#ff75d8"></i>Enemy helicopter</span>';
 
     this.optionList = el('div', 'panel options', this.pages.options);
     this.optionHint = el('div', 'hint shadow', this.pages.options);
