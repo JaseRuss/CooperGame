@@ -29,7 +29,7 @@ import { predictTrajectory } from '../combat/Projectile';
 import { HomingRocket, type RocketTarget } from '../combat/HomingRocket';
 import { JamCannon } from '../combat/JamCannon';
 import { AAMissiles, AA_SALVO, AA_CAPACITY, type AirTrack } from '../combat/AAMissiles';
-import { TurretToss } from '../combat/TurretToss';
+import { Wrecks, pickWreckGag } from '../combat/Wrecks';
 import { CameraRig } from '../camera/CameraRig';
 import { HUD, type HUDState } from '../ui/HUD';
 import { WorldMap, type MapMarker, type MapView } from '../ui/WorldMap';
@@ -169,8 +169,8 @@ export class Game {
   private impacts!: ImpactEffects;
   private jam!: JamCannon;
   private aa!: AAMissiles;
-  /** Turrets of knocked-out tanks, flying off and bouncing about. */
-  private turretToss!: TurretToss;
+  /** Knocked-out tanks going out with a gag: flying turrets, turtles, surrenders, fireworks. */
+  private wrecks!: Wrecks;
   /** AA darts left; they only come back by returning to a home base. */
   private aaLoaded = AA_CAPACITY;
   private aaRearm = 0;
@@ -254,7 +254,7 @@ export class Game {
     this.impacts = new ImpactEffects(this.scene);
     this.jam = new JamCannon(this.scene);
     this.aa = new AAMissiles(this.scene);
-    this.turretToss = new TurretToss(this.scene);
+    this.wrecks = new Wrecks(this.scene);
     this.aimGuide = new AimGuide(this.scene);
 
     const terrain = buildTerrain();
@@ -345,15 +345,22 @@ export class Game {
     slot.tank = tank;
   }
 
-  private removeEnemy(slot: EnemySlot): void {
-    if (!slot.tank) return;
-    this.explode(slot.tank.position.clone(), 2.5, null);
-    // The turret pops off and goes flying (helicopters just blow up).
-    if (!(slot.tank instanceof HelicopterEnemy)) this.turretToss.launch(slot.tank.turretPivot);
+  private removeEnemy(slot: EnemySlot, gag = slot.tank instanceof HelicopterEnemy ? null : pickWreckGag()): void {
+    const tank = slot.tank;
+    if (!tank) return;
+    // Now and then a tank goes out with a gag rather than just blowing up (helicopters always blow up).
+    this.explode(tank.position.clone(), gag === 'surrender' ? 0.6 : gag === 'firework' ? 1.2 : 2.5, null);
+    let keepHull = gag === 'turtle' || gag === 'surrender' || gag === 'firework';
+    if (keepHull) tank.root.traverse((o) => o instanceof THREE.Sprite && (o.visible = false)); // its health bar
+    if (gag === 'turret') this.wrecks.turretPop(tank.turretPivot);
+    else if (gag === 'turtle') this.wrecks.turtle(tank.root);
+    else if (gag === 'surrender') this.wrecks.surrender(tank.root, tank.turretPivot, tank.barrelPivot);
+    else if (gag === 'firework') this.wrecks.firework(tank.root);
+    else keepHull = false;
     this.addRocketCharge(CHARGE_PER_TANK);
-    this.hitRegistry.unregister(slot.tank.physicsCollider);
-    this.scene.remove(slot.tank.root);
-    slot.tank.dispose();
+    this.hitRegistry.unregister(tank.physicsCollider);
+    if (!keepHull) this.scene.remove(tank.root);
+    tank.dispose();
     slot.tank = null;
     slot.respawnTimer = RESPAWN_DELAY;
   }
@@ -1166,13 +1173,17 @@ export class Game {
     this.world.step();
     this.projectiles.update(dt);
     this.impacts.update(dt);
-    this.turretToss.update(dt, {
+    this.wrecks.update(dt, {
       smoke: (p) => this.impacts.trailPuff(p),
       thud: (p) => {
         for (let i = 0; i < 3; i++) this.impacts.dustPuff(p);
         this.cameraRig.addShake(0.25 / Math.max(1, p.distanceTo(this.player.position) / 15));
       },
       splash: (p) => this.impacts.splash(p, 0.8),
+      burst: (p) => {
+        this.impacts.explode(p, 1.5);
+        this.impacts.confetti(p);
+      },
     });
     for (let i = this.aftershocks.length - 1; i >= 0; i--) {
       const a = this.aftershocks[i];

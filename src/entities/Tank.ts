@@ -302,52 +302,101 @@ export class Tank {
     return p;
   }
 
-  private static commanderShape: THREE.BufferGeometry | null = null;
+  private static commanderShapes: Map<THREE.Material, THREE.BufferGeometry> | null = null;
 
   /**
-   * Puts a tank commander in the cupola: standing in the open hatch, one hand on the machine
-   * gun and the other pointing the way ahead. Only the player's side gets one.
+   * Puts a tank commander in the cupola: standing in the open hatch, scanning ahead through a
+   * pair of binoculars held up to his eyes. Only the player's side gets one.
    */
   addCommander(color: number): void {
-    Tank.commanderShape ??= Tank.buildCommander();
-    // A much lighter plastic than the tank, so he reads clearly against it at chase-cam distance.
-    const mesh = new THREE.Mesh(Tank.commanderShape, plastic(shade(color, 1.55)));
+    Tank.commanderShapes ??= Tank.buildCommander().buildGeometries();
+    // Much lighter plastic than the tank so he reads at chase-cam distance; kit in a darker shade.
+    const shades = new Map<THREE.Material, THREE.Material>([
+      [SLOT.body, plastic(shade(color, 1.55))],
+      [SLOT.dark, plastic(shade(color, 0.8))],
+    ]);
+    const figure = new THREE.Group();
+    for (const [slot, geo] of Tank.commanderShapes) {
+      const mesh = new THREE.Mesh(geo, shades.get(slot));
+      mesh.castShadow = true;
+      figure.add(mesh);
+    }
     const scale = 1.1;
-    mesh.scale.setScalar(scale);
-    mesh.position.set(0.3, 0.9 - 0.86 * scale, 0.2); // belt just above the cupola rim, in turret space
-    mesh.castShadow = true;
-    this.turretPivot.add(mesh);
+    figure.scale.setScalar(scale);
+    figure.position.set(0.3, 0.9 - 0.86 * scale, 0.2); // belt just above the cupola rim, in turret space
+    this.turretPivot.add(figure);
   }
 
-  private static buildCommander(): THREE.BufferGeometry {
-    const mat = SLOT.body;
+  /**
+   * The commander, facing -Z with his belt at y 0.9: a tanker's jacket with pockets, epaulettes
+   * and a cross strap, a ribbed padded helmet with earphones and a throat mic, and both hands
+   * holding a pair of binoculars up to his eyes. Kit and binoculars are in the darker slot.
+   */
+  private static buildCommander(): PartBuilder {
+    const skin = SLOT.body;
+    const kit = SLOT.dark;
     const p = new PartBuilder();
     const v = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
-    const arm = (a: THREE.Vector3, elbow: THREE.Vector3, hand: THREE.Vector3) => {
-      p.beam(a, elbow, 0.13, mat, true);
-      p.beam(elbow, hand, 0.12, mat, true);
-      p.add(new THREE.SphereGeometry(0.07, 8, 6), mat, elbow.x, elbow.y, elbow.z);
-      p.add(new THREE.SphereGeometry(0.065, 8, 6), mat, hand.x, hand.y, hand.z);
-    };
-    // Tanker's jacket with a collar, leaning into the wind.
-    p.add(new THREE.BoxGeometry(0.44, 0.52, 0.28), mat, 0, 1.08, 0.02, -0.12);
-    p.add(new THREE.BoxGeometry(0.46, 0.08, 0.3), mat, 0, 0.9, 0.02); // belt
-    p.add(new THREE.CylinderGeometry(0.13, 0.15, 0.1, 10), mat, 0, 1.36, 0); // collar
-    for (const s of [-1, 1]) p.add(new THREE.SphereGeometry(0.11, 8, 6), mat, s * 0.23, 1.28, 0); // shoulders
-    // Head in a padded tanker's helmet with earphones and goggles pushed up.
-    p.add(new THREE.SphereGeometry(0.14, 12, 10), mat, 0, 1.52, -0.02);
-    p.add(new THREE.SphereGeometry(0.16, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.55), mat, 0, 1.54, 0);
+    const ball = (r: number, at: THREE.Vector3, mat: THREE.Material) => p.add(new THREE.SphereGeometry(r, 10, 8), mat, at.x, at.y, at.z);
+
+    // Jacket: a tapered, slightly flattened torso leaning forward into the view.
+    p.add(new THREE.CylinderGeometry(0.2, 0.22, 0.5, 14), skin, 0, 1.1, 0.01, -0.1, 0, 0, 1, 1, 0.68);
+    p.add(new THREE.SphereGeometry(0.2, 14, 8, 0, Math.PI * 2, 0, Math.PI / 2), skin, 0, 1.32, 0.03, -0.1, 0, 0, 1.12, 0.45, 0.72); // shoulders
+    p.add(new THREE.TorusGeometry(0.11, 0.035, 6, 14), skin, 0, 1.39, 0.02, Math.PI / 2 - 0.1); // rolled collar
     for (const s of [-1, 1]) {
-      p.add(new THREE.CylinderGeometry(0.06, 0.06, 0.05, 10).rotateZ(Math.PI / 2), mat, s * 0.16, 1.5, 0);
-      p.add(new THREE.CylinderGeometry(0.045, 0.045, 0.05, 10).rotateX(Math.PI / 2), mat, s * 0.06, 1.66, -0.13);
+      p.add(new THREE.BoxGeometry(0.12, 0.1, 0.03), skin, s * 0.09, 1.2, -0.13, -0.1); // chest pocket
+      p.add(new THREE.BoxGeometry(0.13, 0.035, 0.035), skin, s * 0.09, 1.25, -0.14, -0.1); // pocket flap
+      p.add(new THREE.BoxGeometry(0.12, 0.025, 0.1), kit, s * 0.2, 1.37, 0.02); // epaulette
     }
-    p.add(new THREE.BoxGeometry(0.3, 0.035, 0.05), mat, 0, 1.66, -0.12); // goggle strap
-    p.add(new THREE.BoxGeometry(0.04, 0.05, 0.05), mat, 0, 1.5, -0.16); // nose
-    // Right hand on the machine gun's grip; left arm pointing out ahead.
-    arm(v(0.23, 1.28, 0), v(0.28, 1.08, -0.2), v(0.05, 1.1, -0.34));
-    arm(v(-0.23, 1.28, 0), v(-0.3, 1.42, -0.28), v(-0.34, 1.58, -0.58));
-    p.add(new THREE.BoxGeometry(0.03, 0.03, 0.12), mat, -0.35, 1.6, -0.66); // pointing finger
-    return p.buildGeometry();
+    for (const y of [1.02, 1.1, 1.18, 1.3]) ball(0.014, v(0, y, -0.14 + (y - 1.02) * 0.1), kit); // buttons
+    // Belt with a buckle, and a map-case strap across the chest.
+    p.add(new THREE.CylinderGeometry(0.225, 0.225, 0.07, 14), kit, 0, 0.9, 0.01, 0, 0, 0, 1, 1, 0.7);
+    p.add(new THREE.BoxGeometry(0.07, 0.06, 0.02), skin, 0, 0.9, -0.16);
+    p.beam(v(0.17, 1.35, -0.1), v(-0.17, 0.93, -0.13), 0.035, kit);
+
+    // Head, chin and ears under a padded tanker's helmet with ribs and earphone cups.
+    ball(0.13, v(0, 1.54, -0.01), skin);
+    p.add(new THREE.SphereGeometry(0.08, 10, 8), skin, 0, 1.46, -0.06, 0, 0, 0, 1, 0.8, 1); // jaw
+    p.add(new THREE.SphereGeometry(0.155, 14, 8, 0, Math.PI * 2, 0, Math.PI * 0.55), kit, 0, 1.56, 0.01);
+    for (const x of [-0.07, 0, 0.07]) {
+      p.add(new THREE.TorusGeometry(0.15, 0.018, 5, 16, Math.PI), kit, x, 1.56, 0.01, 0, Math.PI / 2, 0); // padded ribs
+    }
+    for (const s of [-1, 1]) {
+      p.add(new THREE.CylinderGeometry(0.055, 0.055, 0.05, 12).rotateZ(Math.PI / 2), kit, s * 0.14, 1.53, 0.01); // earphones
+      p.beam(v(s * 0.13, 1.5, 0.01), v(s * 0.06, 1.42, -0.06), 0.02, kit); // chin strap
+    }
+    p.add(new THREE.BoxGeometry(0.2, 0.04, 0.12), kit, 0, 1.43, -0.02); // throat mic band
+    ball(0.03, v(0.06, 1.43, -0.09), kit);
+    p.add(new THREE.BoxGeometry(0.045, 0.06, 0.05), skin, 0, 1.49, -0.14); // nose, under the binoculars
+
+    // Binoculars up to his eyes: two barrels with a hinge bridge, eyecups and big objective rims.
+    const eyeY = 1.56;
+    for (const s of [-1, 1]) {
+      const x = s * 0.055;
+      p.add(tubeZ(0.042, 0.042, 0.16, 12), kit, x, eyeY, -0.24);
+      p.add(tubeZ(0.052, 0.042, 0.08, 12), kit, x, eyeY, -0.35); // flared objective end
+      p.add(new THREE.TorusGeometry(0.05, 0.01, 6, 14), skin, x, eyeY, -0.39); // lens rim
+      p.add(tubeZ(0.035, 0.035, 0.05, 10), kit, x, eyeY, -0.14); // eyecup
+    }
+    p.add(new THREE.BoxGeometry(0.06, 0.035, 0.12), kit, 0, eyeY + 0.01, -0.25); // hinge bridge
+    p.add(tubeX(0.015, 0.07, 8), skin, 0, eyeY + 0.035, -0.22); // focus wheel
+    // Neck strap looping down from the binoculars.
+    for (const s of [-1, 1]) p.beam(v(s * 0.1, eyeY - 0.02, -0.2), v(s * 0.08, 1.36, -0.12), 0.015, kit);
+
+    // Arms: elbows out to the sides, forearms up so both hands cup the binoculars.
+    for (const s of [-1, 1]) {
+      const shoulder = v(s * 0.22, 1.32, 0.02);
+      const elbow = v(s * 0.3, 1.3, -0.2);
+      const wrist = v(s * 0.11, 1.52, -0.28);
+      p.beam(shoulder, elbow, 0.12, skin, true);
+      p.beam(elbow, wrist, 0.1, skin, true);
+      ball(0.065, elbow, skin);
+      p.add(new THREE.CylinderGeometry(0.058, 0.058, 0.04, 10), skin, wrist.x * 0.95, wrist.y - 0.02, wrist.z + 0.02, 0.9, 0, s * 0.6); // cuff
+      // Hand wrapped round the barrel, thumb underneath.
+      p.add(new THREE.BoxGeometry(0.05, 0.1, 0.11), skin, s * 0.1, eyeY, -0.27);
+      p.add(new THREE.BoxGeometry(0.1, 0.025, 0.05), skin, s * 0.06, eyeY - 0.05, -0.25); // thumb
+    }
+    return p;
   }
 
   private static buildGun(body: THREE.Material, dark: THREE.Material, deep: THREE.Material): PartBuilder {

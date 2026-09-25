@@ -25,6 +25,7 @@ interface Flash {
 const SPHERE = new THREE.SphereGeometry(1, 10, 8);
 const SMOKE_SPHERE = new THREE.IcosahedronGeometry(1, 2);
 const SPARK = new THREE.BoxGeometry(0.12, 0.12, 0.5);
+const CONFETTI = new THREE.BoxGeometry(0.35, 0.02, 0.25);
 const RING = new THREE.RingGeometry(0.85, 1, 32).rotateX(-Math.PI / 2);
 const LIGHT_POOL_SIZE = 4;
 
@@ -232,6 +233,49 @@ export class ImpactEffects {
       colorFrom: new THREE.Color(0xffe070),
       colorTo: new THREE.Color(0xff6010),
     });
+  }
+
+  /** A firework burst: a ring of bright stars and a shower of tumbling confetti. */
+  confetti(point: THREE.Vector3): void {
+    this.flash(point, 4000, 0.3);
+    const colors = [0xff4d6d, 0xffd24a, 0x4dd2ff, 0x9be27a, 0xc77dff, 0xff8a3d];
+    for (let i = 0; i < 36; i++) {
+      const dir = randomInSphere(1).normalize();
+      const color = new THREE.Color(colors[i % colors.length]);
+      this.add({
+        geometry: SPARK,
+        position: point.clone(),
+        velocity: dir.multiplyScalar(26 + Math.random() * 8),
+        life: 0.9 + Math.random() * 0.4,
+        startScale: 2.2,
+        endScale: 0.4,
+        startOpacity: 1,
+        additive: true,
+        colorFrom: color.clone().lerp(new THREE.Color(0xffffff), 0.5),
+        colorTo: color,
+        gravity: -6,
+        drag: 1.6,
+        orientToVelocity: true,
+      });
+    }
+    for (let i = 0; i < 70; i++) {
+      const color = new THREE.Color(colors[Math.floor(Math.random() * colors.length)]);
+      this.add({
+        geometry: CONFETTI,
+        position: point.clone().add(randomInSphere(1.5)),
+        velocity: randomInSphere(1).normalize().multiplyScalar(6 + Math.random() * 14),
+        life: 2.5 + Math.random() * 1.5,
+        startScale: 1,
+        endScale: 1,
+        startOpacity: 1,
+        additive: false,
+        colorFrom: color,
+        colorTo: color,
+        gravity: -7,
+        drag: 1.8,
+        orientToVelocity: true,
+      });
+    }
   }
 
   /** A thin, short-lived smoke wisp: the trail of the little AA missiles. */
