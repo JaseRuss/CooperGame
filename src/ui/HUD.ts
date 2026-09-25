@@ -1,6 +1,8 @@
 import type { WorldMap, MapView } from './WorldMap';
 import type { AimTarget } from './AimGuide';
 import type { ArmorZone } from '../entities/Tank';
+import type { MenuInput } from '../input/InputManager';
+import { OPTION_ROWS, type Settings } from '../core/Settings';
 import { WORLD_SIZE } from '../core/config';
 
 export interface ObjectiveLine {
@@ -28,22 +30,29 @@ export interface HUDState {
   rocketLockScreen: { x: number; y: number } | null;
   /** 0..1; a buddy tank can be called in at 1. */
   buddyCharge: number;
-  buddyCount: number;
+  /** Every buddy's name, and which of them are out right now. */
+  buddyRoster: string[];
+  buddyNames: string[];
+  buddyMax: number;
   /** True while the rocket cam / explosion replay is playing. */
   cinematic: boolean;
   enemyBasesLeft: number;
   enemyBasesTotal: number;
   /** When close to an enemy base: what still needs destroying there. */
   nearbyBase: { name: string; distance: number; objectives: ObjectiveLine[] } | null;
+  driveStyle: Settings['driveStyle'];
+  /** Remind the player to click so the browser hands over the mouse for aiming. */
+  mouseCaptureHint: boolean;
 }
 
 const HIT_MARKER_TEXT: Record<ArmorZone, { text: string; color: string }> = {
-  front: { text: 'FRONT ARMOR ×0.5', color: '#c9d3dc' },
+  front: { text: 'FRONT ARMOUR ×0.5', color: '#c9d3dc' },
   side: { text: 'SIDE HIT ×1', color: '#ffd27a' },
   rear: { text: 'REAR HIT ×2!', color: '#ff6a5a' },
 };
 const HIT_MARKER_TIME = 1.1;
 const BANNER_TIME = 4;
+const HULL_SEGMENTS = 20;
 
 const RETICLE_COLORS: Record<AimTarget, string> = {
   enemy: '#ff6a5a',
@@ -55,37 +64,150 @@ const RETICLE_COLORS: Record<AimTarget, string> = {
 const MINIMAP_SIZE = 200;
 const MINIMAP_METERS = 700; // meters shown across the minimap
 
-const PANEL = 'background:rgba(12,22,12,0.62); border:1px solid rgba(255,255,255,0.18); border-radius:6px; box-shadow:0 2px 8px rgba(0,0,0,0.4);';
+// ---------- look ----------
 
-function el<K extends keyof HTMLElementTagNameMap>(tag: K, cssText: string, parent?: HTMLElement): HTMLElementTagNameMap[K] {
+const STYLE = `
+.hud { position:absolute; inset:0; pointer-events:none; font-family:"Segoe UI",system-ui,sans-serif; color:#eef3f8; user-select:none; }
+.hud * { box-sizing:border-box; }
+.hud .stencil { font-family:"Black Ops One", Impact, "Arial Black", sans-serif; font-weight:400; letter-spacing:1.5px; }
+.hud .panel { background:linear-gradient(180deg, rgba(34,44,26,0.86), rgba(20,27,16,0.86)); border:1px solid rgba(214,196,138,0.45);
+  border-radius:8px; box-shadow:0 3px 12px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.08); }
+.hud .shadow { text-shadow:0 1px 3px #000; }
+
+.hud .card { position:absolute; left:18px; bottom:18px; width:300px; padding:12px 14px 12px; }
+.hud .card-head { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:6px; }
+.hud .callsign { font-size:18px; color:#e8d9a4; }
+.hud .subtle { font-size:11px; opacity:0.7; letter-spacing:0.5px; }
+.hud .row-label { display:flex; justify-content:space-between; font-size:11px; font-weight:700; letter-spacing:1px; margin:8px 0 3px; opacity:0.92; }
+.hud .segs { display:flex; gap:2px; height:14px; }
+.hud .seg { flex:1; border-radius:2px; background:rgba(0,0,0,0.45); }
+.hud .bar { height:8px; border-radius:4px; background:rgba(0,0,0,0.5); overflow:hidden; border:1px solid rgba(255,255,255,0.12); }
+.hud .fill { height:100%; width:0%; border-radius:4px; transition:width 0.12s linear; }
+.hud .slot { display:flex; align-items:center; gap:10px; margin-top:9px; }
+.hud .slot .icon { width:30px; height:30px; flex:none; display:flex; align-items:center; justify-content:center; border-radius:6px;
+  background:rgba(0,0,0,0.35); border:1px solid rgba(255,255,255,0.14); }
+.hud .slot .body { flex:1; min-width:0; }
+.hud .ready { animation:hudPulse 0.8s ease-in-out infinite alternate; }
+@keyframes hudPulse { from { filter:brightness(1); } to { filter:brightness(1.6); } }
+.hud .chips { display:flex; gap:4px; margin-top:5px; }
+.hud .chip { flex:1; text-align:center; font-size:10.5px; font-weight:800; letter-spacing:0.5px; padding:3px 0; border-radius:4px;
+  background:rgba(0,0,0,0.4); color:rgba(238,243,248,0.45); border:1px solid rgba(255,255,255,0.1); }
+.hud .chip.on { background:rgba(120,190,80,0.3); color:#d6f7c0; border-color:rgba(155,226,122,0.7); }
+
+.hud .keys { position:absolute; left:18px; top:16px; font-size:11.5px; line-height:1.9; opacity:0.85; }
+.hud .key { display:inline-block; min-width:20px; padding:0 5px; margin:0 3px 0 8px; border-radius:4px; text-align:center; font-weight:800; font-size:10.5px;
+  background:rgba(232,217,164,0.9); color:#1c2414; box-shadow:0 1px 0 #6f6446; }
+.hud .key:first-child { margin-left:0; }
+
+.hud .bases { position:absolute; left:50%; top:12px; transform:translateX(-50%); padding:7px 16px 8px; text-align:center; }
+.hud .bases .title { font-size:13px; color:#e8d9a4; }
+.hud .flags { display:flex; gap:8px; justify-content:center; margin-top:4px; }
+.hud .flag { display:flex; flex-direction:column; align-items:center; font-size:9.5px; font-weight:800; letter-spacing:0.5px; }
+
+.hud .minimap { position:absolute; right:18px; top:16px; width:${MINIMAP_SIZE + 12}px; height:${MINIMAP_SIZE + 12}px; border-radius:50%; padding:6px;
+  background:conic-gradient(from 0deg, #8f845d, #c9b983, #8f845d, #c9b983, #8f845d); box-shadow:0 3px 12px rgba(0,0,0,0.5); }
+.hud .minimap canvas { display:block; border-radius:50%; }
+.hud .north { position:absolute; left:50%; top:-3px; transform:translateX(-50%); font-size:12px; color:#1c2414; background:#e8d9a4;
+  border-radius:8px; padding:0 6px; line-height:16px; }
+
+.hud .checklist { position:absolute; right:18px; top:${MINIMAP_SIZE + 42}px; width:${MINIMAP_SIZE + 12}px; padding:0 0 8px; overflow:hidden; font-size:12.5px; line-height:1.6; }
+.hud .checklist .head { padding:6px 12px; background:repeating-linear-gradient(135deg, rgba(200,60,40,0.85) 0 10px, rgba(160,40,30,0.85) 10px 20px); }
+.hud .checklist .line { padding:0 12px; }
+.hud .checklist .done { color:#9be27a; text-decoration:line-through; opacity:0.75; }
+
+.hud .banner { position:absolute; left:50%; top:17%; transform:translateX(-50%); text-align:center; opacity:0; white-space:nowrap; padding:10px 34px 12px;
+  background:linear-gradient(90deg, transparent, rgba(20,26,14,0.85) 12%, rgba(20,26,14,0.85) 88%, transparent); }
+.hud .banner .big { font-size:32px; color:#ffd24a; text-shadow:0 3px 8px #000, 0 0 18px rgba(255,160,40,0.45); }
+.hud .banner .small { font-size:15px; font-weight:700; margin-top:4px; }
+
+.hud .prompt { position:absolute; left:50%; top:73%; transform:translateX(-50%); padding:7px 18px; border-radius:20px; font-size:15px; font-weight:700; display:none;
+  background:rgba(15,20,12,0.7); border:1px solid rgba(255,255,255,0.2); }
+
+.hud .crosshair { position:absolute; left:0; top:0; width:24px; height:24px; margin:-12px 0 0 -12px; border:2px solid; border-radius:50%;
+  box-shadow:0 0 4px rgba(0,0,0,0.7); display:none; }
+.hud .crosshair::before, .hud .crosshair::after { content:""; position:absolute; background:currentColor; }
+.hud .crosshair::before { left:50%; top:-8px; width:2px; height:6px; margin-left:-1px; box-shadow:0 30px 0 currentColor; }
+.hud .crosshair::after { top:50%; left:-8px; height:2px; width:6px; margin-top:-1px; box-shadow:30px 0 0 currentColor; }
+.hud .crosshair .dot { position:absolute; left:50%; top:50%; width:4px; height:4px; margin:-2px 0 0 -2px; background:currentColor; border-radius:50%; }
+.hud .crosshair .range { position:absolute; left:50%; top:30px; transform:translateX(-50%); font-size:12px; font-weight:800; white-space:nowrap; text-shadow:0 1px 3px #000; }
+
+.hud .lock { position:absolute; left:0; top:0; width:36px; height:36px; margin:-18px 0 0 -18px; border:2px solid #ff5a4a; display:none;
+  box-shadow:0 0 8px rgba(255,90,74,0.8); }
+.hud .lock span { position:absolute; left:50%; top:-22px; transform:translateX(-50%) rotate(-45deg); font-size:11px; font-weight:800; color:#ff6a5a; }
+
+.hud .overlay { position:absolute; inset:0; display:none; align-items:center; justify-content:center; flex-direction:column; gap:10px; pointer-events:auto;
+  background:radial-gradient(ellipse at center, rgba(20,30,14,0.72), rgba(0,0,0,0.82)); backdrop-filter:blur(3px); }
+.hud .overlay h1 { margin:0; font-size:34px; letter-spacing:8px; color:#e8d9a4; text-shadow:0 3px 10px #000; font-weight:400; }
+.hud .tabs { display:flex; gap:6px; }
+.hud .tab { padding:6px 22px; border-radius:6px 6px 0 0; font-size:15px; cursor:pointer; background:rgba(0,0,0,0.35); color:rgba(238,243,248,0.6);
+  border:1px solid rgba(214,196,138,0.3); border-bottom:none; }
+.hud .tab.on { background:rgba(214,196,138,0.9); color:#1c2414; }
+.hud .page { display:none; }
+.hud .page.on { display:flex; flex-direction:column; align-items:center; gap:8px; }
+.hud .legend { font-size:12.5px; opacity:0.9; display:flex; gap:14px; flex-wrap:wrap; justify-content:center; max-width:760px; }
+.hud .legend i { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:5px; vertical-align:-1px; }
+.hud .options { width:min(560px, 92vw); padding:10px; }
+.hud .opt { display:flex; align-items:center; justify-content:space-between; padding:12px 14px; border-radius:6px; cursor:pointer; border:1px solid transparent; }
+.hud .opt.sel { background:rgba(214,196,138,0.16); border-color:rgba(214,196,138,0.6); }
+.hud .opt .name { font-size:16px; font-weight:700; }
+.hud .opt .val { display:flex; align-items:center; gap:10px; font-size:16px; }
+.hud .opt .val b { font-family:"Black Ops One", Impact, sans-serif; font-weight:400; letter-spacing:1px; color:#ffd24a; min-width:92px; text-align:center; }
+.hud .opt .arrow { opacity:0.5; font-size:13px; }
+.hud .opt.sel .arrow { opacity:1; }
+.hud .hint { min-height:42px; max-width:520px; text-align:center; font-size:13px; line-height:1.5; opacity:0.85; margin-top:4px; }
+.hud .footer { font-size:12px; opacity:0.75; margin-top:4px; }
+
+.hud .letterbox { position:absolute; left:0; right:0; height:0; background:#000; transition:height 0.35s; }
+.hud .cine { position:absolute; left:24px; top:10.5vh; font-size:15px; letter-spacing:3px; color:#ff8a3d; display:none; }
+.hud .hitmark { position:absolute; left:50%; top:40%; transform:translateX(-50%); font-size:18px; font-weight:800; letter-spacing:1px; text-shadow:0 2px 4px #000; opacity:0; }
+
+.hud .victory { position:absolute; inset:0; display:none; flex-direction:column; align-items:center; justify-content:center; gap:14px; text-align:center;
+  background:radial-gradient(ellipse at center, rgba(40,80,30,0.6), rgba(0,0,0,0.3)); }
+.hud .victory .big { font-size:72px; color:#ffd24a; text-shadow:0 4px 14px #000, 0 0 30px rgba(255,200,60,0.7); }
+`;
+
+const ROCKET_ICON = `<svg width="22" height="22" viewBox="0 0 24 24"><path d="M12 2c3 2 4.5 5.5 4.5 9.5v5h-9v-5C7.5 7.5 9 4 12 2z" fill="#e8e4d8"/>
+<path d="M12 2c1.6 1 2.8 2.6 3.5 4.5h-7C9.2 4.6 10.4 3 12 2z" fill="#d0463a"/><path d="M7.5 13l-3 4v2l3-1.5zM16.5 13l3 4v2l-3-1.5z" fill="#6fae4a"/>
+<path d="M10 17h4l-.5 2.5h-3z" fill="#555"/><path d="M10.5 20h3l-1.5 3z" fill="#ffb040"/></svg>`;
+const TANK_ICON = `<svg width="24" height="20" viewBox="0 0 26 20"><rect x="2" y="11" width="22" height="6" rx="3" fill="#6fae4a"/>
+<rect x="6" y="6" width="11" height="6" rx="2" fill="#8cc865"/><rect x="16" y="7.5" width="9" height="2" fill="#8cc865"/>
+<circle cx="6" cy="14" r="1.6" fill="#2c4a1c"/><circle cx="11" cy="14" r="1.6" fill="#2c4a1c"/><circle cx="16" cy="14" r="1.6" fill="#2c4a1c"/><circle cx="21" cy="14" r="1.6" fill="#2c4a1c"/></svg>`;
+const flagIcon = (color: string, done: boolean) =>
+  `<svg width="22" height="22" viewBox="0 0 22 22"><rect x="4" y="2" width="2" height="19" fill="#d8d2bd"/><path d="M6 3h12l-3 4 3 4H6z" fill="${color}"/>${
+    done ? '<path d="M8.5 7l2 2 4-4" stroke="#fff" stroke-width="1.8" fill="none"/>' : ''
+  }</svg>`;
+
+function el<K extends keyof HTMLElementTagNameMap>(tag: K, className: string, parent?: HTMLElement, text?: string): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag);
-  e.style.cssText = cssText;
+  e.className = className;
+  if (text !== undefined) e.textContent = text;
   parent?.appendChild(e);
   return e;
 }
 
-function meter(parent: HTMLElement, height: number, fill: string): { label: HTMLDivElement; fill: HTMLDivElement } {
-  const label = el('div', 'margin-top:10px; font-size:12px; font-weight:700; text-shadow:0 1px 3px #000;', parent);
-  const track = el(
-    'div',
-    `margin-top:3px; width:100%; height:${height}px; background:rgba(0,0,0,0.5); border:1px solid rgba(255,255,255,0.3); border-radius:3px; overflow:hidden;`,
-    parent,
-  );
-  return { label, fill: el('div', `height:100%; width:0%; background:${fill};`, track) };
-}
-
-/** Plain-DOM + canvas HUD overlay. */
+/** Plain-DOM + canvas HUD overlay, including the pause screen (map and options). */
 export class HUD {
-  private readonly healthFill: HTMLDivElement;
-  private readonly healthLabel: HTMLDivElement;
+  private readonly segs: HTMLDivElement[] = [];
+  private readonly healthText: HTMLSpanElement;
   private readonly reloadFill: HTMLDivElement;
-  private readonly rocket: { label: HTMLDivElement; fill: HTMLDivElement };
-  private readonly buddy: { label: HTMLDivElement; fill: HTMLDivElement };
-  private readonly statusLabel: HTMLDivElement;
+  private readonly reloadText: HTMLSpanElement;
+  private readonly rocketSlot: HTMLDivElement;
+  private readonly rocketFill: HTMLDivElement;
+  private readonly rocketText: HTMLSpanElement;
+  private readonly buddyFill: HTMLDivElement;
+  private readonly buddyText: HTMLSpanElement;
+  private readonly buddyChips: HTMLDivElement;
+  private readonly modeText: HTMLSpanElement;
+  private readonly keys: HTMLDivElement;
   private readonly minimapCtx: CanvasRenderingContext2D;
-  private readonly bigMapWrap: HTMLDivElement;
+  private readonly overlay: HTMLDivElement;
+  private readonly tabs: Record<'map' | 'options', HTMLDivElement>;
+  private readonly pages: Record<'map' | 'options', HTMLDivElement>;
   private readonly bigMapCanvas: HTMLCanvasElement;
   private readonly bigMapCtx: CanvasRenderingContext2D;
+  private readonly optionList: HTMLDivElement;
+  private readonly optionHint: HTMLDivElement;
+  private readonly footer: HTMLDivElement;
   private readonly crosshair: HTMLDivElement;
   private readonly rangeLabel: HTMLDivElement;
   private readonly promptLabel: HTMLDivElement;
@@ -98,155 +220,232 @@ export class HUD {
   private readonly banner: HTMLDivElement;
   private readonly victory: HTMLDivElement;
   private readonly hudBits: HTMLElement[];
+  private readonly html = new Map<HTMLElement, string>();
   private worldMap: WorldMap | null = null;
-  private bigMapOpen = false;
+  private pausedOpen = false;
+  private page: 'map' | 'options' = 'map';
+  private optionIndex = 0;
+  private settings: Settings | null = null;
+  private onSettingsChange: ((s: Settings) => void) | null = null;
   private hitMarkerAge = HIT_MARKER_TIME;
   private bannerAge = BANNER_TIME;
   private lastUpdate = performance.now();
-  private lastChecklist = '';
 
   constructor(container: HTMLElement) {
-    const root = el(
-      'div',
-      'position:absolute; inset:0; pointer-events:none; font-family:"Segoe UI",system-ui,sans-serif; color:#eef3f8;',
-      container,
-    );
+    const style = document.createElement('style');
+    style.textContent = STYLE;
+    document.head.appendChild(style);
+    const root = el('div', 'hud', container);
 
-    // --- health, reload, rocket and buddy meters (bottom-left) ---
-    const bottomLeft = el('div', 'position:absolute; left:20px; bottom:20px; width:260px;', root);
-    this.healthLabel = el('div', 'font-size:13px; font-weight:600; margin-bottom:4px; text-shadow:0 1px 3px #000;', bottomLeft);
-    const healthTrack = el(
-      'div',
-      'width:100%; height:16px; background:rgba(0,0,0,0.5); border:1px solid rgba(255,255,255,0.35); border-radius:3px; overflow:hidden;',
-      bottomLeft,
-    );
-    this.healthFill = el('div', 'height:100%; width:100%; background:#5fd15f;', healthTrack);
-    const reloadTrack = el(
-      'div',
-      'margin-top:6px; width:100%; height:6px; background:rgba(0,0,0,0.5); border:1px solid rgba(255,255,255,0.25); border-radius:3px; overflow:hidden;',
-      bottomLeft,
-    );
-    this.reloadFill = el('div', 'height:100%; width:100%; background:#e0c23f;', reloadTrack);
-    this.rocket = meter(bottomLeft, 10, 'linear-gradient(90deg,#c0392b,#ff8a3d)');
-    this.buddy = meter(bottomLeft, 10, 'linear-gradient(90deg,#3f7a2a,#9be27a)');
+    // --- tank status card (bottom-left) ---
+    const card = el('div', 'panel card', root);
+    const head = el('div', 'card-head', card);
+    el('div', 'stencil callsign', head, 'COOPER');
+    this.modeText = el('span', 'subtle', head);
+
+    const hullLabel = el('div', 'row-label', card);
+    el('span', '', hullLabel, 'HULL');
+    this.healthText = el('span', '', hullLabel);
+    const segs = el('div', 'segs', card);
+    for (let i = 0; i < HULL_SEGMENTS; i++) this.segs.push(el('div', 'seg', segs));
+
+    const gunLabel = el('div', 'row-label', card);
+    el('span', '', gunLabel, 'MAIN GUN');
+    this.reloadText = el('span', '', gunLabel);
+    this.reloadFill = el('div', 'fill', el('div', 'bar', card));
+    this.reloadFill.style.background = 'linear-gradient(90deg,#b9982f,#ffd24a)';
+
+    this.rocketSlot = el('div', 'slot', card);
+    el('div', 'icon', this.rocketSlot).innerHTML = ROCKET_ICON;
+    const rocketBody = el('div', 'body', this.rocketSlot);
+    const rocketLabel = el('div', 'row-label', rocketBody);
+    rocketLabel.style.marginTop = '0';
+    el('span', '', rocketLabel, 'HOMING ROCKET');
+    this.rocketText = el('span', '', rocketLabel);
+    this.rocketFill = el('div', 'fill', el('div', 'bar', rocketBody));
+    this.rocketFill.style.background = 'linear-gradient(90deg,#c0392b,#ff8a3d)';
+
+    const buddySlot = el('div', 'slot', card);
+    el('div', 'icon', buddySlot).innerHTML = TANK_ICON;
+    const buddyBody = el('div', 'body', buddySlot);
+    const buddyLabel = el('div', 'row-label', buddyBody);
+    buddyLabel.style.marginTop = '0';
+    el('span', '', buddyLabel, 'BUDDY TANKS');
+    this.buddyText = el('span', '', buddyLabel);
+    this.buddyFill = el('div', 'fill', el('div', 'bar', buddyBody));
+    this.buddyFill.style.background = 'linear-gradient(90deg,#3f7a2a,#9be27a)';
+    this.buddyChips = el('div', 'chips', buddyBody);
 
     // --- lock-on diamond over the rocket's target ---
-    this.lockMarker = el(
-      'div',
-      'position:absolute; left:0; top:0; width:34px; height:34px; margin:-17px 0 0 -17px; border:2px solid #ff5a4a; display:none; box-shadow:0 0 6px rgba(255,90,74,0.8);',
-      root,
-    );
-    el('div', 'position:absolute; left:50%; top:-20px; transform:translateX(-50%); font-size:11px; font-weight:800; color:#ff6a5a; white-space:nowrap; text-shadow:0 1px 3px #000;', this.lockMarker).textContent = 'LOCK';
+    this.lockMarker = el('div', 'lock', root);
+    this.lockMarker.innerHTML = '<span>LOCK</span>';
 
-    // --- armour hit feedback ---
-    this.hitMarker = el(
-      'div',
-      'position:absolute; left:50%; top:40%; transform:translateX(-50%); font-size:18px; font-weight:800; letter-spacing:1px; text-shadow:0 2px 4px #000; opacity:0;',
-      root,
-    );
+    this.hitMarker = el('div', 'hitmark', root);
 
     // --- rocket cam letterbox ---
-    this.letterbox = ['top', 'bottom'].map((side) =>
-      el('div', `position:absolute; left:0; right:0; ${side}:0; height:0; background:#000; transition:height 0.35s;`, root),
-    );
-    this.cinematicLabel = el(
-      'div',
-      'position:absolute; left:24px; top:10.5vh; font-size:14px; font-weight:800; letter-spacing:3px; color:#ff8a3d; text-shadow:0 1px 3px #000; display:none;',
-      root,
-    );
-    this.cinematicLabel.textContent = '● ROCKET CAM';
+    this.letterbox = ['top', 'bottom'].map((side) => {
+      const bar = el('div', 'letterbox', root);
+      bar.style[side as 'top' | 'bottom'] = '0';
+      return bar;
+    });
+    this.cinematicLabel = el('div', 'stencil cine shadow', root, '● ROCKET CAM');
 
-    // --- controls help (top-left) ---
-    this.statusLabel = el('div', 'position:absolute; left:20px; top:18px; font-size:13px; line-height:1.5; text-shadow:0 1px 3px #000; opacity:0.9;', root);
+    // --- control hints (top-left) ---
+    this.keys = el('div', 'keys shadow', root);
 
     // --- enemy base counter (top-centre) ---
-    this.baseCounter = el(
-      'div',
-      `position:absolute; left:50%; top:14px; transform:translateX(-50%); padding:6px 16px; font-size:15px; font-weight:800; letter-spacing:1.5px; text-shadow:0 1px 3px #000; white-space:nowrap; ${PANEL}`,
-      root,
-    );
+    this.baseCounter = el('div', 'panel bases', root);
 
     // --- minimap (top-right) ---
-    const minimapWrap = el(
-      'div',
-      `position:absolute; right:20px; top:18px; width:${MINIMAP_SIZE}px; height:${MINIMAP_SIZE}px; border-radius:50%; overflow:hidden; border:3px solid rgba(20,40,20,0.85); box-shadow:0 2px 8px rgba(0,0,0,0.5);`,
-      root,
-    );
+    const minimapWrap = el('div', 'minimap', root);
     const minimapCanvas = el('canvas', '', minimapWrap);
     minimapCanvas.width = MINIMAP_SIZE;
     minimapCanvas.height = MINIMAP_SIZE;
     this.minimapCtx = minimapCanvas.getContext('2d') as CanvasRenderingContext2D;
+    el('div', 'stencil north', minimapWrap, 'N');
 
     // --- target checklist when near an enemy base (under the minimap) ---
-    this.checklist = el(
-      'div',
-      `position:absolute; right:20px; top:${MINIMAP_SIZE + 34}px; width:${MINIMAP_SIZE}px; padding:10px 12px; font-size:13px; line-height:1.55; text-shadow:0 1px 2px #000; display:none; ${PANEL}`,
-      root,
-    );
+    this.checklist = el('div', 'panel checklist', root);
+    this.checklist.style.display = 'none';
 
     // --- event banner (base destroyed etc.) ---
-    this.banner = el(
-      'div',
-      'position:absolute; left:50%; top:18%; transform:translateX(-50%); text-align:center; font-size:30px; font-weight:900; letter-spacing:2px; color:#ffd24a; text-shadow:0 3px 8px #000, 0 0 18px rgba(255,160,40,0.5); opacity:0; white-space:nowrap;',
-      root,
-    );
+    this.banner = el('div', 'banner', root);
 
-    // --- full map / pause screen ---
-    this.bigMapWrap = el(
-      'div',
-      'position:absolute; inset:0; display:none; align-items:center; justify-content:center; background:rgba(0,0,0,0.55); flex-direction:column; gap:8px;',
-      root,
-    );
-    el('div', 'font-size:28px; font-weight:900; letter-spacing:6px; text-shadow:0 2px 6px #000;', this.bigMapWrap).textContent = 'PAUSED';
-    this.bigMapCanvas = el('canvas', 'border:3px solid rgba(20,40,20,0.9); border-radius:6px; box-shadow:0 4px 18px rgba(0,0,0,0.6);', this.bigMapWrap);
-    el('div', 'font-size:13px; text-shadow:0 1px 3px #000;', this.bigMapWrap).textContent =
-      'You (green arrow) · Buddies (light green) · Family bases (yellow) · Enemy bases (red ✕) · Tanks · Troops · Bunkers — M / Start to resume';
+    // --- pause screen: map and options tabs ---
+    this.overlay = el('div', 'overlay', root);
+    el('h1', 'stencil', this.overlay, 'PAUSED');
+    const tabRow = el('div', 'tabs', this.overlay);
+    this.tabs = { map: el('div', 'stencil tab', tabRow, 'MAP'), options: el('div', 'stencil tab', tabRow, 'OPTIONS') };
+    this.tabs.map.addEventListener('click', () => this.showPage('map'));
+    this.tabs.options.addEventListener('click', () => this.showPage('options'));
+
+    this.pages = { map: el('div', 'page', this.overlay), options: el('div', 'page', this.overlay) };
+    this.bigMapCanvas = el('canvas', '', this.pages.map);
+    this.bigMapCanvas.style.cssText = 'border:3px solid rgba(214,196,138,0.7); border-radius:8px; box-shadow:0 4px 18px rgba(0,0,0,0.6);';
     this.bigMapCtx = this.bigMapCanvas.getContext('2d') as CanvasRenderingContext2D;
+    el('div', 'legend shadow', this.pages.map).innerHTML =
+      '<span><i style="background:#5fe05f"></i>You</span><span><i style="background:#9be27a"></i>Buddies &amp; friendly troops</span>' +
+      '<span><i style="background:#ffcc33"></i>Family bases</span><span><i style="background:#d23c32"></i>Enemy bases</span>' +
+      '<span><i style="background:linear-gradient(90deg,#ffd44a,#dc2a1a)"></i>Enemies gathered</span>';
+
+    this.optionList = el('div', 'panel options', this.pages.options);
+    this.optionHint = el('div', 'hint shadow', this.pages.options);
+    this.footer = el('div', 'footer shadow', this.overlay);
 
     // --- crosshair: where the shell will land ---
-    this.crosshair = el(
-      'div',
-      'position:absolute; left:0; top:0; width:22px; height:22px; margin:-11px 0 0 -11px; border:2px solid rgba(255,255,255,0.9); border-radius:50%; box-shadow:0 0 4px rgba(0,0,0,0.7); display:none;',
-      root,
-    );
-    el('div', 'position:absolute; left:50%; top:50%; width:4px; height:4px; margin:-2px 0 0 -2px; background:currentColor; border-radius:50%;', this.crosshair);
-    this.rangeLabel = el(
-      'div',
-      'position:absolute; left:50%; top:26px; transform:translateX(-50%); font-size:12px; font-weight:700; white-space:nowrap; text-shadow:0 1px 3px #000;',
-      this.crosshair,
-    );
+    this.crosshair = el('div', 'crosshair', root);
+    el('div', 'dot', this.crosshair);
+    this.rangeLabel = el('div', 'range', this.crosshair);
 
-    // --- centre prompt ---
-    this.promptLabel = el(
-      'div',
-      'position:absolute; left:50%; top:72%; transform:translateX(-50%); font-size:16px; font-weight:600; text-align:center; text-shadow:0 1px 4px #000; display:none;',
-      root,
-    );
+    this.promptLabel = el('div', 'prompt shadow', root);
 
     // --- victory screen ---
-    this.victory = el(
-      'div',
-      'position:absolute; inset:0; display:none; flex-direction:column; align-items:center; justify-content:center; gap:14px; background:radial-gradient(ellipse at center, rgba(40,80,30,0.55), rgba(0,0,0,0.25)); text-align:center;',
-      root,
-    );
-    el('div', 'font-size:64px; font-weight:900; letter-spacing:4px; color:#ffd24a; text-shadow:0 4px 14px #000, 0 0 30px rgba(255,200,60,0.7);', this.victory).textContent = 'WELL DONE COOPER!';
-    el('div', 'font-size:22px; font-weight:700; text-shadow:0 2px 6px #000;', this.victory).textContent = 'Every enemy base has been destroyed. The toy box is yours!';
-    el('div', 'font-size:14px; opacity:0.85; text-shadow:0 1px 4px #000;', this.victory).textContent = 'Keep driving around and enjoy it!';
+    this.victory = el('div', 'victory', root);
+    el('div', 'stencil big', this.victory, 'WELL DONE COOPER!');
+    el('div', 'shadow', this.victory, 'The Fortress has fallen and every enemy base is yours. The toy box is saved!').style.cssText = 'font-size:22px; font-weight:700;';
+    el('div', 'shadow', this.victory, 'Keep driving around and enjoy it!').style.cssText = 'font-size:14px; opacity:0.85;';
 
-    this.hudBits = [bottomLeft, this.statusLabel, minimapWrap, this.promptLabel, this.baseCounter, this.checklist];
+    this.hudBits = [card, this.keys, minimapWrap, this.promptLabel, this.baseCounter, this.checklist];
+    this.showPage('map');
   }
 
   setWorldMap(map: WorldMap): void {
     this.worldMap = map;
   }
 
-  get paused(): boolean {
-    return this.bigMapOpen;
+  /** The options screen edits these; `onChange` fires with the new values after every change. */
+  setSettings(settings: Settings, onChange: (s: Settings) => void): void {
+    this.settings = settings;
+    this.onSettingsChange = onChange;
+    this.renderOptions();
   }
 
+  get paused(): boolean {
+    return this.pausedOpen;
+  }
+
+  /** Opens or closes the pause screen (it always opens on the map). */
   toggleBigMap(): void {
-    this.bigMapOpen = !this.bigMapOpen;
-    this.bigMapWrap.style.display = this.bigMapOpen ? 'flex' : 'none';
+    this.pausedOpen = !this.pausedOpen;
+    this.overlay.style.display = this.pausedOpen ? 'flex' : 'none';
+    this.showPage('map');
+    // Free the mouse so the options can be clicked.
+    if (this.pausedOpen && document.pointerLockElement) document.exitPointerLock();
+  }
+
+  /**
+   * Controller/keyboard navigation while paused: X / O opens options, B / Esc backs out,
+   * D-pad or stick picks a row and changes it.
+   */
+  handleMenu(menu: MenuInput): void {
+    if (!this.pausedOpen) return;
+    if (this.page === 'map') {
+      if (menu.options || menu.right) this.showPage('options');
+      else if (menu.back) this.toggleBigMap();
+      return;
+    }
+    if (menu.back) {
+      this.showPage('map');
+      return;
+    }
+    if (menu.up) this.optionIndex = (this.optionIndex + OPTION_ROWS.length - 1) % OPTION_ROWS.length;
+    if (menu.down) this.optionIndex = (this.optionIndex + 1) % OPTION_ROWS.length;
+    if (menu.left) this.cycleOption(this.optionIndex, -1);
+    if (menu.right || menu.confirm) this.cycleOption(this.optionIndex, 1);
+    if (menu.up || menu.down) this.renderOptions();
+  }
+
+  private showPage(page: 'map' | 'options'): void {
+    this.page = page;
+    for (const p of ['map', 'options'] as const) {
+      this.tabs[p].classList.toggle('on', p === page);
+      this.pages[p].classList.toggle('on', p === page);
+    }
+    this.footer.textContent =
+      page === 'map'
+        ? 'Start / M: resume  ·  X / O: options  ·  B / Esc: resume'
+        : 'D-pad / arrows: choose and change  ·  A / Enter: change  ·  B / Esc: back to map';
+    if (page === 'options') this.renderOptions();
+  }
+
+  private cycleOption(index: number, dir: 1 | -1): void {
+    if (!this.settings) return;
+    const row = OPTION_ROWS[index];
+    const current = row.values.findIndex((v) => v.value === this.settings?.[row.key]);
+    const next = row.values[(current + dir + row.values.length) % row.values.length];
+    this.settings = { ...this.settings, [row.key]: next.value };
+    this.onSettingsChange?.(this.settings);
+    this.renderOptions();
+  }
+
+  private renderOptions(): void {
+    if (!this.settings) return;
+    const settings = this.settings;
+    this.optionList.replaceChildren();
+    OPTION_ROWS.forEach((row, i) => {
+      const current = row.values.find((v) => v.value === settings[row.key]) ?? row.values[0];
+      const line = el('div', `opt${i === this.optionIndex ? ' sel' : ''}`, this.optionList);
+      el('div', 'name', line, row.label);
+      const val = el('div', 'val', line);
+      const left = el('span', 'arrow', val, '◀');
+      el('b', '', val, current.label);
+      const right = el('span', 'arrow', val, '▶');
+      line.addEventListener('mouseenter', () => {
+        if (this.optionIndex === i) return;
+        this.optionIndex = i;
+        this.renderOptions();
+      });
+      left.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.cycleOption(i, -1);
+      });
+      right.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.cycleOption(i, 1);
+      });
+      line.addEventListener('click', () => this.cycleOption(i, 1));
+      if (i === this.optionIndex) this.optionHint.textContent = current.hint;
+    });
   }
 
   showHitMarker(zone: ArmorZone): void {
@@ -257,7 +456,9 @@ export class HUD {
   }
 
   showBanner(title: string, subtitle: string): void {
-    this.banner.innerHTML = `${title}<div style="font-size:17px; font-weight:700; letter-spacing:1px; color:#fff; margin-top:6px">${subtitle}</div>`;
+    this.banner.replaceChildren();
+    el('div', 'stencil big', this.banner, title);
+    el('div', 'small shadow', this.banner, subtitle);
     this.bannerAge = 0;
   }
 
@@ -274,24 +475,58 @@ export class HUD {
     return this.victory.style.display === 'flex';
   }
 
+  /** Sets innerHTML only when it actually changes (cheap to call every frame). */
+  private setHTML(target: HTMLElement, html: string): void {
+    if (this.html.get(target) === html) return;
+    this.html.set(target, html);
+    target.innerHTML = html;
+  }
+
   update(state: HUDState): void {
     const now = performance.now();
     const dt = Math.min(0.1, (now - this.lastUpdate) / 1000);
     this.lastUpdate = now;
 
+    // Hull: segmented bar that shifts green → amber → red.
     const healthFrac = Math.max(0, state.health / state.maxHealth);
-    this.healthFill.style.width = `${healthFrac * 100}%`;
-    this.healthFill.style.background = healthFrac > 0.5 ? '#5fd15f' : healthFrac > 0.25 ? '#e0c23f' : '#e05f4f';
-    this.healthLabel.textContent = `HULL  ${Math.ceil(state.health)} / ${state.maxHealth}`;
+    const lit = Math.ceil(healthFrac * HULL_SEGMENTS);
+    const hullColor = healthFrac > 0.5 ? '#6fd35a' : healthFrac > 0.25 ? '#e8c23f' : '#e0503f';
+    this.segs.forEach((s, i) => (s.style.background = i < lit ? hullColor : 'rgba(0,0,0,0.45)'));
+    this.healthText.textContent = `${Math.ceil(state.health)} / ${state.maxHealth}`;
+    const loaded = state.reloadFraction <= 0;
     this.reloadFill.style.width = `${(1 - state.reloadFraction) * 100}%`;
+    this.reloadText.textContent = loaded ? 'LOADED' : 'RELOADING';
+    this.reloadText.style.color = loaded ? '#ffd24a' : '#eef3f8';
+    this.modeText.textContent = `${state.cameraMode === 'first' ? '1st' : '3rd'} person · ${state.driveStyle === 'warthog' ? 'Warthog' : 'Classic'} drive`;
 
-    this.statusLabel.innerHTML = state.usingGamepad
-      ? `${state.cameraMode === 'first' ? '1st' : '3rd'} person · Controller<br>LS drive · RS aim · RT fire · LB rocket · X buddy · Y camera · Start map · Back reset`
-      : `${state.cameraMode === 'first' ? '1st' : '3rd'} person · Keyboard/Mouse<br>WASD drive · mouse aim · click fire · F rocket · X buddy · C camera · M map · R reset`;
+    const rocketReady = state.rocketCharge >= 1;
+    this.rocketFill.style.width = `${Math.floor(state.rocketCharge * 100)}%`;
+    this.rocketText.textContent = rocketReady ? `READY · ${state.usingGamepad ? 'LB' : 'F'}` : `${Math.floor(state.rocketCharge * 100)}%`;
+    this.rocketText.style.color = rocketReady ? '#ff9a5a' : '#eef3f8';
+    this.rocketSlot.classList.toggle('ready', rocketReady);
 
-    this.updateMeter(this.rocket, state.rocketCharge, 'ROCKET', state.usingGamepad ? 'LB' : 'F / right-click', 20, now);
-    const buddyNote = state.buddyCount > 0 ? ` · ${state.buddyCount} with you` : '';
-    this.updateMeter(this.buddy, state.buddyCharge, 'BUDDY TANK', state.usingGamepad ? 'X' : 'X key', 100, now, buddyNote);
+    const allOut = state.buddyNames.length >= state.buddyMax;
+    const buddyReady = state.buddyCharge >= 1 && !allOut;
+    this.buddyFill.style.width = `${Math.floor(state.buddyCharge * 100)}%`;
+    this.buddyText.textContent = allOut
+      ? 'ALL OUT'
+      : buddyReady
+        ? `READY · ${state.usingGamepad ? 'X' : 'X key'}`
+        : `${Math.floor(state.buddyCharge * 100)}%`;
+    this.buddyText.style.color = buddyReady ? '#9be27a' : '#eef3f8';
+    this.setHTML(
+      this.buddyChips,
+      state.buddyRoster.map((n) => `<div class="chip${state.buddyNames.includes(n) ? ' on' : ''}">${n}</div>`).join(''),
+    );
+
+    const k = (key: string, what: string) => `<span class="key">${key}</span>${what}`;
+    this.setHTML(
+      this.keys,
+      state.usingGamepad
+        ? `${k('LS', 'drive')}${k('RS', 'aim')}${k('RT', 'fire')}${k('LB', 'rocket')}<br>${k('X', 'buddy')}${k('Y', 'camera')}${k('Start', 'pause · options')}${k('Back', 'home')}`
+        : `${k('WASD', 'drive')}${k('Mouse', 'aim')}${k('Click', 'fire')}${k('F', 'rocket')}<br>${k('X', 'buddy')}${k('C', 'camera')}${k('M', 'pause · options')}${k('R', 'home')}` +
+            (state.mouseCaptureHint ? '<br><span style="color:#ffd24a">Click the game to capture the mouse for aiming</span>' : ''),
+    );
 
     if (state.rocketLockScreen) {
       this.lockMarker.style.display = 'block';
@@ -309,10 +544,26 @@ export class HUD {
     this.banner.style.opacity = `${bannerT < 0.1 ? bannerT * 10 : Math.max(0, (1 - bannerT) * 2.5)}`;
     this.banner.style.transform = `translateX(-50%) scale(${1 + Math.max(0, 0.15 - this.bannerAge) * 2})`;
 
-    this.baseCounter.innerHTML =
-      state.enemyBasesLeft === 0
-        ? '<span style="color:#9be27a">ALL ENEMY BASES DESTROYED ✓</span>'
-        : `ENEMY BASES LEFT <span style="color:#ff7a6a">${state.enemyBasesLeft}</span> / ${state.enemyBasesTotal}`;
+    // Enemy bases: a flag each, red while standing, green with a tick once taken.
+    const flags = state.map.enemyBases
+      .map(
+        (b) =>
+          `<div class="flag" style="color:${b.destroyed ? '#9be27a' : '#ff8a7a'}">${flagIcon(b.destroyed ? '#5fbf4a' : '#d23c32', b.destroyed)}${b.name.toUpperCase()}</div>`,
+      )
+      .join('');
+    const fort = state.map.fortress;
+    const fortColor = fort.destroyed ? '#9be27a' : fort.locked ? '#b8b09a' : '#ff5a4a';
+    const fortIcon = fort.locked
+      ? `<svg width="22" height="22" viewBox="0 0 22 22"><path d="M7 10V7a4 4 0 0 1 8 0v3" stroke="#d8d2bd" stroke-width="2" fill="none"/><rect x="5" y="10" width="12" height="9" rx="1.5" fill="#d9a520"/></svg>`
+      : flagIcon(fort.destroyed ? '#5fbf4a' : '#8a3cc8', fort.destroyed);
+    const title =
+      fort.destroyed
+        ? 'VICTORY! THE FORTRESS HAS FALLEN'
+        : state.enemyBasesLeft === 0
+          ? 'FINAL ASSAULT <span style="color:#ff8a7a">DESTROY THE FORTRESS</span>'
+          : `ENEMY BASES LEFT <span style="color:#ff8a7a">${state.enemyBasesLeft}</span> / ${state.enemyBasesTotal}`;
+    const fortFlag = `<div class="flag" style="color:${fortColor}; margin-left:6px; padding-left:10px; border-left:1px solid rgba(214,196,138,0.35)">${fortIcon}FORTRESS</div>`;
+    this.setHTML(this.baseCounter, `<div class="stencil title">${title}</div><div class="flags">${flags}${fortFlag}</div>`);
 
     this.updateChecklist(state);
 
@@ -321,7 +572,7 @@ export class HUD {
     this.cinematicLabel.style.display = state.cinematic ? 'block' : 'none';
     for (const bit of this.hudBits) bit.style.visibility = state.cinematic ? 'hidden' : 'visible';
 
-    if (state.cinematic) {
+    if (state.cinematic || this.pausedOpen) {
       this.crosshair.style.display = 'none';
     } else if (state.aimScreen) {
       this.crosshair.style.display = 'block';
@@ -334,16 +585,16 @@ export class HUD {
       this.crosshair.style.display = 'none';
     }
 
-    if (this.bigMapOpen) {
+    if (this.pausedOpen) {
       this.promptLabel.style.display = 'none';
     } else if (state.insideBase) {
       this.promptLabel.style.display = 'block';
       this.promptLabel.style.color = '#eef3f8';
-      this.promptLabel.textContent = state.health < state.maxHealth ? `${state.insideBase} — repairing` : state.insideBase;
+      this.promptLabel.textContent = state.health < state.maxHealth ? `🔧 ${state.insideBase} — repairing` : state.insideBase;
     } else if (healthFrac < 0.3) {
       this.promptLabel.style.display = 'block';
       this.promptLabel.style.color = '#ff9a8a';
-      this.promptLabel.textContent = 'Hull critical — retreat to a family base (yellow rings on the map)';
+      this.promptLabel.textContent = 'Hull critical — head back to a family base (yellow rings on the map)';
     } else {
       this.promptLabel.style.display = 'none';
     }
@@ -353,56 +604,33 @@ export class HUD {
       arrowScale: 1,
       labels: false,
       rimPointer: true,
+      heatmap: false,
     });
 
-    if (this.bigMapOpen) {
-      const size = Math.floor(Math.min(window.innerWidth, window.innerHeight) * 0.78);
+    if (this.pausedOpen && this.page === 'map') {
+      const size = Math.floor(Math.min(window.innerWidth * 0.9, window.innerHeight - 230));
       if (this.bigMapCanvas.width !== size) {
         this.bigMapCanvas.width = size;
         this.bigMapCanvas.height = size;
       }
-      this.worldMap.draw(this.bigMapCtx, size, size, 0, 0, WORLD_SIZE, state.map, { arrowScale: 2.6, labels: true, rimPointer: false });
+      this.worldMap.draw(this.bigMapCtx, size, size, 0, 0, WORLD_SIZE, state.map, { arrowScale: 2.6, labels: true, rimPointer: false, heatmap: true });
     }
-  }
-
-  private updateMeter(
-    m: { label: HTMLDivElement; fill: HTMLDivElement },
-    charge: number,
-    name: string,
-    key: string,
-    hue: number,
-    now: number,
-    note = '',
-  ): void {
-    const ready = charge >= 1;
-    m.fill.style.width = `${Math.floor(charge * 100)}%`;
-    m.fill.style.boxShadow = ready ? `0 0 10px hsl(${hue}, 90%, 60%)` : 'none';
-    m.label.textContent = ready ? `${name} READY — ${key}${note}` : `${name} ${Math.floor(charge * 100)}%${note}`;
-    m.label.style.color = ready ? `hsl(${hue}, 100%, ${62 + 14 * Math.sin(now / 150)}%)` : '#eef3f8';
   }
 
   private updateChecklist(state: HUDState): void {
     const base = state.nearbyBase;
     if (!base) {
       this.checklist.style.display = 'none';
-      this.lastChecklist = '';
       return;
     }
     this.checklist.style.display = 'block';
     const left = base.objectives.filter((o) => !o.done).length;
-    const html =
-      `<div style="font-weight:900; letter-spacing:1px; color:#ff8a7a">ENEMY BASE ${base.name.toUpperCase()}</div>` +
-      `<div style="font-size:11px; opacity:0.8; margin-bottom:6px">${Math.round(base.distance)} m · ${left} target${left === 1 ? '' : 's'} left</div>` +
-      base.objectives
-        .map((o) =>
-          o.done
-            ? `<div style="color:#9be27a; text-decoration:line-through; opacity:0.8">☑ ${o.label}</div>`
-            : `<div>☐ ${o.label}</div>`,
-        )
-        .join('');
-    if (html !== this.lastChecklist) {
-      this.checklist.innerHTML = html;
-      this.lastChecklist = html;
-    }
+    this.setHTML(
+      this.checklist,
+      `<div class="head"><div class="stencil" style="font-size:13px">${base.name.toUpperCase()}</div>` +
+        `<div style="font-size:11px; opacity:0.9">${Math.round(base.distance)} m · ${left} target${left === 1 ? '' : 's'} left</div></div>` +
+        `<div style="height:6px"></div>` +
+        base.objectives.map((o) => `<div class="line${o.done ? ' done' : ''}">${o.done ? '☑' : '☐'} ${o.label}</div>`).join(''),
+    );
   }
 }

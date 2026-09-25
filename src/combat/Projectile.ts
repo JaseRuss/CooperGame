@@ -140,8 +140,11 @@ export class Projectile {
         if (zone) result.tankHit = { tank: target.tank, zone };
       }
     } else if (target?.kind === 'building') {
-      target.building.takeDamage(this.damage);
-      if (target.building.destroyed) result.collapsedBuilding = target.building;
+      // Nor do they hurt their own side's bunkers and compounds.
+      if (target.building.faction !== this.faction) {
+        target.building.takeDamage(this.damage);
+        if (target.building.destroyed) result.collapsedBuilding = target.building;
+      }
     }
     this.onImpact?.(point, result);
     this.remove();

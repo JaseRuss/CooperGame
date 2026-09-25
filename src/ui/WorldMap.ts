@@ -11,6 +11,7 @@ import {
   AIRPORT_ACCESS_X,
   MALL_LOT_BACK_Z,
   SITE_ROAD_WIDTH,
+  enemyArmyOfSite,
 } from '../world/Landmarks';
 
 export interface MapHouse {
@@ -27,6 +28,8 @@ export interface MapMarker {
   x: number;
   z: number;
   kind: MarkerKind;
+  /** On the player's side (red army, green garrisons), drawn in green. */
+  friendly: boolean;
 }
 
 export interface MapBase {
@@ -40,11 +43,13 @@ export interface MapView {
   playerZ: number;
   playerYaw: number;
   friendlyBases: MapBase[];
-  enemyBases: (MapBase & { destroyed: boolean })[];
-  buddies: { x: number; z: number }[];
+  /** 	itle is the full label, e.g. "Blue Army Base Bravo". */
+  enemyBases: (MapBase & { destroyed: boolean; title: string })[];
+  buddies: { x: number; z: number; name: string }[];
   markers: MapMarker[];
-  /** Nearest enemy base still standing; the minimap points at it. */
+  /** Nearest enemy base still standing (or the Fortress once they're all down); the minimap points at it. */
   objective: MapBase | null;
+  fortress: MapBase & { title: string; locked: boolean; destroyed: boolean };
 }
 
 export interface MapDrawOptions {
@@ -54,20 +59,37 @@ export interface MapDrawOptions {
   labels: boolean;
   /** Draw an arrow on the rim of a round map pointing at `view.objective` when it's out of view. */
   rimPointer: boolean;
+  /** Show enemies as a heatmap of where they're gathered instead of individual dots. */
+  heatmap: boolean;
 }
 
 const LAYER_SIZE = 1024;
 const TERRAIN_SAMPLES = 192;
+const HEAT_GRID = 128; // cells per side (~23m each)
+const HEAT_SPREAD = 1.7; // Gaussian sigma, in cells
+const HEAT_REACH = 5; // cells either side that a unit warms
+const HEAT_WEIGHT: Record<MarkerKind, number> = { tank: 3, bunker: 2, troop: 0.7 };
+/** Heat at which the colour peaks at full red. */
+const HEAT_FULL = 5;
 
 /** Top-down map of the world: a pre-rendered static layer plus live houses, markers and player. */
 export class WorldMap {
   private readonly layer: HTMLCanvasElement;
+  private readonly heatCanvas: HTMLCanvasElement;
+  private readonly heatImage: ImageData;
+  private readonly heat = new Float32Array(HEAT_GRID * HEAT_GRID);
 
   constructor(
     highways: Polyline[],
     towns: Town[],
     private readonly houses: MapHouse[],
+    forests: { x: number; z: number; radius: number }[],
   ) {
+    this.heatCanvas = document.createElement('canvas');
+    this.heatCanvas.width = HEAT_GRID;
+    this.heatCanvas.height = HEAT_GRID;
+    this.heatImage = new ImageData(HEAT_GRID, HEAT_GRID);
+
     this.layer = document.createElement('canvas');
     this.layer.width = LAYER_SIZE;
     this.layer.height = LAYER_SIZE;
@@ -85,6 +107,18 @@ export class WorldMap {
         ctx.fillStyle = `rgb(${Math.round(55 + t * 50)},${g},${Math.round(45 + t * 20)})`;
         ctx.fillRect(x - cell / 2, z - cell / 2, cell + 1, cell + 1);
       }
+    }
+
+    // Forests: dark green patches with a softer rim.
+    for (const f of forests) {
+      const grad = ctx.createRadialGradient(f.x, f.z, f.radius * 0.3, f.x, f.z, f.radius);
+      grad.addColorStop(0, 'rgba(38,78,34,0.95)');
+      grad.addColorStop(0.8, 'rgba(44,88,38,0.85)');
+      grad.addColorStop(1, 'rgba(50,95,42,0)');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(f.x, f.z, f.radius, 0, Math.PI * 2);
+      ctx.fill();
     }
 
     ctx.strokeStyle = '#2f3237';
@@ -110,10 +144,23 @@ export class WorldMap {
       const runwayLen = half.x * 2 - 40;
       const apronFront = APRON.z + APRON.halfZ;
       const serviceLen = half.x - APRON.halfX;
+      if (site.kind === 'fortress') {
+        // Tan west half, blue east half, heavy walls.
+        ctx.fillStyle = '#9c8a62';
+        ctx.fillRect(site.cx - site.halfX, site.cz - site.halfZ, site.halfX, site.halfZ * 2);
+        ctx.fillStyle = '#62769c';
+        ctx.fillRect(site.cx, site.cz - site.halfZ, site.halfX, site.halfZ * 2);
+        ctx.strokeStyle = '#3a3528';
+        ctx.lineWidth = 9;
+        ctx.strokeRect(site.cx - site.halfX + 8, site.cz - site.halfZ + 8, site.halfX * 2 - 16, site.halfZ * 2 - 16);
+        ctx.fillStyle = '#3a3d42';
+        continue;
+      }
       if (site.kind === 'enemyBase') {
-        ctx.fillStyle = '#8a7d5c';
+        const blue = enemyArmyOfSite(site) === 'blue';
+        ctx.fillStyle = blue ? '#5f7396' : '#8a7d5c';
         ctx.fillRect(site.cx - site.halfX, site.cz - site.halfZ, site.halfX * 2, site.halfZ * 2);
-        ctx.strokeStyle = '#5a4a2a';
+        ctx.strokeStyle = blue ? '#2a3a5a' : '#5a4a2a';
         ctx.lineWidth = 4;
         ctx.strokeRect(site.cx - site.halfX, site.cz - site.halfZ, site.halfX * 2, site.halfZ * 2);
         ctx.fillStyle = '#3a3d42';
@@ -176,6 +223,8 @@ export class WorldMap {
       ctx.fillRect(h.x - hx, h.z - hz, hx * 2, hz * 2);
     }
 
+    if (opts.heatmap) this.drawHeatmap(ctx, view.markers);
+
     // Family bases: yellow rings.
     ctx.strokeStyle = '#ffcc33';
     ctx.lineWidth = 3 / s;
@@ -209,27 +258,58 @@ export class WorldMap {
       ctx.stroke();
     }
 
-    for (const b of view.buddies) {
-      ctx.fillStyle = '#9be27a';
+    // The Fortress: padlock while locked, red cross once open, tick when it falls.
+    {
+      const fz = view.fortress;
+      const r = Math.max(40, 9 / s);
+      ctx.lineWidth = 3.5 / s;
+      ctx.strokeStyle = fz.destroyed ? '#9be27a' : fz.locked ? '#d8d2bd' : '#ff5a4a';
       ctx.beginPath();
-      ctx.arc(b.x, b.z, 4 / s, 0, Math.PI * 2);
-      ctx.fill();
+      if (fz.destroyed) {
+        ctx.moveTo(fz.x - r * 0.5, fz.z);
+        ctx.lineTo(fz.x - r * 0.1, fz.z + r * 0.45);
+        ctx.lineTo(fz.x + r * 0.55, fz.z - r * 0.45);
+      } else if (fz.locked) {
+        ctx.arc(fz.x, fz.z - r * 0.15, r * 0.3, Math.PI, 0);
+        ctx.stroke();
+        ctx.fillStyle = '#d9a520';
+        ctx.fillRect(fz.x - r * 0.45, fz.z - r * 0.15, r * 0.9, r * 0.7);
+        ctx.beginPath();
+      } else {
+        ctx.moveTo(fz.x - r * 0.5, fz.z - r * 0.5);
+        ctx.lineTo(fz.x + r * 0.5, fz.z + r * 0.5);
+        ctx.moveTo(fz.x + r * 0.5, fz.z - r * 0.5);
+        ctx.lineTo(fz.x - r * 0.5, fz.z + r * 0.5);
+      }
+      ctx.stroke();
     }
 
     for (const m of view.markers) {
+      if (opts.heatmap && !m.friendly) continue; // shown as heat instead
       if (m.kind === 'bunker') {
         const r = 5 / s;
-        ctx.fillStyle = '#c0843a';
+        ctx.fillStyle = m.friendly ? '#6fbf4a' : '#c0843a';
         ctx.fillRect(m.x - r, m.z - r, r * 2, r * 2);
         ctx.strokeStyle = '#1a1a1a';
         ctx.lineWidth = 1 / s;
         ctx.strokeRect(m.x - r, m.z - r, r * 2, r * 2);
       } else {
-        ctx.fillStyle = m.kind === 'tank' ? '#e0523f' : '#f0a040';
+        if (m.friendly) ctx.fillStyle = m.kind === 'tank' ? '#b8f59a' : '#d8f7c4';
+        else ctx.fillStyle = m.kind === 'tank' ? '#e0523f' : '#f0a040';
         ctx.beginPath();
         ctx.arc(m.x, m.z, (m.kind === 'tank' ? 4.5 : 2.5) / s, 0, Math.PI * 2);
         ctx.fill();
       }
+    }
+
+    for (const b of view.buddies) {
+      ctx.fillStyle = '#9be27a';
+      ctx.strokeStyle = '#0d2a0d';
+      ctx.lineWidth = 1.2 / s;
+      ctx.beginPath();
+      ctx.arc(b.x, b.z, 5 / s, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
     }
 
     // Everything below is in screen pixels so it stays readable at any zoom.
@@ -248,7 +328,11 @@ export class WorldMap {
         ctx.fillText(text, lx, lz - 16);
       };
       for (const b of view.friendlyBases) label(b.x, b.z, b.name, '#ffe07a');
-      for (const b of view.enemyBases) label(b.x, b.z, `Enemy Base ${b.name}${b.destroyed ? ' ✓' : ''}`, b.destroyed ? '#9be27a' : '#ff8a7a');
+      for (const b of view.enemyBases) label(b.x, b.z, `${b.title}${b.destroyed ? ' ✓' : ''}`, b.destroyed ? '#9be27a' : '#ff8a7a');
+      const fz = view.fortress;
+      label(fz.x, fz.z - 50, `${fz.title}${fz.destroyed ? ' ✓' : fz.locked ? ' (locked)' : ''}`, fz.destroyed ? '#9be27a' : fz.locked ? '#e8d9a4' : '#ff8a7a');
+      ctx.font = '700 11px "Segoe UI", system-ui, sans-serif';
+      for (const b of view.buddies) label(b.x, b.z + 2 / s, b.name, '#c8f5a8');
     }
 
     if (opts.rimPointer && view.objective) this.drawRimPointer(ctx, width, height, toScreen(view.objective.x, view.objective.z), view);
@@ -270,6 +354,47 @@ export class WorldMap {
     ctx.fill();
     ctx.stroke();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
+  }
+
+  /**
+   * Splats every enemy onto a coarse grid with a soft falloff and draws it as a yellow-to-red glow,
+   * so the pause map shows where the enemy is gathered rather than hundreds of dots.
+   * Expects `ctx` to be in world coordinates.
+   */
+  private drawHeatmap(ctx: CanvasRenderingContext2D, markers: MapMarker[]): void {
+    const heat = this.heat;
+    heat.fill(0);
+    const cell = WORLD_SIZE / HEAT_GRID;
+    const falloff = 1 / (2 * HEAT_SPREAD * HEAT_SPREAD);
+    for (const m of markers) {
+      if (m.friendly) continue;
+      const gx = (m.x + WORLD_HALF) / cell;
+      const gz = (m.z + WORLD_HALF) / cell;
+      const w = HEAT_WEIGHT[m.kind];
+      const x0 = Math.max(0, Math.floor(gx) - HEAT_REACH);
+      const x1 = Math.min(HEAT_GRID - 1, Math.floor(gx) + HEAT_REACH);
+      const z0 = Math.max(0, Math.floor(gz) - HEAT_REACH);
+      const z1 = Math.min(HEAT_GRID - 1, Math.floor(gz) + HEAT_REACH);
+      for (let iz = z0; iz <= z1; iz++) {
+        const dz = iz + 0.5 - gz;
+        for (let ix = x0; ix <= x1; ix++) {
+          const dx = ix + 0.5 - gx;
+          heat[ix + iz * HEAT_GRID] += w * Math.exp(-(dx * dx + dz * dz) * falloff);
+        }
+      }
+    }
+
+    const px = this.heatImage.data;
+    for (let i = 0; i < heat.length; i++) {
+      const t = Math.min(1, heat[i] / HEAT_FULL);
+      px[i * 4] = 255 - 35 * t;
+      px[i * 4 + 1] = 225 - 195 * t; // yellow → red as it gets hotter
+      px[i * 4 + 2] = 70 - 50 * t;
+      px[i * 4 + 3] = heat[i] < 0.15 ? 0 : 255 * Math.min(0.85, 0.08 + 0.8 * Math.pow(t, 0.8));
+    }
+    (this.heatCanvas.getContext('2d') as CanvasRenderingContext2D).putImageData(this.heatImage, 0, 0);
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(this.heatCanvas, -WORLD_HALF, -WORLD_HALF, WORLD_SIZE, WORLD_SIZE);
   }
 
   /**

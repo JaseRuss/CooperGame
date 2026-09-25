@@ -9,6 +9,7 @@ const SAMPLE_STEP = 5;
 const JOIN_OVERLAP = 8; // meters the highway extends back over the road it joins
 const LOT_CLEARANCE = 14;
 const EXTRA_LOOP_EDGES = 2;
+const ASPHALT_COLUMNS = 5; // vertices across the highway, so it can follow a crowned or tilted slope
 
 export type Polyline = THREE.Vector2[];
 
@@ -174,30 +175,48 @@ export function planHighways(): Polyline[] {
   return roads;
 }
 
-function pushRibbon(path: Polyline, width: number, lift: number, positions: number[], indices: number[]): void {
+/**
+ * Highest point of the rendered ground around (x, z): the road surface spans straight lines
+ * between its vertices, so each vertex is lifted clear of any bump in the neighbouring stretch.
+ */
+function groundUnder(x: number, z: number, tangent: THREE.Vector2, side: THREE.Vector2, reach: number, span: number): number {
+  let h = surfaceHeightAt(x, z);
+  for (const t of [-reach, -reach / 2, reach / 2, reach]) h = Math.max(h, surfaceHeightAt(x + tangent.x * t, z + tangent.y * t));
+  for (const s of [-span, span]) h = Math.max(h, surfaceHeightAt(x + side.x * s, z + side.y * s));
+  return h;
+}
+
+/** A strip `columns` vertices wide laid along `path`, hugging (never dipping under) the ground. */
+function pushRibbon(path: Polyline, width: number, lift: number, positions: number[], indices: number[], columns = 2, sampleSpan?: number): void {
   const base = positions.length / 3;
   for (let i = 0; i < path.length; i++) {
     const prev = path[Math.max(0, i - 1)];
     const next = path[Math.min(path.length - 1, i + 1)];
     const tangent = next.clone().sub(prev).normalize();
-    const side = new THREE.Vector2(-tangent.y, tangent.x).multiplyScalar(width / 2);
-    for (const s of [1, -1]) {
+    const side = new THREE.Vector2(-tangent.y, tangent.x);
+    const reach = Math.max(prev.distanceTo(path[i]), next.distanceTo(path[i])) / 2;
+    const span = sampleSpan ?? width / (columns - 1) / 2;
+    for (let c = 0; c < columns; c++) {
+      const s = (0.5 - c / (columns - 1)) * width; // +width/2 (left) to -width/2 (right)
       const x = path[i].x + side.x * s;
       const z = path[i].y + side.y * s;
-      positions.push(x, surfaceHeightAt(x, z) + lift, z);
+      positions.push(x, groundUnder(x, z, tangent, side, reach, span) + lift, z);
     }
     if (i > 0) {
-      // Quad (L0, R0, L1, R1); wound counter-clockwise seen from above so the faces point up.
-      const a = base + (i - 1) * 2;
-      indices.push(a, a + 2, a + 1, a + 1, a + 2, a + 3);
+      // Quads between this row and the last, wound counter-clockwise seen from above (faces up).
+      for (let c = 0; c < columns - 1; c++) {
+        const a = base + (i - 1) * columns + c;
+        const b = a + columns;
+        indices.push(a, b, a + 1, a + 1, b, b + 1);
+      }
     }
   }
 }
 
-function ribbonGeometry(paths: Polyline[], width: number, lift: number): THREE.BufferGeometry {
+function ribbonGeometry(paths: Polyline[], width: number, lift: number, columns = 2, sampleSpan?: number): THREE.BufferGeometry {
   const positions: number[] = [];
   const indices: number[] = [];
-  for (const p of paths) pushRibbon(p, width, lift, positions, indices);
+  for (const p of paths) pushRibbon(p, width, lift, positions, indices, columns, sampleSpan);
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
   geo.setIndex(indices);
@@ -210,7 +229,7 @@ export function buildHighwayMeshes(roads: Polyline[]): THREE.Object3D {
   const group = new THREE.Group();
 
   const asphalt = new THREE.Mesh(
-    ribbonGeometry(roads, HIGHWAY_WIDTH, 0.14),
+    ribbonGeometry(roads, HIGHWAY_WIDTH, 0.14, ASPHALT_COLUMNS),
     new THREE.MeshStandardMaterial({
       color: 0x45484d,
       roughness: 0.95,
@@ -228,7 +247,8 @@ export function buildHighwayMeshes(roads: Polyline[]): THREE.Object3D {
   }
   group.add(
     new THREE.Mesh(
-      ribbonGeometry(dashes, 0.35, 0.18),
+      // Sampled like the asphalt's centre line so the dashes always sit just on top of it.
+      ribbonGeometry(dashes, 0.35, 0.18, 2, HIGHWAY_WIDTH / (ASPHALT_COLUMNS - 1) / 2),
       new THREE.MeshBasicMaterial({ color: 0xe8d36a, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 }),
     ),
   );

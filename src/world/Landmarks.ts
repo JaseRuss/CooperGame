@@ -1,11 +1,12 @@
 import { mulberry32 } from '../utils/rng';
 import { randRange } from '../utils/math';
-import { WORLD_HALF, WORLD_SEED, FRIENDLY_BASES, ENEMY_BASE_COUNT, distanceToFriendlyBase } from '../core/config';
+import { WORLD_HALF, WORLD_SEED, FRIENDLY_BASES, ENEMY_BASE_COUNT, FORTRESS_HALF, distanceToFriendlyBase } from '../core/config';
 import { TOWNS } from './TownPlan';
+import type { EnemyArmy } from '../utils/plastic';
 
 /** A flattened rectangular site. `flip` = which way the site's front faces along Z (+1 or -1). */
 export interface Site {
-  kind: 'mall' | 'airport' | 'enemyBase';
+  kind: 'mall' | 'airport' | 'enemyBase' | 'fortress';
   /** Call sign for enemy bases ("Alpha", ...); empty otherwise. */
   name: string;
   cx: number;
@@ -64,7 +65,10 @@ function plan(): { sites: Site[]; lakes: Lake[] } {
     return true;
   };
 
-  // Airport first: it needs the most room.
+  // The Fortress holds the middle of the map; everything else keeps clear of it.
+  sites.push({ kind: 'fortress', name: 'Fortress', cx: 0, cz: 0, halfX: FORTRESS_HALF, halfZ: FORTRESS_HALF, rotated: false, flip: 1 });
+
+  // Airport next: it needs the most room.
   for (let attempt = 0; attempt < 400 && !sites.some((s) => s.kind === 'airport'); attempt++) {
     const rotated = rng() < 0.5;
     const hx = rotated ? AIRPORT_HALF.z : AIRPORT_HALF.x;
@@ -111,6 +115,26 @@ function plan(): { sites: Site[]; lakes: Lake[] } {
 const planned = plan();
 export const SITES: Site[] = planned.sites;
 export const LAKES: Lake[] = planned.lakes;
+
+/** Enemy bases alternate between the tan and blue armies. */
+export function enemyArmyOfSite(site: Site): EnemyArmy {
+  return SITES.filter((s) => s.kind === 'enemyBase').indexOf(site) % 2 === 0 ? 'tan' : 'blue';
+}
+
+/** The enemy army holding the ground around (x, z): whoever owns the nearest enemy base. */
+export function enemyArmyAt(x: number, z: number): EnemyArmy {
+  let best: Site | null = null;
+  let bestD = Infinity;
+  for (const s of SITES) {
+    if (s.kind !== 'enemyBase') continue;
+    const d = Math.hypot(s.cx - x, s.cz - z);
+    if (d < bestD) {
+      bestD = d;
+      best = s;
+    }
+  }
+  return best ? enemyArmyOfSite(best) : 'tan';
+}
 
 /** Rotation (about Y) from a site's local layout frame to the world. Local +Z is the site's front. */
 export function siteYaw(site: Site): number {
@@ -171,6 +195,10 @@ export function siteEntries(site: Site): SiteEntry[] {
       [half.x, APRON.z, 1, 0],
     ],
     enemyBase: [[0, half.z, 0, 1]], // the checkpoint gate
+    fortress: [
+      [0, half.z, 0, 1],
+      [0, -half.z, 0, -1],
+    ], // north and south gatehouses
   };
   const local = byKind[site.kind];
   return local.map(([lx, lz, dx, dz]) => {

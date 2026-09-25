@@ -32,8 +32,9 @@ export class EnemyTank extends Tank {
     private readonly patrolCenter: THREE.Vector3,
     private readonly patrolRadius: number,
     private readonly rng: () => number,
+    color: number = ARMY_TAN,
   ) {
-    super(world, spawnX, spawnZ, ENEMY_MAX_HEALTH, ARMY_TAN);
+    super(world, spawnX, spawnZ, ENEMY_MAX_HEALTH, color);
     this.pickNewPatrolTarget();
 
     this.healthBarCanvas = document.createElement('canvas');
@@ -84,10 +85,10 @@ export class EnemyTank extends Tank {
   }
 
   /** Runs one frame of patrol/engage/flee AI. Returns a shot if this tank fired. */
-  ai(world: RAPIER.World, targets: Tank[], dt: number): { origin: THREE.Vector3; direction: THREE.Vector3 } | null {
+  ai(world: RAPIER.World, targets: { position: THREE.Vector3 }[], dt: number): { origin: THREE.Vector3; direction: THREE.Vector3 } | null {
     if (!this.alive || targets.length === 0) return null;
 
-    // Fight whichever green tank (player or buddy) is closest.
+    // Fight whichever of the player's side is closest: a tank, a soldier or a bunker.
     let player = targets[0];
     let nearest = Infinity;
     for (const t of targets) {
@@ -100,7 +101,8 @@ export class EnemyTank extends Tank {
 
     const toPlayer = new THREE.Vector3().subVectors(player.position, this.position);
     const distToPlayer = toPlayer.length();
-    const losClear = distToPlayer < LOSE_RANGE && this.hasLineOfSight(world, player.position);
+    const aimPoint = player.position.clone().setY(player.position.y + 0.8);
+    const losClear = distToPlayer < LOSE_RANGE && this.hasLineOfSight(world, aimPoint);
 
     if (this.state !== 'flee' && this.health / this.maxHealth <= FLEE_HEALTH_FRACTION) {
       this.state = 'flee';

@@ -10,6 +10,14 @@ Built with [Three.js](https://threejs.org/), [Rapier](https://rapier.rs/) physic
 TypeScript and [Vite](https://vite.dev/). 3D models are from
 [Kenney](https://kenney.nl/) (CC0).
 
+## Play it online
+
+**https://jaseruss.github.io/CooperGame/**
+
+Works in Chrome, Edge or Firefox on a computer. Plug in a controller, or use the
+keyboard and mouse. The site rebuilds itself automatically whenever changes are
+pushed to the `main` branch.
+
 ## Running it on your own computer
 
 ### 1. Install the tools (one time)
@@ -71,14 +79,30 @@ plug one in and press a button so the browser detects it.
 | Homing rocket (when charged) | LB | F or right click |
 | Call a buddy tank (when charged) | X | X |
 | Switch first / third person | Y | C |
-| Pause and full map | Start | M |
+| Pause, full map and options | Start | M |
 | Return to the nearest family base | Back | R |
+
+Driving works like the Warthog in Halo by default: push the stick the way you
+want to go relative to the camera. Pull back to reverse. Let go and the tank
+turns to face where you're aiming. Prefer the old way? Pause, open **Options**
+(X or O) and switch **Tank controls** to **Classic**. Options also has aim speed
+and buddy name tags, and your choices are remembered.
 
 ## Playing
 
-- There are **5 enemy bases** to destroy. The red arrow on the minimap points to the
-  nearest one. Get close and a checklist shows what's left to knock down.
+- There are **5 enemy bases** to destroy, held by the **tan** and **blue**
+  armies. The red arrow on the minimap points to the nearest one. Get close and
+  a checklist shows what's left to knock down.
+- Once a base falls, **green troops and bunkers** move in and fight anything
+  nearby.
+- **The Fortress** in the middle of the map is locked until all five enemy
+  bases are down. Then its gates open and a column of green and red tanks and
+  troops joins you for the final assault. Flatten it to win.
+- The **red army** is on your side. Their tanks and soldiers guard every town.
 - **Family bases** sit around the edge of the map. Drive inside one to repair.
 - **Rear hits** do double damage to enemy tanks. Front armour takes half damage.
-- **Buddy tanks** follow you and join the fight. The meter starts full and
-  refills over five minutes.
+- **Buddy tanks** (Keston, Max, Innes and Jason) follow you and join the fight.
+  You can have all four out at once. The meter starts full and refills over
+  five minutes.
+- Hit a building and a health bar pops up over it for a few seconds.
+- The pause map shows where the enemy is gathered as a red glow.

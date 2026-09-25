@@ -8,14 +8,16 @@ import { generateWorld, type EnemySpawnPoint } from '../world/WorldGenerator';
 import { HomeBase, isInsideBase } from '../world/Base';
 import type { Polyline } from '../world/RoadNetwork';
 import type { Building } from '../world/Building';
-import type { Bunker } from '../world/Bunker';
+import { Bunker } from '../world/Bunker';
 import type { EnemyBase } from '../world/EnemyBase';
+import type { Fortress } from '../world/Fortress';
+import { ENEMY_BASE_HALF } from '../world/Landmarks';
 import type { LandmarkSet } from '../world/LandmarkBuilders';
 import { TOWNS } from '../world/TownPlan';
 import { PlayerTank } from '../entities/PlayerTank';
-import type { Tank } from '../entities/Tank';
+import type { Tank, Faction } from '../entities/Tank';
 import { EnemyTank } from '../entities/EnemyTank';
-import { BuddyTank, type BuddyTarget } from '../entities/BuddyTank';
+import { BuddyTank, RedTank, type AllyTarget } from '../entities/AllyTank';
 import { TroopManager } from '../entities/TroopManager';
 import type { Shot } from '../entities/Soldier';
 import { HitRegistry } from '../combat/HitRegistry';
@@ -28,13 +30,23 @@ import { HUD, type HUDState } from '../ui/HUD';
 import { WorldMap, type MapMarker, type MapView } from '../ui/WorldMap';
 import { AimGuide, type AimTarget } from '../ui/AimGuide';
 import { FRIENDLY_BASES, nearestFriendlyBase, BASE_RADIUS, type FriendlyBase } from '../core/config';
+import { ARMY_GREEN, ARMY_RED, shade } from '../utils/plastic';
+import { loadSettings, saveSettings, AIM_SPEED_SCALE, type Settings } from './Settings';
 
 const RESPAWN_DELAY = 25;
 const BASE_HEAL_RATE = 45; // HP/sec while inside a family base
 const BULLET_SPEED = 220;
 const BULLET_DAMAGE = 0.7;
 const BLAST_RADIUS = 7; // per unit of explosion size, for knocking soldiers over
+const BULLET_HIT_RADIUS = 1.2; // a rifle round landing this close knocks a soldier over
 const RUN_OVER_RADIUS = 2.8;
+const RED_RESPAWN_DELAY = 40;
+const GARRISON_SQUAD_SIZE = 6;
+// Final assault on the Fortress.
+const FORTRESS_CHECKLIST_RANGE = 480;
+const ESCORT_TANKS = 8; // form up behind the player
+const GATE_TANKS = 4; // waiting at each gate
+const ASSAULT_GREEN = shade(ARMY_GREEN, 1.18);
 
 // Homing rocket: fills on a timer, faster when the player wrecks things.
 const ROCKET_RECHARGE_TIME = 75;
@@ -49,9 +61,10 @@ const ROCKET_BLAST_RADIUS = 16;
 const ROCKET_DAMAGE = 140;
 const ROCKET_LINGER_TIME = 3.2;
 
-// Buddy tanks: a long recharge, starting full.
+// Buddy tanks: a long recharge, starting full. Each slot has its own crew.
 const BUDDY_RECHARGE_TIME = 300;
-const MAX_BUDDIES = 6;
+const BUDDY_NAMES = ['Keston', 'Max', 'Innes', 'Jason'];
+const MAX_BUDDIES = BUDDY_NAMES.length;
 
 // Enemy base objectives.
 const CHECKLIST_RANGE = 350; // show the target list when this close to an enemy base
@@ -71,11 +84,38 @@ interface EnemySlot {
   respawnTimer: number;
 }
 
+/** An allied (non-buddy) tank: the red army round the towns, or the final-assault columns. */
+interface RedSlot {
+  route: THREE.Vector3[];
+  tank: RedTank | null;
+  respawnTimer: number;
+  color: number;
+  /** Waypoint the route carries on from after its last point. */
+  loopFrom: number;
+  /** Waypoint a replacement tank starts at. */
+  respawnAt: number;
+  /** Replacements keep coming only while this holds (null = always). */
+  holdWhile: (() => boolean) | null;
+}
+
 interface FamilyBase {
   info: FriendlyBase;
   camp: HomeBase;
   /** Hull yaw that faces out of the gate, for spawning/resetting here. */
   spawnYaw: number;
+}
+
+function nearestOf(points: THREE.Vector3[], from: THREE.Vector3): THREE.Vector3 | null {
+  let best: THREE.Vector3 | null = null;
+  let bestD = Infinity;
+  for (const p of points) {
+    const d = p.distanceToSquared(from);
+    if (d < bestD) {
+      bestD = d;
+      best = p;
+    }
+  }
+  return best;
 }
 
 /** Direction (x = cos, z = sin) from a base centre to where its highway leaves. */
@@ -117,16 +157,25 @@ export class Game {
   private player!: PlayerTank;
   private familyBases: FamilyBase[] = [];
   private enemyBases: EnemyBase[] = [];
-  private enemyBuildings = new Set<Building>();
   private announcedBases = new Set<EnemyBase>();
   private buildings: Building[] = [];
   private enemySlots: EnemySlot[] = [];
+  /** Enemy pillboxes. */
   private bunkers: Bunker[] = [];
+  /** Green pillboxes set up in captured enemy bases. */
+  private friendlyBunkers: Bunker[] = [];
   private buddies: BuddyTank[] = [];
+  private redSlots: RedSlot[] = [];
+  private fortress!: Fortress;
+  private finalAssault = false;
+  private fortressAnnounced = false;
+  /** Next buddy in the rota; a knocked-out buddy's turn passes to the next name. */
+  private nextBuddy = 0;
   private rocketCharge = 0;
   private buddyCharge = 1;
   private rocketSeq: RocketSequence | null = null;
   private victoryTimer = 0;
+  private settings: Settings = loadSettings();
   private wakeTimer = 0;
   private ready = false;
 
@@ -201,10 +250,9 @@ export class Game {
     });
     this.bunkers = content.bunkers;
     this.enemyBases = content.enemyBases;
+    this.fortress = content.fortress;
     this.landmarks = content.landmarks;
     this.buildings = [...content.buildings, ...content.bunkers.map((b) => b.building)];
-    for (const b of content.bunkers) this.enemyBuildings.add(b.building);
-    for (const base of content.enemyBases) for (const b of base.buildings) this.enemyBuildings.add(b);
     this.troops = new TroopManager(this.scene, content.squads, Math.random);
     this.hud.setWorldMap(
       new WorldMap(
@@ -217,15 +265,32 @@ export class Game {
           hz: b.halfExtents.z,
           destroyed: () => b.destroyed,
         })),
-      ),
+        content.forests,
+        ),
     );
     this.enemySlots = content.enemySpawns.map((spawn) => ({ spawn, tank: null, respawnTimer: 0 }));
     for (const slot of this.enemySlots) this.spawnEnemy(slot);
+    this.redSlots = content.redRoutes.map((route) => ({
+      route,
+      tank: null,
+      respawnTimer: 0,
+      color: ARMY_RED,
+      loopFrom: 0,
+      respawnAt: 0,
+      holdWhile: null,
+    }));
+    this.redSlots.forEach((slot, i) => this.spawnRed(slot, i % slot.route.length));
 
     const home = this.familyBases[0];
     this.player = new PlayerTank(this.world, home.info.x, home.info.z, home.spawnYaw);
     this.scene.add(this.player.root);
     this.hitRegistry.register(this.player.physicsCollider, { kind: 'tank', tank: this.player });
+    this.hud.setSettings(this.settings, (s) => {
+      this.settings = s;
+      saveSettings(s);
+      this.applySettings();
+    });
+    this.applySettings();
 
     this.loadingLabel.remove();
     this.ready = true;
@@ -237,7 +302,8 @@ export class Game {
   // ---------- spawning ----------
 
   private spawnEnemy(slot: EnemySlot): void {
-    const tank = new EnemyTank(this.world, slot.spawn.x, slot.spawn.z, slot.spawn.patrolCenter, slot.spawn.patrolRadius, Math.random);
+    const { x, z, patrolCenter, patrolRadius, color } = slot.spawn;
+    const tank = new EnemyTank(this.world, x, z, patrolCenter, patrolRadius, Math.random, color);
     this.scene.add(tank.root);
     this.hitRegistry.register(tank.physicsCollider, { kind: 'tank', tank });
     slot.tank = tank;
@@ -245,13 +311,30 @@ export class Game {
 
   private removeEnemy(slot: EnemySlot): void {
     if (!slot.tank) return;
-    this.explode(slot.tank.position.clone(), 2.5);
+    this.explode(slot.tank.position.clone(), 2.5, null);
     this.addRocketCharge(CHARGE_PER_TANK);
     this.hitRegistry.unregister(slot.tank.physicsCollider);
     this.scene.remove(slot.tank.root);
     slot.tank.dispose();
     slot.tank = null;
     slot.respawnTimer = RESPAWN_DELAY;
+  }
+
+  private spawnRed(slot: RedSlot, start = 0): void {
+    const tank = new RedTank(this.world, slot.route, start, slot.color, slot.loopFrom);
+    this.scene.add(tank.root);
+    this.hitRegistry.register(tank.physicsCollider, { kind: 'tank', tank });
+    slot.tank = tank;
+  }
+
+  private removeRed(slot: RedSlot): void {
+    if (!slot.tank) return;
+    this.explode(slot.tank.position.clone(), 2.5, null);
+    this.hitRegistry.unregister(slot.tank.physicsCollider);
+    this.scene.remove(slot.tank.root);
+    slot.tank.dispose();
+    slot.tank = null;
+    slot.respawnTimer = RED_RESPAWN_DELAY;
   }
 
   /** Calls in a buddy tank; it rolls in just behind the player in the first free formation slot. */
@@ -264,17 +347,37 @@ export class Game {
     const offset = new THREE.Vector3(side * 9, 0, row * 12).applyAxisAngle(new THREE.Vector3(0, 1, 0), this.player.yaw);
     const spot = this.player.position.clone().add(offset);
 
-    const buddy = new BuddyTank(this.world, spot.x, spot.z, this.player.yaw, slot);
+    // Take the next name in the rota that isn't already out.
+    const out = new Set(this.buddies.map((b) => b.name));
+    let pick = this.nextBuddy;
+    for (let k = 0; k < BUDDY_NAMES.length; k++) {
+      const i = (this.nextBuddy + k) % BUDDY_NAMES.length;
+      if (!out.has(BUDDY_NAMES[i])) {
+        pick = i;
+        break;
+      }
+    }
+    this.nextBuddy = (pick + 1) % BUDDY_NAMES.length;
+    const name = BUDDY_NAMES[pick];
+    const buddy = new BuddyTank(this.world, spot.x, spot.z, this.player.yaw, slot, name);
     this.scene.add(buddy.root);
+    buddy.setNameTagVisible(this.settings.nameTags);
     this.hitRegistry.register(buddy.physicsCollider, { kind: 'tank', tank: buddy });
     this.buddies.push(buddy);
     this.impacts.splash(spot, 0.6); // a puff of dust as it rolls in
     this.buddyCharge = 0;
-    this.hud.showBanner('BUDDY TANK INCOMING!', `${this.buddies.length} buddy tank${this.buddies.length > 1 ? 's' : ''} with you`);
+    this.hud.showBanner(`${name.toUpperCase()} IS ROLLING IN!`, `${this.buddies.length} of ${MAX_BUDDIES} buddy tanks with you`);
+  }
+
+  private applySettings(): void {
+    this.player.driveStyle = this.settings.driveStyle;
+    this.input.setAimScale(AIM_SPEED_SCALE[this.settings.aimSpeed]);
+    for (const b of this.buddies) b.setNameTagVisible(this.settings.nameTags);
   }
 
   private removeBuddy(buddy: BuddyTank): void {
-    this.explode(buddy.position.clone(), 2.5);
+    this.explode(buddy.position.clone(), 2.5, null);
+    this.hud.showBanner(`${buddy.name.toUpperCase()}'S TANK IS KNOCKED OUT!`, 'Call them back in when the buddy meter is full');
     this.hitRegistry.unregister(buddy.physicsCollider);
     this.scene.remove(buddy.root);
     buddy.dispose();
@@ -287,10 +390,11 @@ export class Game {
     this.rocketCharge = Math.min(1, this.rocketCharge + amount);
   }
 
-  private explode(point: THREE.Vector3, size: number, byPlayerSide = false): void {
+  /** A blast knocks over the other side's soldiers (`attacker` null = everyone's). */
+  private explode(point: THREE.Vector3, size: number, attacker: Faction | null): void {
     this.impacts.explode(point, size);
-    const knocked = this.troops.blast(point, BLAST_RADIUS * size);
-    if (byPlayerSide) this.addRocketCharge(knocked * CHARGE_PER_TROOP);
+    const knocked = this.troops.blast(point, BLAST_RADIUS * size, attacker);
+    if (attacker === 'player') this.addRocketCharge(knocked * CHARGE_PER_TROOP);
     // During rocket cam the camera is near the blast, not the tank.
     const camDist = point.distanceTo(this.rocketSeq ? this.camera.position : this.player.position);
     this.cameraRig.addShake((size * 0.9) / Math.max(1, camDist / 12));
@@ -300,15 +404,14 @@ export class Game {
     return this.bunkers.some((b) => b.building === building);
   }
 
-  private collapseBuilding(building: Building, byPlayerSide: boolean): void {
-    this.explode(building.center.clone(), building.explosionSize, byPlayerSide);
+  private collapseBuilding(building: Building, attacker: Faction | null): void {
+    this.explode(building.center.clone(), building.explosionSize, attacker);
     const footprint = Math.max(building.halfExtents.x, building.halfExtents.z);
     this.impacts.addSmokeSource(building.groundCenter, footprint * 0.6);
-    if (byPlayerSide) this.addRocketCharge(this.isBunker(building) ? CHARGE_PER_BUNKER : CHARGE_PER_BUILDING);
+    if (attacker === 'player') this.addRocketCharge(this.isBunker(building) ? CHARGE_PER_BUNKER : CHARGE_PER_BUILDING);
   }
 
   private fire(tank: Tank, shot: Shot): void {
-    const byPlayerSide = tank.faction === 'player';
     this.impacts.muzzleFlash(shot.origin, shot.direction);
     if (tank === this.player) this.cameraRig.addShake(0.35);
     this.projectiles.spawn(
@@ -318,9 +421,9 @@ export class Game {
       tank.shellDamage,
       tank.physicsCollider,
       (point, result) => {
-        if (result.collapsedBuilding) this.collapseBuilding(result.collapsedBuilding, byPlayerSide);
+        if (result.collapsedBuilding) this.collapseBuilding(result.collapsedBuilding, tank.faction);
         else if (result.water) this.impacts.splash(point, 1);
-        else this.explode(point, 1, byPlayerSide);
+        else this.explode(point, 1, tank.faction);
         if (tank === this.player && result.tankHit) this.hud.showHitMarker(result.tankHit.zone);
       },
       1,
@@ -328,8 +431,8 @@ export class Game {
     );
   }
 
-  /** Small-arms fire from troops and bunker machine guns. */
-  private fireBullet(shot: Shot, exclude: RAPIER.Collider | undefined): void {
+  /** Small-arms fire from troops and bunker machine guns; a round landing by a soldier drops him. */
+  private fireBullet(shot: Shot, exclude: RAPIER.Collider | undefined, faction: Faction): void {
     this.projectiles.spawn(
       shot.origin,
       shot.direction,
@@ -337,36 +440,43 @@ export class Game {
       BULLET_DAMAGE,
       exclude,
       (point, result) => {
-        if (result.collapsedBuilding) this.collapseBuilding(result.collapsedBuilding, false);
+        if (result.collapsedBuilding) this.collapseBuilding(result.collapsedBuilding, faction);
         else if (result.water) this.impacts.splash(point, 0.25);
         else this.impacts.dustPuff(point);
+        this.troops.shoot(point, BULLET_HIT_RADIUS, faction);
       },
       0.45,
-      'enemy',
+      faction,
     );
   }
 
-  /** The player plus any buddies: everything the enemy shoots at. */
-  private get friendlies(): Tank[] {
-    return [this.player, ...this.buddies];
+  private get redTanks(): RedTank[] {
+    return this.redSlots.flatMap((s) => (s.tank ? [s.tank] : []));
   }
 
-  private nearestFriendlyPosition(from: THREE.Vector3): THREE.Vector3 {
-    let best = this.player.position;
-    let bestD = best.distanceToSquared(from);
-    for (const b of this.buddies) {
-      const d = b.position.distanceToSquared(from);
-      if (d < bestD) {
-        bestD = d;
-        best = b.position;
-      }
-    }
-    return best;
+  /** Everything the enemy shoots at: the player, buddies, the red army and green garrisons. */
+  private enemyTargets(): { position: THREE.Vector3 }[] {
+    return [
+      this.player,
+      ...this.buddies,
+      ...this.redTanks,
+      ...this.troops.activeSoldiers('player'),
+      ...this.friendlyBunkers.filter((b) => b.alive),
+    ];
   }
 
-  /** Everything a buddy might shoot at, most valuable first. */
-  private buddyTargets(): BuddyTarget[] {
-    const targets: BuddyTarget[] = [];
+  /** Everything the player's side shoots at. */
+  private playerSideTargets(): { position: THREE.Vector3 }[] {
+    return [
+      ...this.enemySlots.flatMap((s) => (s.tank ? [s.tank] : [])),
+      ...this.troops.activeSoldiers('enemy'),
+      ...this.bunkers.filter((b) => b.alive),
+    ];
+  }
+
+  /** Everything an allied tank might shoot at, most valuable first. */
+  private allyTargets(): AllyTarget[] {
+    const targets: AllyTarget[] = [];
     for (const slot of this.enemySlots) {
       const tank = slot.tank;
       if (tank) targets.push({ position: tank.position, priority: 3, alive: () => !tank.isDestroyed });
@@ -374,10 +484,13 @@ export class Game {
     for (const base of this.enemyBases) {
       for (const o of base.objectives) if (!o.isDestroyed()) targets.push({ position: o.position, priority: 2.5, alive: () => !o.isDestroyed() });
     }
+    if (!this.fortress.locked) {
+      for (const o of this.fortress.objectives) if (!o.isDestroyed()) targets.push({ position: o.position, priority: 2.5, alive: () => !o.isDestroyed() });
+    }
     for (const bunker of this.bunkers) {
       if (bunker.alive) targets.push({ position: bunker.position, priority: 2, alive: () => bunker.alive });
     }
-    for (const s of this.troops.activeSoldiers()) targets.push({ position: s.position, priority: 1, alive: () => s.isActive });
+    for (const s of this.troops.activeSoldiers('enemy')) targets.push({ position: s.position, priority: 1, alive: () => s.isActive });
     return targets;
   }
 
@@ -413,10 +526,13 @@ export class Game {
     for (const base of this.enemyBases) {
       for (const o of base.objectives) if (!o.isDestroyed()) consider(o.position, 0.05, () => (o.isDestroyed() ? null : o.position));
     }
+    if (!this.fortress.locked) {
+      for (const o of this.fortress.objectives) if (!o.isDestroyed()) consider(o.position, 0.05, () => (o.isDestroyed() ? null : o.position));
+    }
     for (const bunker of this.bunkers) {
       if (bunker.alive) consider(bunker.position, 0.08, () => (bunker.alive ? bunker.position : null));
     }
-    for (const soldier of this.troops.activeSoldiers()) {
+    for (const soldier of this.troops.activeSoldiers('enemy')) {
       consider(soldier.position, 0.2, () => (soldier.isActive ? soldier.position.clone().setY(soldier.position.y + 1) : null));
     }
     return best;
@@ -432,7 +548,7 @@ export class Game {
       this.player.physicsCollider,
     ).impact;
     const yaw = this.player.turretWorldYaw;
-    const origin = this.player.position.clone().add(new THREE.Vector3(0, 2.6, 0));
+    const origin = this.player.rocketLaunchPoint;
     const launchDir = new THREE.Vector3(-Math.sin(yaw) * 0.45, 1, -Math.cos(yaw) * 0.45);
 
     const rocket = new HomingRocket(
@@ -445,13 +561,14 @@ export class Game {
     );
     this.impacts.muzzleFlash(origin, launchDir.clone().normalize());
     this.rocketCharge = 0;
+    this.player.setRocketReady(false);
     this.player.invulnerable = true;
     this.rocketSeq = { rocket, phase: 'flight', timer: 0, point: new THREE.Vector3(), orbit: 0 };
   }
 
   /** Big blast: wrecks tanks, buildings and troops around the impact. */
   private rocketBlast(point: THREE.Vector3): void {
-    this.explode(point, 3.4, true);
+    this.explode(point, 3.4, 'player');
     this.impacts.addSmokeSource(point.clone(), 3, 25);
 
     for (const slot of this.enemySlots) {
@@ -462,12 +579,12 @@ export class Game {
 
     const closest = new THREE.Vector3();
     for (const building of this.buildings) {
-      if (building.destroyed) continue;
+      if (building.destroyed || building.faction === 'player') continue;
       const box = new THREE.Box3().setFromCenterAndSize(building.center, building.halfExtents.clone().multiplyScalar(2));
       const d = box.clampPoint(point, closest).distanceTo(point);
       if (d >= ROCKET_BLAST_RADIUS) continue;
       building.takeDamage(ROCKET_DAMAGE * 1.6 * (1 - (d / ROCKET_BLAST_RADIUS) ** 2));
-      if (building.destroyed) this.collapseBuilding(building, true);
+      if (building.destroyed) this.collapseBuilding(building, 'player');
     }
   }
 
@@ -518,17 +635,100 @@ export class Game {
       if (!base.isDestroyed || this.announcedBases.has(base)) continue;
       this.announcedBases.add(base);
       this.addRocketCharge(CHARGE_PER_ENEMY_BASE);
+      this.garrison(base);
       const left = this.enemyBases.length - this.announcedBases.size;
       if (left === 0) {
-        this.hud.showVictory();
-        this.victoryTimer = VICTORY_SCREEN_TIME;
+        this.startFinalAssault();
       } else {
-        this.hud.showBanner(`ENEMY BASE ${base.name.toUpperCase()} DESTROYED!`, `${left} enemy base${left > 1 ? 's' : ''} to go`);
+        this.hud.showBanner(
+          `${base.title.toUpperCase()} DESTROYED!`,
+          `Green troops are moving in · ${left} enemy base${left > 1 ? 's' : ''} to go`,
+        );
       }
+    }
+    this.fortress.update(dt);
+    if (!this.fortressAnnounced && this.fortress.isDestroyed) {
+      this.fortressAnnounced = true;
+      this.troops.blast(this.fortress.center, 150, 'player'); // the last defenders scatter
+      this.hud.showVictory();
+      this.victoryTimer = VICTORY_SCREEN_TIME;
     }
     if (this.victoryTimer > 0) {
       this.victoryTimer -= dt;
       if (this.victoryTimer <= 0) this.hud.hideVictory();
+    }
+  }
+
+  /**
+   * Every enemy base has fallen: the Fortress opens, the rocket and buddy meters refill, and
+   * columns of green and red tanks plus infantry join the player for the final assault.
+   */
+  private startFinalAssault(): void {
+    if (this.finalAssault) return;
+    this.finalAssault = true;
+    this.fortress.unlock();
+    this.rocketCharge = 1;
+    this.buddyCharge = 1;
+    this.hud.showBanner('THE FORTRESS GATES ARE OPEN!', 'Final assault! The whole army is rolling in with you');
+
+    const holdWhile = () => !this.fortress.isDestroyed;
+    const sweep = this.fortress.sweepRoute;
+    const up = new THREE.Vector3(0, 1, 0);
+    const p = this.player.position;
+    const gate = this.fortress.gateNear(p.x, p.z);
+    // An escort forms up behind the player, then heads for the nearest gate and sweeps inside.
+    for (let i = 0; i < ESCORT_TANKS; i++) {
+      const side = i % 2 === 0 ? -1 : 1;
+      const offset = new THREE.Vector3(side * 14, 0, 26 + Math.floor(i / 2) * 13).applyAxisAngle(up, this.player.yaw);
+      const start = p.clone().add(offset);
+      this.addAssaultTank([start, gate, ...sweep], i % 2 === 0 ? ASSAULT_GREEN : ARMY_RED, 2, 1, holdWhile);
+    }
+    // More tanks and infantry already waiting outside each gate.
+    for (const rally of this.fortress.rallyPoints) {
+      for (let i = 0; i < GATE_TANKS; i++) {
+        const spot = rally.clone().add(new THREE.Vector3((i - 1.5) * 12, 0, 0));
+        this.addAssaultTank([spot, ...sweep], i % 2 === 0 ? ASSAULT_GREEN : ARMY_RED, 1, 0, holdWhile);
+      }
+      for (const [dx, color] of [[-18, ARMY_GREEN], [0, ARMY_RED], [18, ARMY_GREEN]] as [number, number][]) {
+        this.troops.addSquad({
+          anchor: new THREE.Vector2(rally.x + dx, rally.z),
+          count: GARRISON_SQUAD_SIZE,
+          wanderRadius: 20,
+          faction: 'player',
+          color,
+          holdWhile,
+        });
+      }
+    }
+  }
+
+  private addAssaultTank(route: THREE.Vector3[], color: number, loopFrom: number, respawnAt: number, holdWhile: () => boolean): void {
+    const slot: RedSlot = { route, tank: null, respawnTimer: 0, color, loopFrom, respawnAt, holdWhile };
+    this.redSlots.push(slot);
+    this.spawnRed(slot, 0);
+    this.impacts.splash(route[0].clone(), 0.8);
+  }
+
+  /** A captured base becomes a green outpost: pillboxes and squads that fight anything nearby. */
+  private garrison(base: EnemyBase): void {
+    // What's left of the enemy garrison is routed: bowled over as the base falls.
+    this.troops.blast(base.center, ENEMY_BASE_HALF * 1.3, 'player');
+    const layout = base.garrisonLayout();
+    for (const spot of layout.bunkers) {
+      const bunker = new Bunker(this.world, this.scene, this.hitRegistry, spot.x, spot.z, spot.facing, 'player', ARMY_GREEN);
+      this.friendlyBunkers.push(bunker);
+      this.buildings.push(bunker.building);
+      this.impacts.splash(bunker.position.clone(), 1.2); // a puff of dust as it drops into place
+    }
+    for (const anchor of layout.squads) {
+      this.troops.addSquad({
+        anchor,
+        count: GARRISON_SQUAD_SIZE,
+        wanderRadius: 12,
+        faction: 'player',
+        color: ARMY_GREEN,
+        holdWhile: null,
+      });
     }
   }
 
@@ -569,38 +769,69 @@ export class Game {
     const hit = this.hitRegistry.lookup(collider);
     if (!hit || hit.kind === 'terrain' || hit.kind === 'water') return 'ground';
     if (hit.kind === 'tank') return hit.tank.faction === 'player' ? 'ground' : 'enemy';
-    return this.enemyBuildings.has(hit.building) ? 'enemy' : 'building';
+    if (hit.building.faction === 'player') return 'ground';
+    return hit.building.faction === 'enemy' ? 'enemy' : 'building';
   }
 
   private collectMarkers(): MapMarker[] {
     const markers: MapMarker[] = [];
     this.troops.collectMarkers(markers);
     for (const b of this.bunkers) {
-      if (b.alive) markers.push({ x: b.position.x, z: b.position.z, kind: 'bunker' });
+      if (b.alive) markers.push({ x: b.position.x, z: b.position.z, kind: 'bunker', friendly: false });
+    }
+    for (const b of this.friendlyBunkers) {
+      if (b.alive) markers.push({ x: b.position.x, z: b.position.z, kind: 'bunker', friendly: true });
     }
     for (const slot of this.enemySlots) {
-      if (slot.tank) markers.push({ x: slot.tank.position.x, z: slot.tank.position.z, kind: 'tank' });
+      if (slot.tank) markers.push({ x: slot.tank.position.x, z: slot.tank.position.z, kind: 'tank', friendly: false });
     }
+    for (const tank of this.redTanks) markers.push({ x: tank.position.x, z: tank.position.z, kind: 'tank', friendly: true });
     return markers;
   }
 
   private mapView(): MapView {
-    const objective = this.nearestEnemyBase(true);
+    const base = this.nearestEnemyBase(true);
+    const f = this.fortress;
+    // Point at the nearest standing base; once they're all down, at the Fortress.
+    const objective = base
+      ? { x: base.base.center.x, z: base.base.center.z, name: base.base.name }
+      : f.isDestroyed
+        ? null
+        : { x: f.center.x, z: f.center.z, name: f.name };
     return {
       playerX: this.player.position.x,
       playerZ: this.player.position.z,
       playerYaw: this.player.yaw,
       friendlyBases: FRIENDLY_BASES,
-      enemyBases: this.enemyBases.map((b) => ({ x: b.center.x, z: b.center.z, name: b.name, destroyed: b.isDestroyed })),
-      buddies: this.buddies.map((b) => ({ x: b.position.x, z: b.position.z })),
+      enemyBases: this.enemyBases.map((b) => ({ x: b.center.x, z: b.center.z, name: b.name, title: b.title, destroyed: b.isDestroyed })),
+      buddies: this.buddies.map((b) => ({ x: b.position.x, z: b.position.z, name: b.name })),
       markers: this.collectMarkers(),
-      objective: objective ? { x: objective.base.center.x, z: objective.base.center.z, name: objective.base.name } : null,
+      objective,
+      fortress: { x: f.center.x, z: f.center.z, name: f.name, title: f.title, locked: f.locked, destroyed: f.isDestroyed },
     };
   }
 
   private hudState(input: InputState, cinematic: boolean, aim: ReturnType<Game['updateAim']>, lockScreen: { x: number; y: number } | null): HUDState {
     const near = this.nearestEnemyBase(false);
     const inside = isInsideBase(this.player.position);
+    const f = this.fortress;
+    const fortressDist = Math.hypot(f.center.x - this.player.position.x, f.center.z - this.player.position.z);
+    const checklist =
+      fortressDist < FORTRESS_CHECKLIST_RANGE && (!near || fortressDist < near.distance)
+        ? {
+            name: f.title,
+            distance: fortressDist,
+            objectives: f.locked
+              ? [{ label: `Locked! Destroy all ${this.enemyBases.length} enemy bases to open the gates`, done: false }]
+              : f.objectives.map((o) => ({ label: o.label, done: o.isDestroyed() })),
+          }
+        : near && near.distance < CHECKLIST_RANGE
+          ? {
+              name: near.base.title,
+              distance: near.distance,
+              objectives: near.base.objectives.map((o) => ({ label: o.label, done: o.isDestroyed() })),
+            }
+          : null;
     return {
       health: this.player.health,
       maxHealth: this.player.maxHealth,
@@ -615,18 +846,15 @@ export class Game {
       rocketCharge: this.rocketCharge,
       rocketLockScreen: lockScreen,
       buddyCharge: this.buddyCharge,
-      buddyCount: this.buddies.length,
+      buddyRoster: BUDDY_NAMES,
+      buddyNames: this.buddies.map((b) => b.name),
+      driveStyle: this.settings.driveStyle,
+      mouseCaptureHint: !input.usingGamepad && !input.pointerLocked && input.pointerLockAvailable,
+      buddyMax: MAX_BUDDIES,
       cinematic,
       enemyBasesLeft: this.enemyBases.filter((b) => !b.isDestroyed).length,
       enemyBasesTotal: this.enemyBases.length,
-      nearbyBase:
-        near && near.distance < CHECKLIST_RANGE
-          ? {
-              name: near.base.name,
-              distance: near.distance,
-              objectives: near.base.objectives.map((o) => ({ label: o.label, done: o.isDestroyed() })),
-            }
-          : null,
+      nearbyBase: checklist,
     };
   }
 
@@ -647,7 +875,8 @@ export class Game {
 
     // Full map doubles as the pause screen: nothing moves while it's open.
     if (this.hud.paused) {
-      if (rawInput.mapTogglePressed) this.hud.toggleBigMap();
+      this.hud.handleMenu(rawInput.menu);
+      if (rawInput.mapTogglePressed && this.hud.paused) this.hud.toggleBigMap();
       this.hud.update(this.hudState(rawInput, false, { screen: null, range: null, target: 'none' }, null));
       this.renderer.render(this.scene, this.camera);
       return;
@@ -671,43 +900,70 @@ export class Game {
       this.addRocketCharge(dt / ROCKET_RECHARGE_TIME);
       this.buddyCharge = Math.min(1, this.buddyCharge + dt / BUDDY_RECHARGE_TIME);
     }
+    this.player.setRocketReady(this.rocketCharge >= 1 && !this.rocketSeq);
 
     const playerShot = this.player.step(input, dt);
     if (playerShot) this.fire(this.player, playerShot);
 
-    const friendlies = this.friendlies;
+    // Who's shooting at whom this frame.
+    const enemyTargets = this.enemyTargets();
+    const enemyTargetPositions = enemyTargets.map((t) => t.position);
+    const playerSidePositions = this.playerSideTargets().map((t) => t.position);
+
     for (const slot of this.enemySlots) {
       if (slot.tank) {
         if (slot.tank.isDestroyed) {
           this.removeEnemy(slot);
           continue;
         }
-        const shot = slot.tank.ai(this.world, friendlies, dt);
+        const shot = slot.tank.ai(this.world, enemyTargets, dt);
         if (shot) this.fire(slot.tank, shot);
       } else {
         slot.respawnTimer -= dt;
-        if (slot.respawnTimer <= 0) this.spawnEnemy(slot);
+        // Guards of a captured base don't come back.
+        if (slot.respawnTimer <= 0 && (slot.spawn.holdWhile?.() ?? true)) this.spawnEnemy(slot);
       }
     }
 
-    if (this.buddies.length > 0) {
-      const targets = this.buddyTargets();
-      for (const buddy of [...this.buddies]) {
-        if (buddy.isDestroyed) {
-          this.removeBuddy(buddy);
+    const allyTargets = this.allyTargets();
+    for (const buddy of [...this.buddies]) {
+      if (buddy.isDestroyed) {
+        this.removeBuddy(buddy);
+        continue;
+      }
+      const shot = buddy.think(dt, this.world, this.player, allyTargets);
+      if (shot) this.fire(buddy, shot);
+    }
+    for (const slot of this.redSlots) {
+      if (slot.tank) {
+        if (slot.tank.isDestroyed) {
+          this.removeRed(slot);
           continue;
         }
-        const shot = buddy.think(dt, this.world, this.player, targets);
-        if (shot) this.fire(buddy, shot);
+        const shot = slot.tank.think(dt, this.world, allyTargets);
+        if (shot) this.fire(slot.tank, shot);
+      } else if (!slot.holdWhile || slot.holdWhile()) {
+        slot.respawnTimer -= dt;
+        if (slot.respawnTimer <= 0) this.spawnRed(slot, slot.respawnAt);
       }
     }
 
     for (const bunker of this.bunkers) {
-      const shot = bunker.update(dt, this.world, this.nearestFriendlyPosition(bunker.position));
-      if (shot) this.fireBullet(shot, bunker.building.physicsCollider ?? undefined);
+      const shot = bunker.update(dt, this.world, nearestOf(enemyTargetPositions, bunker.position));
+      if (shot) this.fireBullet(shot, bunker.building.physicsCollider ?? undefined, 'enemy');
     }
-    this.troops.update(dt, this.world, friendlies.map((t) => t.position), (shot) => this.fireBullet(shot, undefined));
-    this.addRocketCharge(this.troops.runOver(this.player.position, RUN_OVER_RADIUS) * CHARGE_PER_TROOP);
+    for (const bunker of this.friendlyBunkers) {
+      const shot = bunker.update(dt, this.world, nearestOf(playerSidePositions, bunker.position));
+      if (shot) this.fireBullet(shot, bunker.building.physicsCollider ?? undefined, 'player');
+    }
+    this.troops.update(
+      dt,
+      this.world,
+      this.player.position,
+      { enemy: enemyTargetPositions, player: playerSidePositions },
+      (shot, faction) => this.fireBullet(shot, undefined, faction),
+    );
+    this.addRocketCharge(this.troops.runOver(this.player.position, RUN_OVER_RADIUS, 'player') * CHARGE_PER_TROOP);
 
     this.world.step();
     this.projectiles.update(dt);

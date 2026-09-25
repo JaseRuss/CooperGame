@@ -1,17 +1,21 @@
 import * as THREE from 'three';
 import type RAPIER from '@dimforge/rapier3d-compat';
 import { Soldier, type Shot } from './Soldier';
-import type { Bunker } from '../world/Bunker';
+import type { Faction } from './Tank';
 import type { MapMarker } from '../ui/WorldMap';
 
 const RESPAWN_DELAY = 45;
+/** Soldiers further than this from the player stand still, to save CPU. */
+const ACTIVE_RANGE = 650;
 
 export interface SquadSpawn {
   anchor: THREE.Vector2;
   count: number;
   wanderRadius: number;
-  /** Squads guarding a bunker stop respawning once it's destroyed. */
-  bunker: Bunker | null;
+  faction: Faction;
+  color: number;
+  /** The squad keeps respawning only while this holds (its bunker stands, its base isn't taken). */
+  holdWhile: (() => boolean) | null;
 }
 
 interface Squad {
@@ -21,36 +25,53 @@ interface Squad {
 }
 
 export class TroopManager {
-  private readonly squads: Squad[];
+  private readonly squads: Squad[] = [];
 
   constructor(
     private readonly scene: THREE.Scene,
     spawns: SquadSpawn[],
     private readonly rng: () => number,
   ) {
-    this.squads = spawns.map((spawn) => ({ spawn, soldiers: [], respawnTimer: 0 }));
-    for (const squad of this.squads) this.fillSquad(squad);
+    for (const spawn of spawns) this.addSquad(spawn);
+  }
+
+  addSquad(spawn: SquadSpawn): void {
+    const squad: Squad = { spawn, soldiers: [], respawnTimer: 0 };
+    this.squads.push(squad);
+    this.fillSquad(squad);
   }
 
   private fillSquad(squad: Squad): void {
-    const { anchor, count, wanderRadius } = squad.spawn;
+    const { anchor, count, wanderRadius, faction, color } = squad.spawn;
     for (let i = 0; i < count; i++) {
       const a = (i / count) * Math.PI * 2 + this.rng();
       const r = 2 + this.rng() * wanderRadius * 0.6;
-      const soldier = new Soldier(anchor.x + Math.cos(a) * r, anchor.y + Math.sin(a) * r, anchor, wanderRadius, this.rng);
+      const soldier = new Soldier(anchor.x + Math.cos(a) * r, anchor.y + Math.sin(a) * r, anchor, wanderRadius, this.rng, faction, color);
       this.scene.add(soldier.mesh);
       squad.soldiers.push(soldier);
     }
   }
 
-  /** `friendlies`: positions of the player and buddy tanks; each soldier shoots at the nearest. */
-  update(dt: number, world: RAPIER.World, friendlies: THREE.Vector3[], onShot: (shot: Shot) => void): void {
+  /**
+   * `targets[f]`: positions soldiers of faction `f` shoot at (the other side's tanks, troops and
+   * bunkers); each soldier picks the nearest.
+   */
+  update(
+    dt: number,
+    world: RAPIER.World,
+    playerPos: THREE.Vector3,
+    targets: Record<Faction, THREE.Vector3[]>,
+    onShot: (shot: Shot, faction: Faction) => void,
+  ): void {
+    const activeSq = ACTIVE_RANGE * ACTIVE_RANGE;
     for (const squad of this.squads) {
+      const foes = targets[squad.spawn.faction];
       for (let i = squad.soldiers.length - 1; i >= 0; i--) {
         const s = squad.soldiers[i];
-        let target = friendlies[0];
+        if (s.isActive && s.position.distanceToSquared(playerPos) > activeSq) continue;
+        let target: THREE.Vector3 | null = null;
         let nearest = Infinity;
-        for (const f of friendlies) {
+        for (const f of foes) {
           const d = f.distanceToSquared(s.position);
           if (d < nearest) {
             nearest = d;
@@ -58,7 +79,7 @@ export class TroopManager {
           }
         }
         const shot = s.update(dt, world, target);
-        if (shot) onShot(shot);
+        if (shot) onShot(shot, squad.spawn.faction);
         if (s.expired) {
           this.scene.remove(s.mesh);
           squad.soldiers.splice(i, 1);
@@ -67,17 +88,21 @@ export class TroopManager {
       }
 
       if (squad.soldiers.length === 0) {
-        if (squad.spawn.bunker && !squad.spawn.bunker.alive) continue;
+        if (squad.spawn.holdWhile && !squad.spawn.holdWhile()) continue;
         squad.respawnTimer -= dt;
         if (squad.respawnTimer <= 0) this.fillSquad(squad);
       }
     }
   }
 
-  /** Knocks over every standing soldier within `radius` of `point`. Returns how many went down. */
-  blast(point: THREE.Vector3, radius: number): number {
+  /**
+   * Knocks over every standing soldier within `radius` of `point` who isn't on the attacker's side
+   * (null = everyone). Returns how many went down.
+   */
+  blast(point: THREE.Vector3, radius: number, attacker: Faction | null): number {
     let knocked = 0;
     for (const s of this.activeSoldiers()) {
+      if (s.faction === attacker) continue;
       const d = s.position.distanceTo(point);
       if (d < radius) {
         s.knockDown(point, 1 - d / radius);
@@ -87,10 +112,26 @@ export class TroopManager {
     return knocked;
   }
 
-  /** Soldiers the tank drives into get bowled over. Returns how many went down. */
-  runOver(tankPos: THREE.Vector3, radius: number): number {
+  /** A rifle round landing at `point` drops the nearest of the other side's soldiers within `radius`. */
+  shoot(point: THREE.Vector3, radius: number, attacker: Faction): void {
+    let victim: Soldier | null = null;
+    let nearest = radius;
+    for (const s of this.activeSoldiers()) {
+      if (s.faction === attacker) continue;
+      const d = s.position.distanceTo(point);
+      if (d < nearest) {
+        nearest = d;
+        victim = s;
+      }
+    }
+    victim?.knockDown(point, 0.3);
+  }
+
+  /** The other side's soldiers that a tank drives into get bowled over. Returns how many went down. */
+  runOver(tankPos: THREE.Vector3, radius: number, driver: Faction): number {
     let knocked = 0;
     for (const s of this.activeSoldiers()) {
+      if (s.faction === driver) continue;
       const dx = s.position.x - tankPos.x;
       const dz = s.position.z - tankPos.z;
       if (dx * dx + dz * dz < radius * radius && Math.abs(s.position.y - tankPos.y) < 3) {
@@ -101,14 +142,21 @@ export class TroopManager {
     return knocked;
   }
 
-  activeSoldiers(): Soldier[] {
-    return this.squads.flatMap((squad) => squad.soldiers.filter((s) => s.isActive));
+  /** Standing soldiers, optionally only one side's. */
+  activeSoldiers(faction?: Faction): Soldier[] {
+    const out: Soldier[] = [];
+    for (const squad of this.squads) {
+      if (faction && squad.spawn.faction !== faction) continue;
+      for (const s of squad.soldiers) if (s.isActive) out.push(s);
+    }
+    return out;
   }
 
   collectMarkers(out: MapMarker[]): void {
     for (const squad of this.squads) {
+      const friendly = squad.spawn.faction === 'player';
       for (const s of squad.soldiers) {
-        if (s.isActive) out.push({ x: s.position.x, z: s.position.z, kind: 'troop' });
+        if (s.isActive) out.push({ x: s.position.x, z: s.position.z, kind: 'troop', friendly });
       }
     }
   }

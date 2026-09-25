@@ -17,6 +17,7 @@ import {
 } from './Landmarks';
 import { plastic, shade, ARMY_TAN } from '../utils/plastic';
 import { mulberry32 } from '../utils/rng';
+import { PartBuilder } from '../utils/modelKit';
 import { WORLD_SEED } from '../core/config';
 
 const ASPHALT = 0x45484d;
@@ -62,35 +63,61 @@ function flat(w: number, d: number, color: number, parent: THREE.Object3D, x: nu
   return m;
 }
 
-function toyJet(color: number): THREE.Group {
-  const g = new THREE.Group(); // nose toward -Z
-  const body = plastic(color);
-  const dark = plastic(shade(color, 0.6));
-  const fuselage = new THREE.Mesh(new THREE.CapsuleGeometry(1.5, 13, 6, 14).rotateX(Math.PI / 2), body);
-  fuselage.position.y = 3;
-  fuselage.castShadow = true;
-  g.add(fuselage);
-  const canopy = new THREE.Mesh(
-    new THREE.SphereGeometry(1, 14, 10, 0, Math.PI * 2, 0, Math.PI / 2),
-    new THREE.MeshPhysicalMaterial({ color: 0x9fcde0, roughness: 0.1, clearcoat: 1 }),
-  );
-  canopy.scale.set(1, 0.8, 1.8);
-  canopy.position.set(0, 4.2, -4.5);
-  g.add(canopy);
-  box(20, 0.35, 4.5, body, g, 0, 2.6, 0.5); // wings
-  box(7.5, 0.3, 2.2, body, g, 0, 3.4, 7.2);
-  box(0.35, 3.6, 3, body, g, 0, 5, 7.4);
-  for (const side of [-1, 1]) {
-    const engine = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.7, 3.2, 12).rotateX(Math.PI / 2), dark);
-    engine.position.set(side * 5, 1.9, 0.2);
-    engine.castShadow = true;
-    g.add(engine);
-    box(0.15, 1.9, 0.15, dark, g, side * 1.4, 1, 0.5);
-  }
-  box(0.15, 1.9, 0.15, dark, g, 0, 1, -5);
-  return g;
+/** A flat swept wing/tail panel in the XZ plane reaching `span` along X (negative = left), leading edge toward -Z. */
+function sweptPanel(root: number, tip: number, span: number, sweep: number, thickness: number): THREE.BufferGeometry {
+  const s = new THREE.Shape();
+  s.moveTo(0, -root / 2);
+  s.lineTo(span, -root / 2 + sweep);
+  s.lineTo(span, -root / 2 + sweep + tip);
+  s.lineTo(0, root / 2);
+  s.closePath();
+  // Shape is drawn in XY; lay it flat so shape-Y becomes world Z.
+  return new THREE.ExtrudeGeometry(s, { depth: thickness, bevelEnabled: false }).rotateX(Math.PI / 2).translate(0, thickness / 2, 0);
 }
 
+/** A toy twin-engined jet fighter, nose toward -Z. */
+function toyJet(color: number): THREE.Group {
+  const g = new THREE.Group();
+  const body = plastic(color);
+  const dark = plastic(shade(color, 0.6));
+  const deep = plastic(shade(color, 0.4));
+  const glass = new THREE.MeshPhysicalMaterial({ color: 0x9fcde0, roughness: 0.1, clearcoat: 1 });
+  const tyre = plastic(0x2e2f2c);
+  const p = new PartBuilder();
+  const tube = (r1: number, r2: number, len: number) => new THREE.CylinderGeometry(r1, r2, len, 14).rotateX(Math.PI / 2);
+
+  // Fuselage, pointed nose cone with a pitot probe, and engine nacelles blended in at the back.
+  p.add(new THREE.CapsuleGeometry(1.4, 11, 6, 16).rotateX(Math.PI / 2), body, 0, 3, 0.5);
+  p.add(new THREE.ConeGeometry(1.1, 3.2, 16).rotateX(-Math.PI / 2), body, 0, 3.05, -7.6);
+  p.add(tube(0.05, 0.05, 1.4), deep, 0, 3.05, -9.6);
+  for (const s of [-1, 1]) {
+    p.add(tube(0.85, 0.85, 7), body, s * 1.1, 2.6, 3.4);
+    p.add(tube(0.7, 0.85, 1.0), deep, s * 1.1, 2.6, 7.3); // nozzle
+    p.add(new THREE.BoxGeometry(0.9, 1.3, 2.2), dark, s * 1.55, 2.9, -2.2); // intakes
+    // Swept wing, tailplane and twin tail fins.
+    p.add(sweptPanel(5, 1.6, s * 8.5, 3.6, 0.3), body, s * 0.8, 2.55, 1.2);
+    p.add(sweptPanel(2.8, 1.1, s * 3.4, 1.8, 0.22), body, s * 1.4, 2.5, 6.8);
+    p.add(sweptPanel(3, 1.2, 3.2, 1.8, 0.2), body, s * 1.3, 3.2, 6.3, 0, 0, Math.PI / 2 - s * 0.3, 1, 1, 1);
+    // Wing-tip missiles and an underwing fuel tank.
+    p.add(tube(0.14, 0.14, 2.6), plastic(0xe8e4d8), s * 9.4, 2.7, 3.2);
+    p.add(new THREE.ConeGeometry(0.14, 0.5, 10).rotateX(-Math.PI / 2), plastic(0xc0392b), s * 9.4, 2.7, 1.65);
+    p.add(new THREE.CapsuleGeometry(0.35, 2.4, 4, 10).rotateX(Math.PI / 2), dark, s * 5, 1.9, 1.6);
+    p.add(new THREE.BoxGeometry(0.1, 0.5, 0.6), dark, s * 5, 2.3, 1.6);
+    // Main landing gear: leg, wheel, door.
+    p.add(new THREE.BoxGeometry(0.15, 1.8, 0.15), deep, s * 2.2, 1.35, 1.2);
+    p.add(new THREE.CylinderGeometry(0.5, 0.5, 0.35, 14).rotateZ(Math.PI / 2), tyre, s * 2.3, 0.5, 1.2);
+    p.add(new THREE.BoxGeometry(0.06, 1.2, 1.4), dark, s * 1.75, 1.6, 1.2);
+  }
+  // Nose gear.
+  p.add(new THREE.BoxGeometry(0.15, 1.9, 0.15), deep, 0, 1.3, -5.2);
+  p.add(new THREE.CylinderGeometry(0.42, 0.42, 0.3, 14).rotateZ(Math.PI / 2), tyre, 0, 0.45, -5.2);
+  // Bubble canopy with a frame, and a spine behind it.
+  p.add(new THREE.SphereGeometry(1, 16, 10, 0, Math.PI * 2, 0, Math.PI / 2), glass, 0, 4.2, -4.5, 0, 0, 0, 0.95, 0.85, 2.1);
+  p.add(new THREE.TorusGeometry(0.95, 0.06, 4, 16, Math.PI), deep, 0, 4.2, -4.2, 0, 0, 0, 1, 0.85, 1);
+  p.add(new THREE.BoxGeometry(0.8, 0.5, 6), body, 0, 4.1, 0.5);
+  p.buildInto(g);
+  return g;
+}
 /** Builds lakes, shopping malls and the airfield. Returns their destructible pieces. */
 export class LandmarkSet {
   readonly buildings: Building[] = [];

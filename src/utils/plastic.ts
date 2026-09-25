@@ -27,3 +27,11 @@ export function shade(color: number, factor: number): number {
 /** Classic toy army colours. */
 export const ARMY_GREEN = 0x4b7a2e;
 export const ARMY_TAN = 0xc4a468;
+export const ARMY_BLUE = 0x3d6fc4;
+/** The red army fights on the player's side. */
+export const ARMY_RED = 0xb8392e;
+
+/** The two enemy armies; each enemy base belongs to one. */
+export type EnemyArmy = 'tan' | 'blue';
+export const ENEMY_ARMY_COLOR: Record<EnemyArmy, number> = { tan: ARMY_TAN, blue: ARMY_BLUE };
+export const ENEMY_ARMY_NAME: Record<EnemyArmy, string> = { tan: 'Tan Army', blue: 'Blue Army' };

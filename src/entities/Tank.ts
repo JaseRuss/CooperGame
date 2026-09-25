@@ -3,6 +3,7 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import { heightAt, waterDepthAt } from '../world/Terrain';
 import { clamp } from '../utils/math';
 import { plastic, shade } from '../utils/plastic';
+import { PartBuilder, tubeX, tubeZ } from '../utils/modelKit';
 
 export const HULL_HALF_EXTENTS = { x: 1.15, y: 0.5, z: 1.9 };
 const Y_AXIS = new THREE.Vector3(0, 1, 0);
@@ -19,7 +20,12 @@ const BARREL_PITCH_MAX = 0.38;
 const GROUND_SEEK = 6; // m/s downward search bias fed to the character controller
 
 /** Shared hull+turret+barrel tank rig: visuals, kinematic movement/collision, health, firing. */
+/** Stand-in materials marking which shade each part gets; swapped for the army's plastic. */
+const SLOT = { body: new THREE.MeshBasicMaterial(), dark: new THREE.MeshBasicMaterial(), deep: new THREE.MeshBasicMaterial() };
+type TankShapes = Record<'hull' | 'turret' | 'gun', Map<THREE.Material, THREE.BufferGeometry>>;
+
 export class Tank {
+  private static shapes: TankShapes | null = null;
   readonly root = new THREE.Group();
   readonly turretPivot = new THREE.Group();
   readonly barrelPivot = new THREE.Group();
@@ -89,56 +95,262 @@ export class Tank {
     this.controller.setCharacterMass(1400);
   }
 
-  /** A one-colour moulded plastic toy tank, like the ones in a bag of army men. */
+  /**
+   * A one-colour moulded plastic toy tank, like the ones in a bag of army men. Each moving part
+   * (hull, turret, gun) is merged into one mesh per shade, so the detail costs few draw calls.
+   */
   private buildVisuals(color: number): void {
-    const body = plastic(color);
-    const dark = plastic(shade(color, 0.72));
-
-    const part = (geo: THREE.BufferGeometry, mat: THREE.Material, parent: THREE.Object3D, x: number, y: number, z: number): THREE.Mesh => {
-      const m = new THREE.Mesh(geo, mat);
-      m.position.set(x, y, z);
-      m.castShadow = true;
-      m.receiveShadow = true;
-      parent.add(m);
-      return m;
+    // The shapes are the same for every army, so they're built once and shared; only the
+    // plastic differs.
+    const shapes = (Tank.shapes ??= {
+      hull: Tank.buildHull(SLOT.body, SLOT.dark, SLOT.deep).buildGeometries(),
+      turret: Tank.buildTurret(SLOT.body, SLOT.dark, SLOT.deep).buildGeometries(),
+      gun: Tank.buildGun(SLOT.body, SLOT.dark, SLOT.deep).buildGeometries(),
+    });
+    const paint = new Map<THREE.Material, THREE.Material>([
+      [SLOT.body, plastic(color)],
+      [SLOT.dark, plastic(shade(color, 0.72))],
+      [SLOT.deep, plastic(shade(color, 0.5))],
+    ]);
+    const dress = (geos: Map<THREE.Material, THREE.BufferGeometry>, parent: THREE.Object3D) => {
+      for (const [slot, geo] of geos) {
+        const mesh = new THREE.Mesh(geo, paint.get(slot));
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        parent.add(mesh);
+      }
     };
 
-    // Hull: lower tub, upper deck and a sloped glacis plate.
-    part(new THREE.BoxGeometry(2.1, 0.62, 3.7), body, this.root, 0, -0.14, 0);
-    part(new THREE.BoxGeometry(2.3, 0.34, 3.1), body, this.root, 0, 0.3, 0.2);
-    const glacis = part(new THREE.BoxGeometry(2.1, 0.12, 1.0), body, this.root, 0, 0.18, -1.72);
-    glacis.rotation.x = 0.55;
-    part(new THREE.BoxGeometry(1.6, 0.18, 0.5), body, this.root, 0, 0.5, 1.35); // engine deck
-
-    // Tracks, fenders and road wheels on each side.
-    const wheelGeo = new THREE.CylinderGeometry(0.3, 0.3, 0.14, 14).rotateZ(Math.PI / 2);
-    for (const side of [-1, 1]) {
-      part(new THREE.BoxGeometry(0.5, 0.72, 4.05), dark, this.root, side * 1.28, -0.16, 0);
-      part(new THREE.BoxGeometry(0.62, 0.06, 4.15), body, this.root, side * 1.3, 0.24, 0);
-      for (let i = 0; i < 5; i++) part(wheelGeo, body, this.root, side * 1.55, -0.24, -1.5 + i * 0.75);
-      part(new THREE.CylinderGeometry(0.07, 0.07, 0.4, 8).rotateX(Math.PI / 2), dark, this.root, side * 0.55, 0.45, 1.95); // exhaust
-    }
+    dress(shapes.hull, this.root);
 
     this.turretPivot.position.set(0, HULL_HALF_EXTENTS.y + 0.02, 0.15);
     this.root.add(this.turretPivot);
-
-    // Rounded cast turret with a mantlet, hatch and hatch-mounted machine gun.
-    part(new THREE.CylinderGeometry(0.72, 0.92, 0.6, 16), body, this.turretPivot, 0, 0.3, 0);
-    part(new THREE.BoxGeometry(1.2, 0.34, 0.7), body, this.turretPivot, 0, 0.28, 0.75); // bustle
-    part(new THREE.BoxGeometry(0.7, 0.46, 0.34), body, this.turretPivot, 0, 0.3, -0.82); // mantlet
-    part(new THREE.CylinderGeometry(0.24, 0.26, 0.12, 14), dark, this.turretPivot, 0.28, 0.66, 0.2); // hatch
-    const mg = part(new THREE.CylinderGeometry(0.035, 0.035, 0.7, 6).rotateX(Math.PI / 2), dark, this.turretPivot, 0.28, 0.82, -0.05);
-    mg.rotation.y = 0.1;
+    dress(shapes.turret, this.turretPivot);
 
     this.barrelPivot.position.set(0, 0.3, -0.95);
     this.turretPivot.add(this.barrelPivot);
-    part(new THREE.CylinderGeometry(0.09, 0.12, 2.3, 12).rotateX(Math.PI / 2), body, this.barrelPivot, 0, 0, -1.15);
-    part(new THREE.CylinderGeometry(0.15, 0.15, 0.32, 12).rotateX(Math.PI / 2), dark, this.barrelPivot, 0, 0, -2.2); // muzzle brake
+    dress(shapes.gun, this.barrelPivot);
 
     this.muzzle.position.set(0, 0, -2.4);
     this.barrelPivot.add(this.muzzle);
 
     this.applyAim();
+  }
+
+  private static buildHull(body: THREE.Material, dark: THREE.Material, deep: THREE.Material): PartBuilder {
+    const p = new PartBuilder();
+    const box = (w: number, h: number, d: number) => new THREE.BoxGeometry(w, h, d);
+
+    // Lower tub, upper hull over the tracks, sloped glacis plates front and a rear plate.
+    p.add(box(2.0, 0.6, 3.6), body, 0, -0.12, 0);
+    p.add(box(2.36, 0.34, 3.2), body, 0, 0.3, 0.15);
+    const glacisTilt = -0.55; // normal points up and forward
+    p.add(box(2.1, 0.1, 1.0), body, 0, 0.2, -1.66, glacisTilt);
+    p.add(box(2.0, 0.1, 0.62), body, 0, -0.26, -1.95, 0.9);
+    p.add(box(2.1, 0.62, 0.1), body, 0, 0.05, 1.8, -0.15);
+
+    // Spare track links bolted across the glacis.
+    const up = new THREE.Vector3(0, Math.cos(glacisTilt), Math.sin(glacisTilt));
+    const along = new THREE.Vector3(0, -Math.sin(glacisTilt), Math.cos(glacisTilt));
+    for (let i = 0; i < 5; i++) {
+      const at = new THREE.Vector3(-0.72 + i * 0.36, 0.2, -1.66).addScaledVector(up, 0.07).addScaledVector(along, -0.12);
+      p.add(box(0.3, 0.05, 0.36), dark, at.x, at.y, at.z, glacisTilt);
+      p.add(box(0.32, 0.03, 0.06), deep, at.x, at.y + 0.03, at.z - 0.06, glacisTilt);
+    }
+
+    // Driver's and co-driver's hatches with periscopes, and headlights with brush guards.
+    for (const s of [-1, 1]) {
+      p.add(new THREE.CylinderGeometry(0.22, 0.22, 0.06, 14), dark, s * 0.5, 0.49, -0.95);
+      p.add(box(0.2, 0.09, 0.1), deep, s * 0.5, 0.53, -1.16);
+      p.add(tubeZ(0.1, 0.11, 0.18), dark, s * 0.82, 0.44, -1.42);
+      p.add(new THREE.SphereGeometry(0.085, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2), body, s * 0.82, 0.44, -1.51, -Math.PI / 2);
+      p.add(new THREE.TorusGeometry(0.14, 0.018, 5, 10, Math.PI), deep, s * 0.82, 0.44, -1.56, 0, 0, 0);
+      // Tow hooks front and back.
+      p.add(box(0.12, 0.18, 0.16), dark, s * 0.72, -0.1, -2.1);
+      p.add(box(0.12, 0.2, 0.2), dark, s * 0.72, -0.2, 1.9);
+      // Tail light and exhaust with a muffler.
+      p.add(box(0.14, 0.1, 0.05), deep, s * 0.9, 0.28, 1.87);
+      p.add(tubeX(0.12, 0.5), dark, s * 0.55, 0.12, 1.93);
+      p.add(tubeZ(0.06, 0.06, 0.3), deep, s * 0.55, 0.12, 2.1);
+    }
+
+    // Engine deck: raised louvred grille and access hatches.
+    p.add(box(1.7, 0.12, 1.1), body, 0, 0.52, 1.12);
+    for (let i = 0; i < 7; i++) p.add(box(1.5, 0.05, 0.07), dark, 0, 0.6, 0.7 + i * 0.13);
+    for (const s of [-1, 1]) p.add(box(0.5, 0.04, 0.4), dark, s * 0.62, 0.49, 0.3);
+
+    // Running gear, each side: track belt with treads, road wheels, sprocket, idler, rollers.
+    for (const s of [-1, 1]) {
+      const x = s * 1.28;
+      p.add(box(0.46, 0.5, 3.4), deep, x, -0.17, 0); // fills in behind the wheels
+      p.add(box(0.54, 0.08, 3.5), dark, x, 0.13, 0); // top run
+      p.add(box(0.54, 0.08, 3.5), dark, x, -0.48, 0); // ground run
+      p.add(tubeX(0.31, 0.54, 16), dark, x, -0.17, -1.75); // wrap round the idler
+      p.add(tubeX(0.31, 0.54, 16), dark, x, -0.17, 1.75); // wrap round the sprocket
+      for (let z = -1.7; z <= 1.71; z += 0.2) {
+        p.add(box(0.56, 0.05, 0.07), deep, x, 0.19, z);
+        p.add(box(0.56, 0.05, 0.07), deep, x, -0.54, z);
+      }
+      // Treads round the curved ends.
+      for (const end of [-1, 1]) {
+        for (let k = 1; k < 6; k++) {
+          const a = (k / 6) * Math.PI;
+          const cz = end * 1.75 + end * Math.sin(a) * 0.34;
+          const cy = -0.17 + Math.cos(a) * 0.34;
+          p.add(box(0.56, 0.05, 0.07), deep, x, cy, cz, end * a);
+        }
+      }
+      const wx = s * 1.5;
+      for (let i = 0; i < 6; i++) {
+        const z = -1.35 + i * 0.54;
+        p.add(tubeX(0.27, 0.14, 16), body, wx, -0.24, z);
+        p.add(tubeX(0.1, 0.18, 10), dark, wx + s * 0.02, -0.24, z);
+      }
+      for (const z of [-0.8, 0, 0.8]) p.add(tubeX(0.08, 0.12, 8), body, wx, 0.06, z); // return rollers
+      // Drive sprocket at the back (with teeth) and idler at the front.
+      p.add(tubeX(0.28, 0.16, 16), body, wx, -0.14, 1.72);
+      for (let t = 0; t < 10; t++) {
+        const a = (t / 10) * Math.PI * 2;
+        p.add(box(0.12, 0.08, 0.08), dark, wx, -0.14 + Math.cos(a) * 0.3, 1.72 + Math.sin(a) * 0.3, a);
+      }
+      p.add(tubeX(0.25, 0.14, 16), body, wx, -0.17, -1.74);
+      p.add(tubeX(0.09, 0.18, 10), dark, wx + s * 0.02, -0.17, -1.74);
+
+      // Fenders with sloped mudguards.
+      p.add(box(0.62, 0.05, 3.9), body, s * 1.3, 0.24, 0);
+      p.add(box(0.62, 0.05, 0.42), body, s * 1.3, 0.14, -2.12, -0.5);
+      p.add(box(0.62, 0.05, 0.42), body, s * 1.3, 0.14, 2.12, 0.5);
+
+      // Stowage on the fenders: toolbox and jerry cans.
+      p.add(box(0.4, 0.22, 0.7), dark, s * 1.3, 0.38, 0.75);
+      p.add(box(0.42, 0.03, 0.72), deep, s * 1.3, 0.5, 0.75);
+      for (const z of [1.28, 1.58]) {
+        p.add(box(0.26, 0.34, 0.14), dark, s * 1.36, 0.44, z);
+        p.add(box(0.04, 0.05, 0.1), deep, s * 1.36, 0.64, z);
+      }
+    }
+    // Pioneer tools: shovel on the left fender, axe on the right.
+    p.add(box(0.05, 0.05, 1.1), deep, -1.34, 0.3, -0.55);
+    p.add(box(0.18, 0.03, 0.26), dark, -1.34, 0.3, -1.2);
+    p.add(box(0.05, 0.05, 0.9), deep, 1.34, 0.3, -0.5);
+    p.add(box(0.03, 0.18, 0.16), dark, 1.34, 0.36, -0.98);
+    return p;
+  }
+
+  private static buildTurret(body: THREE.Material, dark: THREE.Material, deep: THREE.Material): PartBuilder {
+    const p = new PartBuilder();
+    const box = (w: number, h: number, d: number) => new THREE.BoxGeometry(w, h, d);
+
+    // Cast turret with a chamfered roof, rear bustle and a rounded gun mantlet.
+    p.add(new THREE.CylinderGeometry(0.74, 0.94, 0.56, 22), body, 0, 0.28, 0);
+    p.add(new THREE.CylinderGeometry(0.62, 0.74, 0.1, 22), body, 0, 0.61, 0);
+    p.add(box(1.25, 0.36, 0.72), body, 0, 0.28, 0.78);
+    p.add(box(0.74, 0.48, 0.28), body, 0, 0.3, -0.8);
+    p.add(tubeX(0.25, 0.78, 16), body, 0, 0.3, -0.9);
+    for (const [x, y] of [[-0.28, 0.46], [0.28, 0.46], [-0.28, 0.14], [0.28, 0.14]]) {
+      p.add(tubeZ(0.035, 0.035, 0.05, 6), deep, x, y, -1.05);
+    }
+
+    // Commander's cupola: vision blocks all round and the hatch flipped open.
+    p.add(new THREE.CylinderGeometry(0.26, 0.29, 0.2, 16), dark, 0.3, 0.74, 0.2);
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2;
+      p.add(box(0.09, 0.07, 0.05), deep, 0.3 + Math.sin(a) * 0.28, 0.76, 0.2 + Math.cos(a) * 0.28, 0, a);
+    }
+    p.add(new THREE.CylinderGeometry(0.25, 0.25, 0.04, 16), dark, 0.3, 0.98, 0.44, -1.25);
+    // Loader's hatch with a grab handle.
+    p.add(new THREE.CylinderGeometry(0.2, 0.2, 0.05, 14), dark, -0.32, 0.67, 0.12);
+    p.add(new THREE.TorusGeometry(0.06, 0.015, 5, 8, Math.PI), deep, -0.32, 0.7, 0.12);
+    p.add(box(0.14, 0.09, 0.16), deep, -0.3, 0.7, -0.38); // gunner's periscope
+
+    // Pintle machine gun on the cupola with its ammo box.
+    p.add(box(0.05, 0.3, 0.05), deep, 0.3, 0.97, -0.05);
+    p.add(box(0.1, 0.13, 0.42), dark, 0.3, 1.12, -0.17);
+    p.add(tubeZ(0.026, 0.026, 0.62, 6), deep, 0.3, 1.14, -0.68);
+    p.add(box(0.13, 0.12, 0.17), dark, 0.4, 1.06, -0.1);
+
+    for (const s of [-1, 1]) {
+      // Smoke dischargers angled forward and out.
+      for (let i = 0; i < 3; i++) p.add(tubeZ(0.05, 0.05, 0.22, 8), dark, s * 0.8, 0.46 + i * 0.07, -0.4, -0.45, s * 0.5);
+      // Lifting eyes and turret-side stowage bins.
+      p.add(new THREE.TorusGeometry(0.06, 0.016, 5, 10), deep, s * 0.48, 0.68, -0.28, 0, Math.PI / 2);
+      p.add(box(0.13, 0.26, 0.52), dark, s * 0.9, 0.26, 0.42, 0, s * 0.18);
+    }
+
+    // Rear stowage basket with a rolled tarp and a crate.
+    for (const x of [-0.62, -0.2, 0.2, 0.62]) p.add(box(0.035, 0.2, 0.035), deep, x, 0.55, 1.16);
+    p.add(box(1.28, 0.035, 0.035), deep, 0, 0.64, 1.16);
+    for (const s of [-1, 1]) p.add(box(0.035, 0.035, 0.36), deep, s * 0.62, 0.64, 0.98);
+    p.add(tubeX(0.12, 0.9, 10), dark, -0.1, 0.58, 1.0);
+    p.add(box(0.3, 0.2, 0.24), dark, 0.42, 0.56, 1.0);
+
+    // Whip antenna.
+    p.add(new THREE.CylinderGeometry(0.05, 0.06, 0.12, 8), deep, -0.5, 0.66, 0.86);
+    p.add(new THREE.CylinderGeometry(0.012, 0.016, 2.2, 5), deep, -0.5, 1.8, 0.86);
+    p.add(new THREE.SphereGeometry(0.04, 6, 4), deep, -0.5, 2.92, 0.86);
+    return p;
+  }
+
+  private static commanderShape: THREE.BufferGeometry | null = null;
+
+  /**
+   * Puts a tank commander in the cupola: standing in the open hatch, one hand on the machine
+   * gun and the other pointing the way ahead. Only the player's side gets one.
+   */
+  addCommander(color: number): void {
+    Tank.commanderShape ??= Tank.buildCommander();
+    // A much lighter plastic than the tank, so he reads clearly against it at chase-cam distance.
+    const mesh = new THREE.Mesh(Tank.commanderShape, plastic(shade(color, 1.55)));
+    const scale = 1.1;
+    mesh.scale.setScalar(scale);
+    mesh.position.set(0.3, 0.9 - 0.86 * scale, 0.2); // belt just above the cupola rim, in turret space
+    mesh.castShadow = true;
+    this.turretPivot.add(mesh);
+  }
+
+  private static buildCommander(): THREE.BufferGeometry {
+    const mat = SLOT.body;
+    const p = new PartBuilder();
+    const v = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
+    const arm = (a: THREE.Vector3, elbow: THREE.Vector3, hand: THREE.Vector3) => {
+      p.beam(a, elbow, 0.13, mat, true);
+      p.beam(elbow, hand, 0.12, mat, true);
+      p.add(new THREE.SphereGeometry(0.07, 8, 6), mat, elbow.x, elbow.y, elbow.z);
+      p.add(new THREE.SphereGeometry(0.065, 8, 6), mat, hand.x, hand.y, hand.z);
+    };
+    // Tanker's jacket with a collar, leaning into the wind.
+    p.add(new THREE.BoxGeometry(0.44, 0.52, 0.28), mat, 0, 1.08, 0.02, -0.12);
+    p.add(new THREE.BoxGeometry(0.46, 0.08, 0.3), mat, 0, 0.9, 0.02); // belt
+    p.add(new THREE.CylinderGeometry(0.13, 0.15, 0.1, 10), mat, 0, 1.36, 0); // collar
+    for (const s of [-1, 1]) p.add(new THREE.SphereGeometry(0.11, 8, 6), mat, s * 0.23, 1.28, 0); // shoulders
+    // Head in a padded tanker's helmet with earphones and goggles pushed up.
+    p.add(new THREE.SphereGeometry(0.14, 12, 10), mat, 0, 1.52, -0.02);
+    p.add(new THREE.SphereGeometry(0.16, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.55), mat, 0, 1.54, 0);
+    for (const s of [-1, 1]) {
+      p.add(new THREE.CylinderGeometry(0.06, 0.06, 0.05, 10).rotateZ(Math.PI / 2), mat, s * 0.16, 1.5, 0);
+      p.add(new THREE.CylinderGeometry(0.045, 0.045, 0.05, 10).rotateX(Math.PI / 2), mat, s * 0.06, 1.66, -0.13);
+    }
+    p.add(new THREE.BoxGeometry(0.3, 0.035, 0.05), mat, 0, 1.66, -0.12); // goggle strap
+    p.add(new THREE.BoxGeometry(0.04, 0.05, 0.05), mat, 0, 1.5, -0.16); // nose
+    // Right hand on the machine gun's grip; left arm pointing out ahead.
+    arm(v(0.23, 1.28, 0), v(0.28, 1.08, -0.2), v(0.05, 1.1, -0.34));
+    arm(v(-0.23, 1.28, 0), v(-0.3, 1.42, -0.28), v(-0.34, 1.58, -0.58));
+    p.add(new THREE.BoxGeometry(0.03, 0.03, 0.12), mat, -0.35, 1.6, -0.66); // pointing finger
+    return p.buildGeometry();
+  }
+
+  private static buildGun(body: THREE.Material, dark: THREE.Material, deep: THREE.Material): PartBuilder {
+    const p = new PartBuilder();
+    p.add(tubeZ(0.16, 0.16, 0.36, 14), dark, 0, 0, -0.1); // sleeve out of the mantlet
+    p.add(tubeZ(0.085, 0.11, 2.3, 14), body, 0, 0, -1.15);
+    p.add(tubeZ(0.13, 0.13, 0.34, 14), body, 0, 0, -1.05); // fume extractor
+    p.add(tubeZ(0.09, 0.13, 0.08, 14), body, 0, 0, -1.26);
+    p.add(tubeZ(0.13, 0.09, 0.08, 14), body, 0, 0, -0.84);
+    // Muzzle brake: a block with dark vent slots either side.
+    p.add(new THREE.BoxGeometry(0.3, 0.2, 0.36), dark, 0, 0, -2.2);
+    for (const z of [-2.12, -2.26]) p.add(new THREE.BoxGeometry(0.31, 0.13, 0.05), deep, 0, 0, z);
+    p.add(tubeZ(0.1, 0.1, 0.05, 12), dark, 0, 0, -2.4);
+    return p;
   }
 
   private applyAim(): void {

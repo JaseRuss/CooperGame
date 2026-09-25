@@ -56,6 +56,9 @@ export function nearestFriendlyBase(x: number, z: number): FriendlyBase {
 
 export const ENEMY_BASE_COUNT = 5;
 
+/** Half-size of the Fortress in the middle of the map: the final objective, locked until every enemy base falls. */
+export const FORTRESS_HALF = 110;
+
 export const PLAYER_MAX_HEALTH = 100;
 export const ENEMY_MAX_HEALTH = 100;
 

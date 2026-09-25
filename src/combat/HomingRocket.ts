@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { plastic, ARMY_GREEN } from '../utils/plastic';
+import { PartBuilder, tubeZ } from '../utils/modelKit';
 
 const LAUNCH_SPEED = 22;
 const MAX_SPEED = 95;
@@ -11,6 +12,42 @@ const PROXIMITY_FUSE = 3;
 const TRAIL_INTERVAL = 0.025;
 
 export type RocketTarget = () => THREE.Vector3 | null;
+
+let rocketShapes: Map<THREE.Material, THREE.BufferGeometry> | null = null;
+
+/**
+ * The toy rocket: striped body, red warhead, green fins and a nozzle, nose along +Z and about
+ * 2.8m long. Shared by the rocket in flight and the one waiting on the tank's launch rail.
+ */
+export function buildRocketModel(): THREE.Group {
+  if (!rocketShapes) {
+    const body = plastic(0xe8e4d8);
+    const red = plastic(0xc0392b);
+    const green = plastic(ARMY_GREEN);
+    const dark = plastic(0x3a3d38);
+    const p = new PartBuilder();
+    p.add(tubeZ(0.24, 0.24, 1.9, 16), body, 0, 0, 0);
+    p.add(new THREE.ConeGeometry(0.24, 0.75, 16).rotateX(Math.PI / 2), red, 0, 0, 1.32);
+    p.add(tubeZ(0.26, 0.26, 0.16, 16), red, 0, 0, 0.84); // warhead band
+    p.add(tubeZ(0.255, 0.255, 0.12, 16), green, 0, 0, 0.1);
+    p.add(tubeZ(0.255, 0.255, 0.12, 16), green, 0, 0, -0.5);
+    p.add(tubeZ(0.2, 0.15, 0.3, 12), dark, 0, 0, -1.08); // nozzle
+    for (let i = 0; i < 4; i++) {
+      const a = (i * Math.PI) / 2 + Math.PI / 4;
+      p.add(new THREE.BoxGeometry(0.05, 0.5, 0.62), green, Math.cos(a) * 0.4, Math.sin(a) * 0.4, -0.72, 0, 0, a - Math.PI / 2);
+      p.add(new THREE.BoxGeometry(0.04, 0.26, 0.3), green, Math.cos(a) * 0.3, Math.sin(a) * 0.3, 0.45, 0, 0, a - Math.PI / 2); // canards
+    }
+    for (const s of [-1, 1]) p.add(new THREE.BoxGeometry(0.08, 0.1, 0.3), dark, s * 0.2, 0.18, -0.1); // rail lugs
+    rocketShapes = p.buildGeometries();
+  }
+  const g = new THREE.Group();
+  for (const [mat, geo] of rocketShapes) {
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.castShadow = true;
+    g.add(mesh);
+  }
+  return g;
+}
 
 /** A player-launched homing rocket: climbs out, arcs over and dives onto its target. */
 export class HomingRocket {
@@ -35,25 +72,13 @@ export class HomingRocket {
     this.lastTarget = fallbackTarget.clone();
 
     // Built along +Z (nose forward) because Object3D.lookAt aims +Z.
-    const body = plastic(0xe8e4d8);
-    const nose = plastic(0xc0392b);
-    const fins = plastic(ARMY_GREEN);
+    this.mesh.add(buildRocketModel());
     const add = (geo: THREE.BufferGeometry, mat: THREE.Material, z: number) => {
       const m = new THREE.Mesh(geo, mat);
       m.position.z = z;
-      m.castShadow = true;
       this.mesh.add(m);
       return m;
-    };
-    add(new THREE.CylinderGeometry(0.24, 0.24, 1.9, 14).rotateX(Math.PI / 2), body, 0);
-    add(new THREE.ConeGeometry(0.24, 0.7, 14).rotateX(Math.PI / 2), nose, 1.3);
-    add(new THREE.CylinderGeometry(0.26, 0.26, 0.18, 14).rotateX(Math.PI / 2), fins, 0.5);
-    for (let i = 0; i < 4; i++) {
-      const fin = add(new THREE.BoxGeometry(0.05, 0.55, 0.6), fins, -0.8);
-      fin.rotation.z = (i * Math.PI) / 2;
-      fin.position.set(Math.cos((i * Math.PI) / 2) * 0.32, Math.sin((i * Math.PI) / 2) * 0.32, -0.8);
-    }
-    this.flame = add(
+    };    this.flame = add(
       new THREE.ConeGeometry(0.22, 1.1, 10).rotateX(-Math.PI / 2),
       new THREE.MeshBasicMaterial({ color: 0xffb040, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false }),
       -1.5,

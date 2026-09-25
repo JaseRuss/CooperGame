@@ -5,10 +5,11 @@ import type { Building } from './Building';
 import { Bunker } from './Bunker';
 import type { HitRegistry } from '../combat/HitRegistry';
 import { heightAt } from './Terrain';
-import { siteToWorld, siteYaw, ENEMY_BASE_HALF, type Site } from './Landmarks';
+import { siteToWorld, siteYaw, enemyArmyOfSite, ENEMY_BASE_HALF, type Site } from './Landmarks';
 import { plantBuilding } from './placeModel';
 import { instanceTemplate, placement } from '../utils/instancing';
-import { plastic, shade, ARMY_TAN } from '../utils/plastic';
+import { PartBuilder } from '../utils/modelKit';
+import { plastic, shade, ENEMY_ARMY_COLOR, ENEMY_ARMY_NAME, type EnemyArmy } from '../utils/plastic';
 
 export interface Objective {
   label: string;
@@ -46,12 +47,14 @@ const GATE_HALF = 10;
 const PROP_SCALE = 12;
 const SMOKE_INTERVAL = 0.35;
 
-function flagTexture(captured: boolean): THREE.CanvasTexture {
+function flagTexture(owner: EnemyArmy | 'captured'): THREE.CanvasTexture {
+  const captured = owner === 'captured';
+  const cloth = captured ? '#4b7a2e' : '#' + ENEMY_ARMY_COLOR[owner].toString(16).padStart(6, '0');
   const c = document.createElement('canvas');
   c.width = 256;
   c.height = 160;
   const ctx = c.getContext('2d') as CanvasRenderingContext2D;
-  ctx.fillStyle = captured ? '#4b7a2e' : '#c4a468';
+  ctx.fillStyle = cloth;
   ctx.fillRect(0, 0, 256, 160);
   if (captured) {
     ctx.fillStyle = '#f4f1e4';
@@ -67,7 +70,7 @@ function flagTexture(captured: boolean): THREE.CanvasTexture {
     ctx.beginPath();
     ctx.arc(128, 80, 44, 0, Math.PI * 2);
     ctx.fill();
-    ctx.fillStyle = '#c4a468';
+    ctx.fillStyle = cloth;
     ctx.fillRect(84, 72, 88, 16);
     ctx.fillRect(120, 36, 16, 88);
   }
@@ -76,9 +79,10 @@ function flagTexture(captured: boolean): THREE.CanvasTexture {
   return tex;
 }
 
-/** A tan army compound. It's knocked out once every objective inside is destroyed. */
+/** A tan or blue army compound. It's knocked out once every objective inside is destroyed. */
 export class EnemyBase {
   readonly name: string;
+  readonly army: EnemyArmy;
   readonly center: THREE.Vector3;
   readonly objectives: Objective[] = [];
   readonly buildings: Building[] = [];
@@ -93,9 +97,11 @@ export class EnemyBase {
     private readonly scene: THREE.Scene,
     hitRegistry: HitRegistry,
     assets: AssetLibrary,
-    private readonly site: Site,
+    readonly site: Site,
   ) {
     this.name = site.name;
+    this.army = enemyArmyOfSite(site);
+    const armyColor = ENEMY_ARMY_COLOR[this.army];
     const yaw = siteYaw(site);
     const ground = heightAt(site.cx, site.cz);
     this.center = new THREE.Vector3(site.cx, ground, site.cz);
@@ -123,43 +129,82 @@ export class EnemyBase {
 
     // Radar mast with a spinning dish.
     const radar = new THREE.Group();
-    const tan = plastic(ARMY_TAN);
-    const dark = plastic(shade(ARMY_TAN, 0.6));
-    for (const [x, z] of [[-1.2, -1.2], [1.2, -1.2], [-1.2, 1.2], [1.2, 1.2]]) {
-      const leg = new THREE.Mesh(new THREE.BoxGeometry(0.3, 10, 0.3), dark);
-      leg.position.set(x, 5, z);
-      leg.castShadow = true;
-      radar.add(leg);
+    const tan = plastic(armyColor);
+    const dark = plastic(shade(armyColor, 0.6));
+    // Lattice mast tapering to a railed deck, with an equipment hut at its foot.
+    const mast = new PartBuilder();
+    const v = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
+    const foot = 1.8;
+    const head = 1.1;
+    const corners = [[-1, -1], [1, -1], [1, 1], [-1, 1]];
+    for (let i = 0; i < 4; i++) {
+      const [ax, az] = corners[i];
+      const [bx, bz] = corners[(i + 1) % 4];
+      mast.beam(v(ax * foot, 0, az * foot), v(ax * head, 10, az * head), 0.26, dark);
+      for (let k = 0; k < 4; k++) {
+        const y0 = k * 2.5;
+        const y1 = y0 + 2.5;
+        const w0 = foot + (head - foot) * (y0 / 10);
+        const w1 = foot + (head - foot) * (y1 / 10);
+        mast.beam(v(ax * w0, y0, az * w0), v(bx * w1, y1, bz * w1), 0.1, dark);
+        mast.beam(v(bx * w0, y0, bz * w0), v(ax * w1, y1, az * w1), 0.1, dark);
+        mast.beam(v(ax * w1, y1, az * w1), v(bx * w1, y1, bz * w1), 0.12, dark);
+      }
     }
-    const deck = new THREE.Mesh(new THREE.BoxGeometry(3.4, 0.4, 3.4), tan);
-    deck.position.y = 10;
-    radar.add(deck);
+    mast.add(new THREE.BoxGeometry(3.4, 0.4, 3.4), tan, 0, 10, 0);
+    for (let i = 0; i < 4; i++) {
+      const [ax, az] = corners[i];
+      const [bx, bz] = corners[(i + 1) % 4];
+      mast.beam(v(ax * 1.65, 11.1, az * 1.65), v(bx * 1.65, 11.1, bz * 1.65), 0.06, dark);
+      mast.add(new THREE.BoxGeometry(0.06, 0.9, 0.06), dark, ax * 1.65, 10.65, az * 1.65);
+    }
+    mast.add(new THREE.BoxGeometry(3, 2.2, 2.2), tan, 3.2, 1.1, 0);
+    mast.add(new THREE.BoxGeometry(3.2, 0.2, 2.4), dark, 3.2, 2.3, 0);
+    mast.add(new THREE.BoxGeometry(0.8, 1.6, 0.06), dark, 3.2, 0.8, 1.12);
+    mast.add(new THREE.CylinderGeometry(0.05, 0.05, 3, 5), dark, 4.3, 3.8, -0.7);
+    mast.buildInto(radar);
+
     this.radarDish = new THREE.Group();
     this.radarDish.position.y = 11;
     radar.add(this.radarDish);
-    const dish = new THREE.Mesh(new THREE.SphereGeometry(3, 16, 8, 0, Math.PI * 2, 0, Math.PI / 3), tan);
-    dish.rotation.x = -Math.PI / 2 + 0.4;
-    dish.position.set(0, 1.2, 0.8);
-    dish.castShadow = true;
-    this.radarDish.add(dish);
+    // Ribbed dish on a yoke, with a feed horn on struts.
+    const dishParts = new PartBuilder();
+    const tilt = -Math.PI / 2 + 0.4;
+    dishParts.add(new THREE.SphereGeometry(3, 18, 8, 0, Math.PI * 2, 0, Math.PI / 3), tan, 0, 1.2, 0.8, tilt);
+    const axis = new THREE.Vector3(0, 1, 0).applyAxisAngle(new THREE.Vector3(1, 0, 0), tilt); // dish's open side
+    const centre = v(0, 1.2, 0.8);
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2;
+      const rim = v(Math.cos(a) * 2.6, 1.5, Math.sin(a) * 2.6).applyAxisAngle(new THREE.Vector3(1, 0, 0), tilt).add(centre);
+      dishParts.beam(centre.clone().addScaledVector(axis, 3), rim, 0.07, dark);
+    }
+    dishParts.add(new THREE.CylinderGeometry(0.3, 0.2, 0.6, 10), dark, 0, 0, 0);
+    dishParts.add(new THREE.BoxGeometry(0.3, 1.4, 0.3), dark, 0, 0.7, 0.3);
+    const horn = centre.clone().addScaledVector(axis, 1.3);
+    dishParts.add(new THREE.CylinderGeometry(0.25, 0.12, 0.5, 8), dark, horn.x, horn.y, horn.z, tilt);
+    dishParts.add(new THREE.BoxGeometry(0.8, 0.8, 0.6), dark, 0, 0.6, -1.3); // counterweight
+    dishParts.buildInto(this.radarDish);
     const rp = at(34, 8);
-    const radarBuilding = plantBuilding(world, scene, hitRegistry, radar, rp.x, rp.z, yaw, 1, 80, ARMY_TAN);
+    const radarBuilding = plantBuilding(world, scene, hitRegistry, radar, rp.x, rp.z, yaw, 1, 80, armyColor);
     this.buildings.push(radarBuilding);
     this.objectives.push({ label: 'Radar', position: radarBuilding.center, isDestroyed: () => radarBuilding.destroyed });
 
     // Command bunker facing the gate (its gun slit is on its local -Z).
     const bp = at(0, -2);
-    this.bunker = new Bunker(world, scene, hitRegistry, bp.x, bp.z, yaw + Math.PI);
+    this.bunker = new Bunker(world, scene, hitRegistry, bp.x, bp.z, yaw + Math.PI, 'enemy', armyColor);
     this.objectives.push({ label: 'Command Bunker', position: this.bunker.position, isDestroyed: () => !this.bunker.alive });
 
-    // Flag: tan while held, green once captured.
+    // The army's own shells never hurt its compound.
+    for (const b of this.buildings) b.faction = 'enemy';
+
+    // Flag: the army's colour while held, green once captured.
     const fp = at(-14, 58);
     const fy = heightAt(fp.x, fp.z);
     const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.16, 12, 8), plastic(0xd8d8d0));
     pole.position.set(fp.x, fy + 6, fp.z);
     pole.castShadow = true;
     scene.add(pole);
-    this.flagMaterial = new THREE.MeshStandardMaterial({ map: flagTexture(false), side: THREE.DoubleSide });
+    this.flagMaterial = new THREE.MeshStandardMaterial({ map: flagTexture(this.army), side: THREE.DoubleSide });
     const flag = new THREE.Mesh(new THREE.PlaneGeometry(4, 2.5).translate(2, 0, 0), this.flagMaterial);
     flag.position.set(fp.x + 0.15, fy + 10.6, fp.z);
     flag.rotation.y = yaw;
@@ -221,6 +266,29 @@ export class EnemyBase {
     add('road-sign-warning', [put(GATE_HALF + 5, z + 3, Math.PI)]);
   }
 
+  /** "Blue Army Base Bravo" */
+  get title(): string {
+    return `${ENEMY_ARMY_NAME[this.army]} Base ${this.name}`;
+  }
+
+  /**
+   * Where the green garrison sets up once the base is taken: bunkers covering every side
+   * (facing = world yaw with the gun slit outward) and squad rally points.
+   */
+  garrisonLayout(): { bunkers: { x: number; z: number; facing: number }[]; squads: THREE.Vector2[] } {
+    const yaw = siteYaw(this.site);
+    const bunker = (lx: number, lz: number, facing: number) => ({ ...siteToWorld(this.site, lx, lz), facing: yaw + facing });
+    const spot = (lx: number, lz: number) => {
+      const p = siteToWorld(this.site, lx, lz);
+      return new THREE.Vector2(p.x, p.z);
+    };
+    return {
+      // Gun slits sit on a bunker's local -Z: facing 0 looks toward local -Z, pi toward the gate.
+      bunkers: [bunker(-26, 60, Math.PI), bunker(56, -18, -Math.PI / 2), bunker(-56, -18, Math.PI / 2), bunker(10, -62, 0)],
+      squads: [spot(-20, 5), spot(22, 24), spot(0, 50)],
+    };
+  }
+
   get remaining(): number {
     return this.objectives.filter((o) => !o.isDestroyed()).length;
   }
@@ -242,7 +310,7 @@ export class EnemyBase {
     if (!this.captured && this.isDestroyed) {
       this.captured = true;
       this.flagMaterial.map?.dispose();
-      this.flagMaterial.map = flagTexture(true);
+      this.flagMaterial.map = flagTexture('captured');
       this.flagMaterial.needsUpdate = true;
     }
   }

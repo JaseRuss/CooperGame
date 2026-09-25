@@ -18,7 +18,23 @@ export interface InputState {
   buddyPressed: boolean;
   usingGamepad: boolean;
   pointerLocked: boolean;
+  /** False once the browser has refused pointer lock; the mouse aims unlocked instead. */
+  pointerLockAvailable: boolean;
+  /** Menu navigation, one step per press (D-pad / left stick / arrows, A / Enter, B / Esc, X / O). */
+  menu: MenuInput;
 }
+
+export interface MenuInput {
+  up: boolean;
+  down: boolean;
+  left: boolean;
+  right: boolean;
+  confirm: boolean;
+  back: boolean;
+  options: boolean;
+}
+
+const MENU_STICK = 0.6;
 
 const DEADZONE = 0.15;
 
@@ -38,10 +54,18 @@ export class InputManager {
   private resetKeyLatch = false;
   private gamepadResetLatch = false;
   private pointerLocked = false;
+  /** Set once the browser refuses pointer lock (some embedded browsers do); the mouse then aims unlocked. */
+  private pointerLockRefused = false;
+  /** Cursor position over the game (0..1 across the window), or null when it's outside. */
+  private cursor: { x: number; y: number } | null = null;
 
-  private mouseSensitivity = 0.0024;
-  private gamepadYawSpeed = 2.6; // rad/sec at full deflection
-  private gamepadPitchSpeed = 0.9;
+  private static readonly MOUSE_SENSITIVITY = 0.0024;
+  private static readonly GAMEPAD_YAW_SPEED = 2.6; // rad/sec at full deflection
+  private static readonly GAMEPAD_PITCH_SPEED = 0.9;
+  private mouseSensitivity = InputManager.MOUSE_SENSITIVITY;
+  private gamepadYawSpeed = InputManager.GAMEPAD_YAW_SPEED;
+  private gamepadPitchSpeed = InputManager.GAMEPAD_PITCH_SPEED;
+  private readonly menuLatch = new Map<keyof MenuInput, boolean>();
   private mapKeyLatch = false;
   private gamepadMapLatch = false;
   private rocketLatch = false;
@@ -60,13 +84,27 @@ export class InputManager {
     document.addEventListener('pointerlockchange', () => {
       this.pointerLocked = document.pointerLockElement === canvas;
     });
+    document.addEventListener('pointerlockerror', () => {
+      this.pointerLockRefused = true;
+    });
 
+    // Locked: every movement aims. Unlocked: movement over the game still aims, and the cursor's
+    // position is kept so holding it near an edge keeps the turret turning.
     window.addEventListener('mousemove', (e) => {
-      if (this.pointerLocked) {
+      if (this.pointerLocked || e.target === canvas) {
         this.mouseDX += e.movementX;
         this.mouseDY += e.movementY;
       }
+      this.cursor = e.target === canvas ? { x: e.clientX / window.innerWidth, y: e.clientY / window.innerHeight } : null;
     });
+    document.addEventListener('mouseleave', () => {
+      this.cursor = null;
+    });
+    window.addEventListener('blur', () => {
+      this.cursor = null;
+      this.mouseDown = false;
+    });
+    canvas.style.cursor = 'crosshair';
     window.addEventListener('mousedown', (e) => {
       if (e.button === 0) this.mouseDown = true;
       if (e.button === 2) this.rightMouseDown = true;
@@ -78,6 +116,23 @@ export class InputManager {
 
     // Prevent the browser context menu from eating right-click (reserved for future use).
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+  }
+
+  /** Scales mouse and right-stick turret speed (1 = normal). */
+  setAimScale(scale: number): void {
+    this.mouseSensitivity = InputManager.MOUSE_SENSITIVITY * scale;
+    this.gamepadYawSpeed = InputManager.GAMEPAD_YAW_SPEED * scale;
+    this.gamepadPitchSpeed = InputManager.GAMEPAD_PITCH_SPEED * scale;
+  }
+
+  /** Turns this frame's held menu buttons into one-shot presses. */
+  private menuEdges(held: MenuInput): MenuInput {
+    const out = { ...held };
+    for (const key of Object.keys(held) as (keyof MenuInput)[]) {
+      out[key] = held[key] && !this.menuLatch.get(key);
+      this.menuLatch.set(key, held[key]);
+    }
+    return out;
   }
 
   /** Poll device state and produce a single frame's InputState. Call once per frame. */
@@ -113,6 +168,12 @@ export class InputManager {
 
     aimYawDelta += this.mouseDX * this.mouseSensitivity;
     aimPitchDelta += this.mouseDY * this.mouseSensitivity;
+    // Unlocked mouse: park the cursor near the left or right edge to keep turning.
+    if (!this.pointerLocked && this.cursor) {
+      const edge = 0.07;
+      const push = this.cursor.x < edge ? -(edge - this.cursor.x) / edge : this.cursor.x > 1 - edge ? (this.cursor.x - (1 - edge)) / edge : 0;
+      aimYawDelta += push * this.gamepadYawSpeed * 0.8 * dt;
+    }
     this.mouseDX = 0;
     this.mouseDY = 0;
 
@@ -124,6 +185,16 @@ export class InputManager {
     let mapButtonHeld = false;
     let rocketHeld = this.keys.has('KeyF') || this.rightMouseDown;
     let buddyHeld = this.keys.has('KeyX');
+    const k = (...codes: string[]) => codes.some((c) => this.keys.has(c));
+    const menuHeld: MenuInput = {
+      up: k('ArrowUp', 'KeyW'),
+      down: k('ArrowDown', 'KeyS'),
+      left: k('ArrowLeft', 'KeyA'),
+      right: k('ArrowRight', 'KeyD'),
+      confirm: k('Enter', 'Space'),
+      back: k('Escape', 'Backspace'),
+      options: k('KeyO'),
+    };
 
     const pads = navigator.getGamepads ? navigator.getGamepads() : [];
     for (const pad of pads) {
@@ -160,6 +231,15 @@ export class InputManager {
       mapButtonHeld ||= pad.buttons[9]?.pressed ?? false; // Start / Menu / Options
       rocketHeld ||= pad.buttons[4]?.pressed ?? false; // LB / L1
       buddyHeld ||= pad.buttons[2]?.pressed ?? false; // X / Square
+
+      const btn = (i: number) => pad.buttons[i]?.pressed ?? false;
+      menuHeld.up ||= btn(12) || rawY < -MENU_STICK;
+      menuHeld.down ||= btn(13) || rawY > MENU_STICK;
+      menuHeld.left ||= btn(14) || rawX < -MENU_STICK;
+      menuHeld.right ||= btn(15) || rawX > MENU_STICK;
+      menuHeld.confirm ||= btn(0);
+      menuHeld.back ||= btn(1);
+      menuHeld.options ||= btn(2);
     }
 
     const rocketPressed = rocketHeld && !this.rocketLatch;
@@ -197,6 +277,8 @@ export class InputManager {
       buddyPressed,
       usingGamepad,
       pointerLocked: this.pointerLocked,
+      pointerLockAvailable: !this.pointerLockRefused,
+      menu: this.menuEdges(menuHeld),
     };
   }
 }

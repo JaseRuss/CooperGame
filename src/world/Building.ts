@@ -1,10 +1,15 @@
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import type { HitRegistry } from '../combat/HitRegistry';
+import type { Faction } from '../entities/Tank';
 
 const COLLAPSE_DURATION = 1.1;
 const DEBRIS_LIFETIME = 5;
 const DEBRIS_COUNT = 7;
+/** How long a health bar stays up after a hit, and how long it takes to fade. */
+const BAR_SHOW_TIME = 3.5;
+const BAR_FADE_TIME = 0.8;
+const BAR_MAX_HEIGHT = 24; // above the ground, so skyscraper bars stay in view
 
 interface Debris {
   mesh: THREE.Mesh;
@@ -19,6 +24,13 @@ export class Building {
   destroyed = false;
   /** Size of the explosion when it collapses (fuel tanks go up bigger). */
   explosionSize = 2.2;
+  /** Which side owns it; shells never hurt their own side's buildings. Null = anyone's target. */
+  faction: Faction | null = null;
+  /** Indestructible while set (the Fortress, until its gates open). */
+  locked = false;
+
+  private bar: { sprite: THREE.Sprite; canvas: HTMLCanvasElement; texture: THREE.CanvasTexture } | null = null;
+  private barTimer = 0;
 
   private collapseT = 0;
   private startY = 0;
@@ -54,13 +66,51 @@ export class Building {
   }
 
   takeDamage(amount: number): void {
-    if (this.destroyed) return;
+    if (this.destroyed || this.locked) return;
     this.health = Math.max(0, this.health - amount);
     if (this.health <= 0) this.collapse();
+    else this.showHealthBar();
+  }
+
+  /** Pops a health bar over the building; it fades away a few seconds after the last hit. */
+  private showHealthBar(): void {
+    if (!this.bar) {
+      const canvas = document.createElement('canvas');
+      canvas.width = 128;
+      canvas.height = 16;
+      const texture = new THREE.CanvasTexture(canvas);
+      const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, depthTest: false, transparent: true }));
+      const width = THREE.MathUtils.clamp(Math.max(this.halfExtents.x, this.halfExtents.z) * 1.3, 3, 14);
+      sprite.scale.set(width, width * 0.13, 1);
+      const ground = this.center.y - this.halfExtents.y;
+      sprite.position.set(this.center.x, Math.min(this.center.y + this.halfExtents.y + 2, ground + BAR_MAX_HEIGHT), this.center.z);
+      sprite.renderOrder = 10;
+      this.scene.add(sprite);
+      this.bar = { sprite, canvas, texture };
+    }
+    const ctx = this.bar.canvas.getContext('2d') as CanvasRenderingContext2D;
+    const frac = this.health / this.maxHealth;
+    ctx.clearRect(0, 0, 128, 16);
+    ctx.fillStyle = 'rgba(10,10,10,0.75)';
+    ctx.fillRect(0, 0, 128, 16);
+    ctx.fillStyle = frac > 0.5 ? '#5fd15f' : frac > 0.25 ? '#e0c23f' : '#e05f4f';
+    ctx.fillRect(2, 2, 124 * frac, 12);
+    this.bar.texture.needsUpdate = true;
+    this.bar.sprite.visible = true;
+    this.barTimer = BAR_SHOW_TIME;
+  }
+
+  private removeHealthBar(): void {
+    if (!this.bar) return;
+    this.scene.remove(this.bar.sprite);
+    this.bar.texture.dispose();
+    this.bar.sprite.material.dispose();
+    this.bar = null;
   }
 
   private collapse(): void {
     this.destroyed = true;
+    this.removeHealthBar();
     this.startY = this.mesh.position.y;
     this.startScale.copy(this.mesh.scale);
     if (this.collider) this.hitRegistry.unregister(this.collider);
@@ -132,6 +182,12 @@ export class Building {
   }
 
   update(dt: number): void {
+    if (this.bar && this.barTimer > 0) {
+      this.barTimer -= dt;
+      this.bar.sprite.material.opacity = Math.min(1, this.barTimer / BAR_FADE_TIME);
+      if (this.barTimer <= 0) this.bar.sprite.visible = false;
+    }
+
     if (this.destroyed && this.collapseT < COLLAPSE_DURATION) {
       this.collapseT += dt;
       const t = Math.min(1, this.collapseT / COLLAPSE_DURATION);

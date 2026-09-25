@@ -38,7 +38,10 @@ const TOWN_BLEND = 70;
 const SITE_BLEND = 90;
 const LAKE_DEPTH = 6;
 const SHORE_BLEND = 40;
+const BASE_FLAT_RADIUS = BASE_RADIUS + 35;
+const BASE_BLEND = 70;
 const townHeights = TOWNS.map((t) => rawHeight(t.cx, t.cz));
+const baseHeights = FRIENDLY_BASES.map((b) => rawHeight(b.x, b.z));
 const siteHeights = SITES.map((s) => rawHeight(s.cx, s.cz));
 
 /** Lake surface heights: a little below the lowest ground around each lake so water never spills. */
@@ -89,12 +92,13 @@ export function heightAt(x: number, z: number): number {
     }
   }
 
-  const flattenRadius = BASE_RADIUS * 2.2;
-  for (const base of FRIENDLY_BASES) {
-    const distToBase = Math.hypot(x - base.x, z - base.z);
-    if (distToBase < flattenRadius) {
-      const t = distToBase / flattenRadius;
-      h *= t * t;
+  // Family bases sit on a dead-level plateau (pad, wall, towers and keepsake), then blend out.
+  for (let i = 0; i < FRIENDLY_BASES.length; i++) {
+    const base = FRIENDLY_BASES[i];
+    const d = Math.hypot(x - base.x, z - base.z);
+    if (d < BASE_FLAT_RADIUS + BASE_BLEND) {
+      const s = smoothstep(Math.max(0, d - BASE_FLAT_RADIUS) / BASE_BLEND);
+      h = baseHeights[i] * (1 - s) + h * s;
     }
   }
 
