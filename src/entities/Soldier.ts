@@ -4,6 +4,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { surfaceHeightAt } from '../world/Terrain';
 import { plastic } from '../utils/plastic';
 import type { Faction } from './Tank';
+import { createJammedTag, createMuzzleGlob } from '../combat/JamCannon';
 
 const UP = new THREE.Vector3(0, 1, 0);
 const ENGAGE_RANGE = 120;
@@ -181,6 +182,9 @@ export class Soldier {
   /** Seconds left stuck in jam (0 = free). */
   private jamTime = 0;
   private jamWobble = 0;
+  /** Seconds left with jam blocking the rifle (friendly fire): he still moves, but can't shoot. */
+  private gunJamTime = 0;
+  private gunJamVisuals: THREE.Object3D[] = [];
 
   constructor(
     x: number,
@@ -230,10 +234,30 @@ export class Soldier {
     return true;
   }
 
+  /** Friendly fire from the jam cannon: a glob over the rifle's muzzle stops him shooting for a while. */
+  jamGun(duration: number): boolean {
+    if (this.state !== 'active' || this.jamTime > 0 || this.gunJamTime > 0) return false;
+    this.gunJamTime = duration;
+    const glob = createMuzzleGlob(0.55);
+    glob.position.set(0.12, MUZZLE_HEIGHT[this.pose] + 0.02, -1.02);
+    const tag = createJammedTag(2.4);
+    tag.position.y = MUZZLE_HEIGHT[this.pose] + 1.0;
+    this.mesh.add(glob, tag);
+    this.gunJamVisuals = [glob, tag];
+    return true;
+  }
+
+  private clearGunJam(): void {
+    this.gunJamTime = 0;
+    for (const v of this.gunJamVisuals) v.removeFromParent();
+    this.gunJamVisuals = [];
+  }
+
   /** Blast or run over: fly away from `from` and land flat on the ground. */
   knockDown(from: THREE.Vector3, strength: number): void {
     if (this.state !== 'active') return;
     this.jamTime = 0;
+    this.clearGunJam();
     const away = new THREE.Vector3(this.pos.x - from.x, 0, this.pos.z - from.z);
     if (away.lengthSq() < 0.01) away.set(this.rng() - 0.5, 0, this.rng() - 0.5);
     away.normalize();
@@ -294,10 +318,15 @@ export class Soldier {
     let hop = 0;
     let shot: Shot | null = null;
 
+    if (this.gunJamTime > 0) {
+      this.gunJamTime -= dt;
+      if (this.gunJamTime <= 0) this.clearGunJam();
+    }
+
     if (this.seesTarget && target && dist < ENGAGE_RANGE) {
       this.heading = Math.atan2(-dx, -dz);
       this.fireTimer -= dt;
-      if (this.fireTimer <= 0) {
+      if (this.fireTimer <= 0 && this.gunJamTime <= 0) {
         this.fireTimer = 1.4 + this.rng() * 1.6;
         shot = this.shootAt(target, dist);
       }

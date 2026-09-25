@@ -127,6 +127,17 @@ export class TroopManager {
     return caught;
   }
 
+  /** A jam splat on your own side's soldiers: their rifles are gummed up for `duration`. Returns how many. */
+  jamGuns(point: THREE.Vector3, radius: number, owner: Faction, duration: number): number {
+    let fumbled = 0;
+    for (const s of this.activeSoldiers(owner)) {
+      const dx = s.position.x - point.x;
+      const dz = s.position.z - point.z;
+      if (dx * dx + dz * dz < radius * radius && s.jamGun(duration)) fumbled++;
+    }
+    return fumbled;
+  }
+
   /** A rifle round landing at `point` drops the nearest of the other side's soldiers within `radius`. */
   shoot(point: THREE.Vector3, radius: number, attacker: Faction): void {
     let victim: Soldier | null = null;

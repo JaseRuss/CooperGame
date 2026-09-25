@@ -105,7 +105,9 @@ and buddy name tags, and your choices are remembered.
 - **Family bases** sit around the edge of the map. Drive inside one to repair.
 - The **jam cannon** sprays a stream of strawberry jam that lands in a line along
   your aim; sweep the turret to hose down a whole squad. Enemy soldiers caught in
-  it get stuck, can't shoot, and slip over a few seconds later.
+  it get stuck, can't shoot, and slip over a few seconds later. Careful with
+  your own side: jam doesn't hurt them, but it gums up their guns for a few
+  seconds.
 - **Rear hits** do double damage to enemy tanks. Front armour takes half damage.
 - **Buddy tanks** (Keston, Max, Innes and Jason) follow you and join the fight.
   You can have all four out at once. The meter starts full and refills over

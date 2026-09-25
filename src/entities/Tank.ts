@@ -4,6 +4,7 @@ import { heightAt, waterDepthAt } from '../world/Terrain';
 import { clamp } from '../utils/math';
 import { plastic, shade } from '../utils/plastic';
 import { PartBuilder, tubeX, tubeZ } from '../utils/modelKit';
+import { createJammedTag, createMuzzleGlob } from '../combat/JamCannon';
 
 export const HULL_HALF_EXTENTS = { x: 1.15, y: 0.5, z: 1.9 };
 const Y_AXIS = new THREE.Vector3(0, 1, 0);
@@ -38,6 +39,9 @@ export class Tank {
   readonly faction: Faction;
 
   fireCooldown = 0;
+  /** Seconds left with jam gumming up the barrel (friendly fire from the jam cannon). */
+  private gunJamTime = 0;
+  private gunJamVisuals: THREE.Object3D[] = [];
   readonly fireInterval: number = 1.6;
   readonly muzzleSpeed: number = 160;
   readonly shellDamage: number = 26;
@@ -497,6 +501,28 @@ export class Tank {
     this.root.position.set(x, y, z);
   }
 
+  /**
+  * Jam over the muzzle: the gun can't fire for duration seconds, with a glob on the barrel and
+  * a tag overhead. Returns true if it wasn't already jammed.
+  */
+  jamGun(duration: number): boolean {
+    if (!this.alive || this.gunJamTime > 0) return false;
+    this.gunJamTime = duration;
+    this.fireCooldown = Math.max(this.fireCooldown, duration);
+    const glob = createMuzzleGlob(1.3);
+    glob.position.set(0, 0, 0.05);
+    this.muzzle.add(glob);
+    const tag = createJammedTag(3.4);
+    tag.position.y = 4.5;
+    this.root.add(tag);
+    this.gunJamVisuals = [glob, tag];
+    return true;
+  }
+
+  get isGunJammed(): boolean {
+    return this.gunJamTime > 0;
+  }
+
   /** Attempt to fire; returns muzzle world position/direction if a shot was fired. */
   tryFire(): { origin: THREE.Vector3; direction: THREE.Vector3 } | null {
     if (this.fireCooldown > 0 || !this.alive) return null;
@@ -506,6 +532,14 @@ export class Tank {
 
   update(dt: number): void {
     if (this.fireCooldown > 0) this.fireCooldown = Math.max(0, this.fireCooldown - dt);
+    if (this.gunJamTime > 0) {
+      this.gunJamTime -= dt;
+      if (this.gunJamTime <= 0) {
+        this.gunJamTime = 0;
+        for (const v of this.gunJamVisuals) v.removeFromParent();
+        this.gunJamVisuals = [];
+      }
+    }
   }
 
   dispose(): void {

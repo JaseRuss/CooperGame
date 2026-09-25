@@ -26,6 +26,41 @@ const chunkGeometry = new THREE.SphereGeometry(0.16, 8, 6).scale(1, 0.55, 1);
 const blobGeometry = new THREE.SphereGeometry(0.24, 12, 8);
 const dropletGeometry = new THREE.SphereGeometry(0.12, 8, 6);
 
+/** A glob of jam stuck over a gun's muzzle (friendly fire from the jam cannon). */
+export function createMuzzleGlob(size = 1): THREE.Mesh {
+  const mesh = new THREE.Mesh(blobGeometry, blobMaterial);
+  mesh.scale.set(size, size * 0.85, size * 1.2);
+  return mesh;
+}
+
+let jammedTagMaterial: THREE.SpriteMaterial | null = null;
+
+/** A floating pink "GUN JAMMED!" tag (shared texture; one sprite per unit). */
+export function createJammedTag(width: number): THREE.Sprite {
+  if (!jammedTagMaterial) {
+    const c = document.createElement('canvas');
+    c.width = 256;
+    c.height = 64;
+    const ctx = c.getContext('2d') as CanvasRenderingContext2D;
+    ctx.fillStyle = 'rgba(40,6,14,0.78)';
+    ctx.beginPath();
+    ctx.roundRect(4, 6, 248, 52, 26);
+    ctx.fill();
+    ctx.font = '900 30px "Black Ops One", Impact, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#ff8aa8';
+    ctx.fillText('GUN JAMMED!', 128, 34);
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    jammedTagMaterial = new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true });
+  }
+  const sprite = new THREE.Sprite(jammedTagMaterial);
+  sprite.scale.set(width, width / 4, 1);
+  sprite.renderOrder = 12;
+  return sprite;
+}
+
 /** An irregular jam puddle, lying flat (built in XY; laid onto the ground by the caller). */
 function splatGeometry(radius: number, rng: () => number): THREE.BufferGeometry {
   const s = new THREE.Shape();

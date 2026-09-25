@@ -479,6 +479,13 @@ export class HUD {
     this.hitMarkerAge = 0;
   }
 
+  /** A short line in the middle of the screen that floats up and fades (like the armour hit markers). */
+  showCallout(text: string, color: string): void {
+    this.hitMarker.textContent = text;
+    this.hitMarker.style.color = color;
+    this.hitMarkerAge = 0;
+  }
+
   showBanner(title: string, subtitle: string): void {
     this.banner.replaceChildren();
     el('div', 'stencil big', this.banner, title);

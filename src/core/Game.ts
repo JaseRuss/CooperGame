@@ -45,6 +45,7 @@ const RUN_OVER_RADIUS = 2.8;
 const JAM_SPEED = 36;
 const JAM_RADIUS = 3; // per splat; a held spray lays a whole line of them
 const JAM_STUCK_TIME = 5;
+const GUN_JAM_TIME = 4; // friendly fire: a teammate's gun is gummed up this long
 const RED_RESPAWN_DELAY = 40;
 const GARRISON_SQUAD_SIZE = 6;
 // Final assault on the Fortress.
@@ -919,6 +920,16 @@ export class Game {
     this.jam.update(dt, this.world, this.player.physicsCollider, (point) => {
       const caught = this.troops.jam(point, JAM_RADIUS, 'player', JAM_STUCK_TIME);
       this.addRocketCharge(caught * CHARGE_PER_TROOP);
+      // Jam on your own side doesn't hurt, but it gums up their guns for a bit.
+      const fumbled = this.troops.jamGuns(point, JAM_RADIUS, 'player', GUN_JAM_TIME);
+      let jammedTank: string | null = null;
+      for (const tank of [...this.buddies, ...this.redTanks]) {
+        if (tank.position.distanceTo(point) < JAM_RADIUS + 2 && tank.jamGun(GUN_JAM_TIME)) {
+          jammedTank = tank instanceof BuddyTank ? `${tank.name.toUpperCase()}'S` : "A FRIENDLY TANK'S";
+        }
+      }
+      if (jammedTank) this.hud.showCallout(`OOPS! ${jammedTank} GUN IS JAMMED`, '#ff8aa8');
+      else if (fumbled > 0) this.hud.showCallout(fumbled > 1 ? `OOPS! ${fumbled} FRIENDLY GUNS JAMMED` : 'OOPS! FRIENDLY GUN JAMMED', '#ff8aa8');
     });
 
     // Who's shooting at whom this frame.
