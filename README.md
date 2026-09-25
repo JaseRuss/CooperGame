@@ -104,10 +104,12 @@ and buddy name tags, and your choices are remembered.
   open and a column of green and red tanks and troops joins you for the final
   assault. Flatten it to win.
 - **Enemy helicopters** patrol the open country and circle in to attack. Raise
-  your gun to shoot them down, or aim roughly at one until **HELI LOCKED** shows
-  by the crosshair and fire a salvo of wobbly **AA missiles** (RB / Q). You
-  carry 12, six per salvo; when they run out, drive back to a family base to
-  rearm. Helicopters show as pink markers on the maps.
+  your gun: one direct shell hit brings one down. Or aim roughly at one until
+  **HELI LOCKED** shows by the crosshair and fire a salvo of wobbly
+  **AA missiles** (RB / Q). They only seek a little, so aim well; two darts
+  bursting close will do it. You carry 12, six per salvo; when they run out,
+  drive back to a family base to rearm. Helicopters show as pink markers on the
+  maps.
 - The **red army** is on your side. Their tanks and soldiers guard every town.
 - **Family bases** sit around the edge of the map. Drive inside one to repair
   and restock your AA missiles.

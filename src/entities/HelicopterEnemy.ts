@@ -10,6 +10,8 @@ const CRUISE_HEIGHT = 38;
 const ENGAGE_RANGE = 125;
 const DISENGAGE_RANGE = 145;
 const ORBIT_RANGE = 62;
+/** Anything this hard is a tank shell rather than small-arms fire (rifle rounds do 0.7). */
+const CANNON_SHELL_DAMAGE = 5;
 const TURN_RATE = 1.15;
 const MAIN_ROTOR_SPEED = 16; // rad/s
 const TAIL_ROTOR_SPEED = 34;
@@ -304,6 +306,9 @@ export class HelicopterEnemy extends Tank {
   }
 
   override takeDamage(amount: number, hitPoint?: THREE.Vector3): ReturnType<Tank['takeDamage']> {
+    // A direct hit from a tank shell (not a rifle round) brings it straight down: landing one on
+    // a moving helicopter is hard enough already. Blasts (no hit point) do their normal damage.
+    if (hitPoint && amount >= CANNON_SHELL_DAMAGE) amount = this.maxHealth * 4;
     const result = super.takeDamage(amount, hitPoint);
     this.redrawHealth();
     return result;

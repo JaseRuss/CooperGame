@@ -53,8 +53,8 @@ const GUN_JAM_TIME = 4; // friendly fire: a teammate's gun is gummed up this lon
 const AA_REARM_TIME = 0.4; // seconds per dart while parked at a home base
 const AA_RANGE = 450;
 const AA_LOCK_CONE = (45 * Math.PI) / 180; // the helicopter must be roughly where the turret points
-const AA_DAMAGE = 26; // a helicopter has 85 HP: four close darts out of six
-const AA_BLAST_RADIUS = 8;
+const AA_DAMAGE = 50; // a helicopter has 85 HP: any two darts that get close, which the light seeking makes hard work
+const AA_BLAST_RADIUS = 10;
 const RED_RESPAWN_DELAY = 40;
 const GARRISON_SQUAD_SIZE = 6;
 // Final assault on the Fortress.
@@ -676,7 +676,7 @@ export class Game {
     for (const tank of this.targetableEnemies) {
       const d = tank.position.distanceTo(point);
       if (d >= AA_BLAST_RADIUS) continue;
-      tank.takeDamage(AA_DAMAGE * (1 - 0.3 * (d / AA_BLAST_RADIUS)));
+      tank.takeDamage(AA_DAMAGE * (1 - 0.2 * (d / AA_BLAST_RADIUS)));
       if (tank.isDestroyed && tank instanceof HelicopterEnemy) this.hud.showCallout('CHOPPER DOWN!', '#8fd3ff');
     }
   }

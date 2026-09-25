@@ -10,9 +10,9 @@ const RIPPLE = 0.1; // seconds between launches in a salvo
 const LAUNCH_SPEED = 28;
 const MAX_SPEED = 80;
 const ACCELERATION = 75;
-const TURN_RATE = 3.4; // rad/s toward the (wobbly) aim point
-const WOBBLE = 0.6; // how drunk: sideways pull relative to the pull toward the target
-const PROXIMITY_FUSE = 5.5;
+const SEEK_RATE = 0.8; // rad/s: a very light pull toward the target
+const WOBBLE_RATE = 1.4; // rad/s of sideways stagger: how drunk they are
+const PROXIMITY_FUSE = 7;
 const LIFETIME = 4.5;
 const TRAIL_INTERVAL = 0.06;
 
@@ -175,27 +175,24 @@ export class AAMissiles {
     if (dist < PROXIMITY_FUSE) return m.position.clone();
     desired.normalize();
 
-    // The drunken bit: a corkscrew and random lurches sideways, which sober up as it closes in.
+    // Very light seeking: only a gentle pull toward the target, so the launch aim matters.
+    const angle = dir.angleTo(desired);
+    if (angle > 1e-4) dir.lerp(desired, Math.min(1, (SEEK_RATE * dt) / angle)).normalize();
+
+    // On top of that, the drunken stagger: a corkscrew and random lurches across its path.
     m.lurchTimer -= dt;
     if (m.lurchTimer <= 0) {
       m.lurchTimer = 0.12 + Math.random() * 0.25;
-      m.lurch.set(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5);
+      m.lurch.set(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(2);
     }
-    const side = new THREE.Vector3().crossVectors(desired, Math.abs(desired.y) > 0.9 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0)).normalize();
-    const up = new THREE.Vector3().crossVectors(side, desired);
+    const side = new THREE.Vector3().crossVectors(dir, Math.abs(dir.y) > 0.9 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0)).normalize();
+    const up = new THREE.Vector3().crossVectors(side, dir);
     m.phase += m.spin * dt;
-    const sober = goal ? THREE.MathUtils.clamp(dist / 45, 0.2, 1) : 1;
-    const wobble = side
+    const stagger = side
       .multiplyScalar(Math.cos(m.phase))
       .addScaledVector(up, Math.sin(m.phase))
-      .multiplyScalar(0.7)
-      .add(m.lurch.clone().projectOnPlane(desired))
-      .multiplyScalar(WOBBLE * sober);
-    const aim = desired.add(wobble).normalize();
-
-    const angle = dir.angleTo(aim);
-    const maxTurn = TURN_RATE * dt;
-    if (angle > 1e-4) dir.lerp(aim, Math.min(1, maxTurn / angle)).normalize();
+      .add(m.lurch.clone().projectOnPlane(dir));
+    dir.addScaledVector(stagger, WOBBLE_RATE * dt).normalize();
     const speed = Math.min(MAX_SPEED, m.velocity.length() + ACCELERATION * dt);
     m.velocity.copy(dir).multiplyScalar(speed);
 
