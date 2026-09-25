@@ -22,7 +22,7 @@ export interface MapHouse {
   destroyed: () => boolean;
 }
 
-export type MarkerKind = 'tank' | 'troop' | 'bunker';
+export type MarkerKind = 'tank' | 'troop' | 'bunker' | 'helicopter';
 
 export interface MapMarker {
   x: number;
@@ -68,7 +68,7 @@ const TERRAIN_SAMPLES = 192;
 const HEAT_GRID = 128; // cells per side (~23m each)
 const HEAT_SPREAD = 1.7; // Gaussian sigma, in cells
 const HEAT_REACH = 5; // cells either side that a unit warms
-const HEAT_WEIGHT: Record<MarkerKind, number> = { tank: 3, bunker: 2, troop: 0.7 };
+const HEAT_WEIGHT: Record<MarkerKind, number> = { tank: 3, bunker: 2, troop: 0.7, helicopter: 3 };
 /** Heat at which the colour peaks at full red. */
 const HEAT_FULL = 5;
 
@@ -285,7 +285,32 @@ export class WorldMap {
     }
 
     for (const m of view.markers) {
-      if (opts.heatmap && !m.friendly) continue; // shown as heat instead
+      // Keep aircraft directly marked on the full map as well as in the enemy heatmap.
+      if (opts.heatmap && !m.friendly && m.kind !== 'helicopter') continue;
+      if (m.kind === 'helicopter') {
+        const r = 11 / s;
+        ctx.save();
+        ctx.translate(m.x, m.z);
+        ctx.fillStyle = '#ff75d8';
+        ctx.strokeStyle = '#24152b';
+        ctx.lineWidth = 2.5 / s;
+        ctx.beginPath();
+        ctx.arc(0, 0, r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        // Rotor and tail make this distinct from the round tank and troop markers.
+        ctx.lineWidth = 2.5 / s;
+        ctx.beginPath();
+        ctx.moveTo(-r * 0.55, 0);
+        ctx.lineTo(r * 0.55, 0);
+        ctx.moveTo(r * 0.45, 0);
+        ctx.lineTo(r, -r * 0.45);
+        ctx.moveTo(-r * 0.7, -r * 0.6);
+        ctx.lineTo(r * 0.3, -r * 0.6);
+        ctx.stroke();
+        ctx.restore();
+        continue;
+      }
       if (m.kind === 'bunker') {
         const r = 5 / s;
         ctx.fillStyle = m.friendly ? '#6fbf4a' : '#c0843a';

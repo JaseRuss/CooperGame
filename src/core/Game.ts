@@ -817,7 +817,12 @@ export class Game {
       if (b.alive) markers.push({ x: b.position.x, z: b.position.z, kind: 'bunker', friendly: true });
     }
     for (const slot of this.enemySlots) {
-      if (slot.tank) markers.push({ x: slot.tank.position.x, z: slot.tank.position.z, kind: 'tank', friendly: false });
+      if (slot.tank) markers.push({
+        x: slot.tank.position.x,
+        z: slot.tank.position.z,
+        kind: slot.tank instanceof HelicopterEnemy ? 'helicopter' : 'tank',
+        friendly: false,
+      });
     }
     for (const tank of this.redTanks) markers.push({ x: tank.position.x, z: tank.position.z, kind: 'tank', friendly: true });
     return markers;
