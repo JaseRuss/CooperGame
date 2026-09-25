@@ -320,7 +320,7 @@ export class Game {
   private spawnEnemy(slot: EnemySlot): void {
     const { x, z, patrolCenter, patrolRadius, color } = slot.spawn;
     const tank = slot.spawn.helicopter
-      ? new HelicopterEnemy(this.world, x, z, patrolCenter, patrolRadius, Math.random, this.assets, color)
+      ? new HelicopterEnemy(this.world, x, z, patrolCenter, patrolRadius, Math.random, color)
       : new EnemyTank(this.world, x, z, patrolCenter, patrolRadius, Math.random, color);
     this.scene.add(tank.root);
     this.hitRegistry.register(tank.physicsCollider, { kind: 'tank', tank });

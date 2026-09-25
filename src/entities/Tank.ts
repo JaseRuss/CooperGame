@@ -69,6 +69,8 @@ export class Tank {
     plasticColor: number,
     facingRadians = 0,
     faction: Faction = 'enemy',
+    /** False for vehicles (the helicopter) that build their own body round the aiming pivots. */
+    tankBody = true,
   ) {
     this.faction = faction;
     this.maxHealth = maxHealth;
@@ -78,7 +80,7 @@ export class Tank {
     this.root.position.set(spawnX, groundY, spawnZ);
     this.hullYaw = facingRadians;
     this.root.quaternion.setFromAxisAngle(Y_AXIS, facingRadians);
-    this.buildVisuals(plasticColor);
+    if (tankBody) this.buildVisuals(plasticColor);
 
     const bodyDesc = RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(
       spawnX,

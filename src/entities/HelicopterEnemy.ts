@@ -3,35 +3,131 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import { Tank } from './Tank';
 import { ENEMY_MAX_HEALTH } from '../core/config';
 import { heightAt } from '../world/Terrain';
-import type { AssetLibrary } from '../world/AssetLibrary';
-import { ARMY_TAN, plastic } from '../utils/plastic';
+import { ARMY_TAN, plastic, shade } from '../utils/plastic';
+import { PartBuilder, loftGeometry, tubeX, tubeZ } from '../utils/modelKit';
 
 const CRUISE_HEIGHT = 38;
-// The GLB is authored in metres (about 9 x 3.5 x 11 m); a touch over life size reads well next to the tanks.
-const MODEL_SCALE = 1.2;
 const ENGAGE_RANGE = 125;
 const DISENGAGE_RANGE = 145;
 const ORBIT_RANGE = 62;
 const TURN_RATE = 1.15;
+const MAIN_ROTOR_SPEED = 16; // rad/s
+const TAIL_ROTOR_SPEED = 34;
+/** Hit volume round the cabin and boom (half extents), a little generous for a flying target. */
+const HIT_HALF = { x: 2.6, y: 1.6, z: 6 };
+
+type Shapes = Record<'body' | 'rotor' | 'tail' | 'gun', Map<THREE.Material, THREE.BufferGeometry>>;
+const shapeCache = new Map<number, Shapes>();
+
+/**
+ * A toy gunship in moulded army plastic, nose toward -Z and about 14 m long: rounded cabin and
+ * glazed nose, tapering boom, stub wings with rocket pods, skids, and a chin gun. The rotors and
+ * the gun are built separately so they can spin and aim.
+ */
+function gunshipShapes(color: number): Shapes {
+  const cached = shapeCache.get(color);
+  if (cached) return cached;
+  const body = plastic(color);
+  const dark = plastic(shade(color, 0.65));
+  const deep = plastic(shade(color, 0.42));
+  const steel = plastic(0x5b5f58);
+  const glass = new THREE.MeshPhysicalMaterial({ color: 0x9fd0e0, roughness: 0.08, clearcoat: 1, transparent: true, opacity: 0.8 });
+  const b = new PartBuilder();
+
+  // Fuselage: glazed nose, deep cabin, then a boom tapering back to the tail.
+  const hull = [
+    { z: -5.8, w: 0.7, h: 0.7, y: -0.2 },
+    { z: -5.3, w: 1.7, h: 1.6, y: 0 },
+    { z: -4.3, w: 2.3, h: 2.3, y: 0.15 },
+    { z: 0.8, w: 2.4, h: 2.4, y: 0.25 },
+    { z: 2.0, w: 1.7, h: 1.7, y: 0.6 },
+    { z: 3.2, w: 0.85, h: 0.9, y: 0.85 },
+    { z: 8.2, w: 0.45, h: 0.5, y: 1.05 },
+  ];
+  b.add(loftGeometry(hull, 28, 3), body);
+  b.add(loftGeometry(hull.slice(0, 4).map((s) => ({ ...s, w: s.w + 0.05, h: s.h + 0.05, z: Math.min(s.z, -3.4) })), 22, 3, [-0.1 * Math.PI, 1.1 * Math.PI]), glass);
+  b.add(new THREE.BoxGeometry(0.08, 1.4, 0.08), deep, 0, 0.95, -4.5, -0.6); // windscreen frame
+  // Engine housing and exhausts on the roof, rotor mast.
+  b.add(loftGeometry([
+    { z: -1.8, w: 0.6, h: 0.3, y: 1.45 },
+    { z: -1.2, w: 1.5, h: 0.9, y: 1.7 },
+    { z: 1.6, w: 1.4, h: 0.9, y: 1.7 },
+    { z: 2.4, w: 0.7, h: 0.4, y: 1.55 },
+  ], 18, 3), body);
+  for (const s of [-1, 1]) b.add(tubeZ(0.18, 0.22, 0.6, 10), deep, s * 0.45, 1.75, 2.5);
+  b.add(new THREE.CylinderGeometry(0.16, 0.2, 0.8, 10), steel, 0, 2.4, 0);
+  // Tail: fin, tailplanes, and the tail rotor gearbox.
+  b.add(new THREE.BoxGeometry(0.14, 1.9, 1.2), body, 0, 1.9, 7.9, -0.35);
+  b.add(new THREE.BoxGeometry(2.4, 0.08, 0.7), body, 0, 1.0, 6.4);
+  b.add(tubeX(0.14, 0.4, 8), dark, 0.25, 2.4, 8.2);
+  for (const s of [-1, 1]) {
+    // Stub wings with a rocket pod and a missile each side.
+    b.add(new THREE.BoxGeometry(1.6, 0.12, 1.0), dark, s * 1.9, -0.1, -0.4, 0, 0, s * -0.06);
+    b.add(tubeZ(0.3, 0.3, 1.6, 14), deep, s * 2.45, -0.45, -0.5);
+    b.add(tubeZ(0.26, 0.26, 0.04, 14), steel, s * 2.45, -0.45, -1.32);
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2;
+      b.add(tubeZ(0.06, 0.06, 0.05, 6), deep, s * 2.45 + Math.cos(a) * 0.16, -0.45 + Math.sin(a) * 0.16, -1.35);
+    }
+    b.add(tubeZ(0.1, 0.1, 1.4, 10), plastic(0xe8e4d8), s * 1.6, -0.4, -0.3);
+    b.add(new THREE.ConeGeometry(0.1, 0.3, 10).rotateX(-Math.PI / 2), plastic(0xc0392b), s * 1.6, -0.4, -1.15);
+    // Skids and their struts.
+    b.add(new THREE.BoxGeometry(0.14, 0.14, 4.6), steel, s * 1.15, -1.55, -1);
+    b.add(new THREE.BoxGeometry(0.14, 0.14, 0.6), steel, s * 1.15, -1.4, -3.5, -0.6);
+    for (const z of [-2.2, 0.2]) b.beam(new THREE.Vector3(s * 1.15, -1.55, z), new THREE.Vector3(s * 0.85, -0.7, z), 0.1, steel);
+    // Army roundel on the cabin side.
+    b.add(new THREE.CylinderGeometry(0.42, 0.42, 0.04, 20).rotateZ(Math.PI / 2), deep, s * 1.2, 0.3, -1.4);
+    b.add(new THREE.CylinderGeometry(0.22, 0.22, 0.05, 16).rotateZ(Math.PI / 2), body, s * 1.21, 0.3, -1.4);
+  }
+
+  const rotor = new PartBuilder();
+  rotor.add(new THREE.CylinderGeometry(0.34, 0.3, 0.28, 12), steel);
+  for (let i = 0; i < 2; i++) {
+    const a = i * Math.PI;
+    rotor.add(new THREE.BoxGeometry(6.4, 0.08, 0.46), dark, Math.cos(a) * 3.3, 0.05, -Math.sin(a) * 3.3, 0, a, 0.02);
+    rotor.add(new THREE.BoxGeometry(0.4, 0.09, 0.48), plastic(0xffcc33), Math.cos(a) * 6.4, 0.05, -Math.sin(a) * 6.4, 0, a);
+  }
+  const tail = new PartBuilder();
+  tail.add(tubeX(0.12, 0.2, 8), steel);
+  for (let i = 0; i < 2; i++) tail.add(new THREE.BoxGeometry(0.05, 1.8, 0.2), dark, 0.06, 0, 0, (i * Math.PI) / 2);
+  const gun = new PartBuilder();
+  gun.add(new THREE.SphereGeometry(0.34, 12, 8), deep);
+  gun.add(tubeZ(0.07, 0.09, 1.3, 8), steel, 0, 0, -0.75);
+  gun.add(tubeZ(0.11, 0.11, 0.2, 8), deep, 0, 0, -1.35);
+
+  const shapes: Shapes = { body: b.buildGeometries(), rotor: rotor.buildGeometries(), tail: tail.buildGeometries(), gun: gun.buildGeometries() };
+  shapeCache.set(color, shapes);
+  return shapes;
+}
+
+function dress(geos: Map<THREE.Material, THREE.BufferGeometry>, parent: THREE.Object3D): void {
+  for (const [mat, geo] of geos) {
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.castShadow = true;
+    parent.add(mesh);
+  }
+}
 
 /** Airborne enemy that shares the tank health, faction, shell and target interfaces. */
 export class HelicopterEnemy extends Tank {
   override readonly fireInterval = 3.1;
   override readonly shellDamage = 10;
   protected override barrelPitchMin = -1.45;
-  private readonly mixer: THREE.AnimationMixer;
   private readonly orbitPhase: number;
+  private readonly airframe = new THREE.Group();
+  private readonly mainRotor = new THREE.Group();
+  private readonly tailRotor = new THREE.Group();
   private readonly healthBar: THREE.Sprite;
   private readonly healthTexture: THREE.CanvasTexture;
   private readonly healthCanvas: HTMLCanvasElement;
   private readonly healthCtx: CanvasRenderingContext2D;
-  private readonly gunGeometry: THREE.CylinderGeometry;
-  private readonly healthBarHeight: number;
+  private readonly healthBarHeight = 4.2;
+  private readonly lastPosition = new THREE.Vector3();
   private engaging = false;
   private trackedTarget: { position: THREE.Vector3 } | null = null;
   private readonly previousTargetPosition = new THREE.Vector3();
   private readonly targetVelocity = new THREE.Vector3();
-  private readonly cruiseHeight: number;
+  private readonly cruiseHeight = CRUISE_HEIGHT;
 
   constructor(
     world: RAPIER.World,
@@ -40,79 +136,38 @@ export class HelicopterEnemy extends Tank {
     private readonly patrolCenter: THREE.Vector3,
     private readonly patrolRadius: number,
     private readonly rng: () => number,
-    assets: AssetLibrary,
     color: number = ARMY_TAN,
   ) {
-    super(world, x, z, ENEMY_MAX_HEALTH * 0.85, color);
-    // Keep the tank kinematic body/controller for shared teardown and tank-compatible combat,
-    // but give the aircraft a broad, elevated hit volume instead of tank-sized ground collision.
+    super(world, x, z, ENEMY_MAX_HEALTH * 0.85, color, 0, 'enemy', false);
+    // The tank rig's hull-sized collider is swapped for one round the aircraft.
     world.removeCollider(this.collider, true);
-    for (const child of [...this.root.children]) this.root.remove(child);
-    // Keep the reusable aiming pivots but discard every moulded tank mesh beneath them.
-    this.turretPivot.clear();
-    this.barrelPivot.clear();
+    this.collider = world.createCollider(RAPIER.ColliderDesc.cuboid(HIT_HALF.x, HIT_HALF.y, HIT_HALF.z).setTranslation(0, 0.3, 1.2), this.body);
 
-    const aircraft = new THREE.Group();
-    aircraft.rotation.y = Math.PI; // asset nose points +Z; game forward is -Z
-    const model = assets.helicopter();
-    model.scale.setScalar(MODEL_SCALE);
-    model.updateMatrixWorld(true);
-    const modelBounds = new THREE.Box3().setFromObject(model);
-    const modelSize = modelBounds.getSize(new THREE.Vector3());
-    const modelCenter = modelBounds.getCenter(new THREE.Vector3());
-    // Scale the aircraft's physical hit volume with its visible model so direct fire and
-    // homing rockets can strike the enlarged aircraft instead of passing through it.
-    const aircraftBounds = RAPIER.ColliderDesc.cuboid(
-      Math.max(2.8, modelSize.x / 2),
-      Math.max(1.2, modelSize.y / 2),
-      Math.max(3.5, modelSize.z / 2),
-    ).setTranslation(-modelCenter.x, modelCenter.y, -modelCenter.z);
-    this.collider = world.createCollider(aircraftBounds, this.body);
-    this.cruiseHeight = Math.max(CRUISE_HEIGHT, modelSize.y / 2 + 3);
-    this.healthBarHeight = Math.max(4.1, modelBounds.max.y + 4);
-    model.traverse((child) => {
-      if (!(child instanceof THREE.Mesh)) return;
-      const materials = Array.isArray(child.material) ? child.material : [child.material];
-      child.material = materials.map((mat) => {
-        const material = mat.clone();
-        if ('color' in material && material.color) {
-          const isGlass = /glass|window|canopy/i.test(child.name + material.name);
-          if (!isGlass) material.color.set(color);
-          else material.color.lerp(new THREE.Color(color), 0.22);
-        }
-        if ('roughness' in material) material.roughness = 0.9;
-        return material;
-      });
-      child.castShadow = true;
-      child.receiveShadow = true;
-    });
-    aircraft.add(model);
-    this.root.add(aircraft);
-    this.mixer = new THREE.AnimationMixer(model);
-    const rotor = assets.helicopterClips.find((clip) => /rotor/i.test(clip.name));
-    if (rotor) this.mixer.clipAction(rotor).play();
+    const shapes = gunshipShapes(color);
+    this.root.add(this.airframe);
+    dress(shapes.body, this.airframe);
+    this.mainRotor.position.set(0, 2.85, 0);
+    dress(shapes.rotor, this.mainRotor);
+    this.tailRotor.position.set(0.45, 2.4, 8.2);
+    dress(shapes.tail, this.tailRotor);
+    this.airframe.add(this.mainRotor, this.tailRotor);
+
+    // Chin turret: Tank's aiming pivots, so the shared aim/fire code drives it.
+    this.turretPivot.position.set(0, -0.9, -4.3);
+    this.airframe.add(this.turretPivot);
+    this.turretPivot.add(this.barrelPivot);
+    dress(shapes.gun, this.barrelPivot);
+    this.muzzle.position.set(0, 0, -1.5);
+    this.barrelPivot.add(this.muzzle);
     this.orbitPhase = rng() * Math.PI * 2;
 
-    // Reuse Tank's world-space aim and shell APIs, with a toy-like side gun under the cabin.
-    this.barrelPivot.position.set(1.3, -0.55, -0.15);
-    this.turretPivot.position.set(0, 0, 0);
-    this.root.add(this.turretPivot);
-    this.turretPivot.add(this.barrelPivot);
-    this.gunGeometry = new THREE.CylinderGeometry(0.12, 0.17, 1.1, 8);
-    const gun = new THREE.Mesh(this.gunGeometry, plastic(0x4d4734).clone());
-    gun.rotation.x = Math.PI / 2;
-    gun.position.z = -0.5;
-    gun.castShadow = true;
-    this.barrelPivot.add(gun);
-    this.muzzle.position.set(0, 0, -1.1);
-    this.barrelPivot.add(this.muzzle);
     this.healthCanvas = document.createElement('canvas');
     this.healthCanvas.width = 128;
     this.healthCanvas.height = 14;
     this.healthCtx = this.healthCanvas.getContext('2d') as CanvasRenderingContext2D;
     this.healthTexture = new THREE.CanvasTexture(this.healthCanvas);
     this.healthBar = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.healthTexture, transparent: true, depthTest: false }));
-    this.healthBar.scale.set(3.2, 0.35, 1);
+    this.healthBar.scale.set(3.6, 0.38, 1);
     this.healthBar.position.set(0, this.healthBarHeight, 0);
     this.healthBar.renderOrder = 10;
     this.healthBar.visible = false;
@@ -121,11 +176,23 @@ export class HelicopterEnemy extends Tank {
     this.teleport(x, z, 0);
     this.root.position.y = heightAt(x, z) + this.cruiseHeight;
     this.body.setTranslation(this.root.position, true);
+    this.lastPosition.copy(this.root.position);
   }
 
+  /** Spins the rotors and leans the airframe into its direction of travel. */
+  private animate(dt: number): void {
+    this.mainRotor.rotation.y += MAIN_ROTOR_SPEED * dt;
+    this.tailRotor.rotation.x += TAIL_ROTOR_SPEED * dt;
+    if (dt <= 0) return;
+    const v = this.root.position.clone().sub(this.lastPosition).divideScalar(dt);
+    this.lastPosition.copy(this.root.position);
+    const local = v.applyAxisAngle(new THREE.Vector3(0, 1, 0), -this.yaw);
+    this.airframe.rotation.x = THREE.MathUtils.damp(this.airframe.rotation.x, THREE.MathUtils.clamp(local.z * 0.02, -0.25, 0.25), 3, dt);
+    this.airframe.rotation.z = THREE.MathUtils.damp(this.airframe.rotation.z, THREE.MathUtils.clamp(-local.x * 0.02, -0.25, 0.25), 3, dt);
+  }
   ai(world: RAPIER.World, targets: { position: THREE.Vector3 }[], dt: number): { origin: THREE.Vector3; direction: THREE.Vector3 } | null {
     this.update(dt);
-    this.mixer.update(dt);
+    this.animate(dt);
     if (!this.alive || targets.length === 0) {
       this.flyPatrol(dt);
       return null;
@@ -243,16 +310,9 @@ export class HelicopterEnemy extends Tank {
   }
 
   override dispose(): void {
-    this.gunGeometry.dispose();
+    // Geometry and plastic materials are shared between helicopters; only the health bar is ours.
     this.healthTexture.dispose();
     (this.healthBar.material as THREE.SpriteMaterial).dispose();
-    this.root.traverse((child) => {
-      if (child instanceof THREE.Mesh && child.parent !== this.root) {
-        // GLTF clone materials are unique to this aircraft.
-        const materials = Array.isArray(child.material) ? child.material : [child.material];
-        for (const material of materials) material.dispose();
-      }
-    });
     super.dispose();
   }
 }
