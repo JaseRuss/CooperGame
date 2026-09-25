@@ -6,6 +6,12 @@
       "runtimeExecutable": "C:\\CooperGame\\.tools\\run-dev.cmd",
       "runtimeArgs": [],
       "port": 5173
+    },
+    {
+      "name": "pages-preview",
+      "runtimeExecutable": "C:\\CooperGame\\.tools\\run-pages-preview.cmd",
+      "runtimeArgs": [],
+      "port": 4173
     }
   ]
 }
