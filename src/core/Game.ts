@@ -25,6 +25,7 @@ import { ProjectileManager } from '../combat/ProjectileManager';
 import { ImpactEffects } from '../combat/ImpactEffects';
 import { predictTrajectory } from '../combat/Projectile';
 import { HomingRocket, type RocketTarget } from '../combat/HomingRocket';
+import { JamCannon } from '../combat/JamCannon';
 import { CameraRig } from '../camera/CameraRig';
 import { HUD, type HUDState } from '../ui/HUD';
 import { WorldMap, type MapMarker, type MapView } from '../ui/WorldMap';
@@ -40,6 +41,10 @@ const BULLET_DAMAGE = 0.7;
 const BLAST_RADIUS = 7; // per unit of explosion size, for knocking soldiers over
 const BULLET_HIT_RADIUS = 1.2; // a rifle round landing this close knocks a soldier over
 const RUN_OVER_RADIUS = 2.8;
+// Jam cannon: short-range lobbed jam that sticks infantry fast, then they slip over.
+const JAM_SPEED = 36;
+const JAM_RADIUS = 5;
+const JAM_STUCK_TIME = 5;
 const RED_RESPAWN_DELAY = 40;
 const GARRISON_SQUAD_SIZE = 6;
 // Final assault on the Fortress.
@@ -151,6 +156,7 @@ export class Game {
   private world!: RAPIER.World;
   private projectiles!: ProjectileManager;
   private impacts!: ImpactEffects;
+  private jam!: JamCannon;
   private aimGuide!: AimGuide;
   private landmarks!: LandmarkSet;
   private troops!: TroopManager;
@@ -225,6 +231,7 @@ export class Game {
     this.world = createWorld();
     this.projectiles = new ProjectileManager(this.scene, this.world, this.hitRegistry);
     this.impacts = new ImpactEffects(this.scene);
+    this.jam = new JamCannon(this.scene);
     this.aimGuide = new AimGuide(this.scene);
 
     const terrain = buildTerrain();
@@ -886,7 +893,7 @@ export class Game {
     const inSequence = this.rocketSeq !== null;
     // The tank sits still (and can't be hurt) while the rocket cam plays.
     const input = inSequence
-      ? { ...rawInput, throttle: 0, steer: 0, moveX: 0, moveY: 0, aimYawDelta: 0, aimPitchDelta: 0, firing: false }
+      ? { ...rawInput, throttle: 0, steer: 0, moveX: 0, moveY: 0, aimYawDelta: 0, aimPitchDelta: 0, firing: false, jamFiring: false }
       : rawInput;
 
     if (!inSequence) {
@@ -905,6 +912,14 @@ export class Game {
 
     const playerShot = this.player.step(input, dt);
     if (playerShot) this.fire(this.player, playerShot);
+    if (input.jamFiring) {
+      const glob = this.player.tryJam();
+      if (glob) this.jam.fire(glob.origin, glob.direction, JAM_SPEED);
+    }
+    this.jam.update(dt, this.world, this.player.physicsCollider, (point) => {
+      const caught = this.troops.jam(point, JAM_RADIUS, 'player', JAM_STUCK_TIME);
+      this.addRocketCharge(caught * CHARGE_PER_TROOP);
+    });
 
     // Who's shooting at whom this frame.
     const enemyTargets = this.enemyTargets();

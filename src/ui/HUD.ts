@@ -173,6 +173,9 @@ const ARMY_KEY =
   '<div class="sides"><span style="color:#9be27a">FRIENDS</span><i style="background:#4b7a2e"></i>Green<i style="background:#b8392e"></i>Red' +
   '<span style="color:#ff8a7a; margin-left:12px">ENEMIES</span><i style="background:#c4a468"></i>Tan<i style="background:#3d6fc4"></i>Blue</div>';
 
+const JAM_ICON = `<svg width="22" height="22" viewBox="0 0 24 24"><rect x="6" y="7" width="12" height="14" rx="2.5" fill="#dff4ff" opacity=".5"/>
+<rect x="7" y="10" width="10" height="10" rx="2" fill="#b3142e"/><path d="M4.5 7.5 L12 3 L19.5 7.5 L18 8.5 H6z" fill="#fff"/>
+<path d="M6 5.6h3v2.4H6zM12 4h3v3h-3zM9 3.9h3v2.2H9z" fill="#d33" opacity=".7"/><circle cx="10" cy="13" r="1.2" fill="#ff8aa0"/></svg>`;
 const ROCKET_ICON = `<svg width="22" height="22" viewBox="0 0 24 24"><path d="M12 2c3 2 4.5 5.5 4.5 9.5v5h-9v-5C7.5 7.5 9 4 12 2z" fill="#e8e4d8"/>
 <path d="M12 2c1.6 1 2.8 2.6 3.5 4.5h-7C9.2 4.6 10.4 3 12 2z" fill="#d0463a"/><path d="M7.5 13l-3 4v2l3-1.5zM16.5 13l3 4v2l-3-1.5z" fill="#6fae4a"/>
 <path d="M10 17h4l-.5 2.5h-3z" fill="#555"/><path d="M10.5 20h3l-1.5 3z" fill="#ffb040"/></svg>`;
@@ -202,6 +205,7 @@ export class HUD {
   private readonly rocketFill: HTMLDivElement;
   private readonly rocketText: HTMLSpanElement;
   private readonly buddyFill: HTMLDivElement;
+  private readonly jamText: HTMLSpanElement;
   private readonly buddyText: HTMLSpanElement;
   private readonly buddyChips: HTMLDivElement;
   private readonly modeText: HTMLSpanElement;
@@ -271,6 +275,16 @@ export class HUD {
     this.rocketText = el('span', '', rocketLabel);
     this.rocketFill = el('div', 'fill', el('div', 'bar', rocketBody));
     this.rocketFill.style.background = 'linear-gradient(90deg,#c0392b,#ff8a3d)';
+
+    const jamSlot = el('div', 'slot', card);
+    el('div', 'icon', jamSlot).innerHTML = JAM_ICON;
+    const jamBody = el('div', 'body', jamSlot);
+    const jamLabel = el('div', 'row-label', jamBody);
+    jamLabel.style.margin = '0';
+    el('span', '', jamLabel, 'JAM CANNON');
+    this.jamText = el('span', '', jamLabel);
+    this.jamText.style.color = '#ff8aa0';
+    el('div', 'subtle', jamBody, 'Short range · sticks soldiers in jam');
 
     const buddySlot = el('div', 'slot', card);
     el('div', 'icon', buddySlot).innerHTML = TANK_ICON;
@@ -515,6 +529,8 @@ export class HUD {
     this.rocketText.style.color = rocketReady ? '#ff9a5a' : '#eef3f8';
     this.rocketSlot.classList.toggle('ready', rocketReady);
 
+    this.jamText.textContent = state.usingGamepad ? 'HOLD LT' : 'HOLD E';
+
     const allOut = state.buddyNames.length >= state.buddyMax;
     const buddyReady = state.buddyCharge >= 1 && !allOut;
     this.buddyFill.style.width = `${Math.floor(state.buddyCharge * 100)}%`;
@@ -533,8 +549,8 @@ export class HUD {
     this.setHTML(
       this.keys,
       state.usingGamepad
-        ? `${k('LS', 'drive')}${k('RS', 'aim')}${k('RT', 'fire')}${k('LB', 'rocket')}<br>${k('X', 'buddy')}${k('Y', 'camera')}${k('Start', 'pause · options')}${k('Back', 'home')}`
-        : `${k('WASD', 'drive')}${k('Mouse', 'aim')}${k('Click', 'fire')}${k('F', 'rocket')}<br>${k('X', 'buddy')}${k('C', 'camera')}${k('M', 'pause · options')}${k('R', 'home')}` +
+        ? `${k('LS', 'drive')}${k('RS', 'aim')}${k('RT', 'fire')}${k('LT', 'jam')}${k('LB', 'rocket')}<br>${k('X', 'buddy')}${k('Y', 'camera')}${k('Start', 'pause · options')}${k('Back', 'home')}`
+        : `${k('WASD', 'drive')}${k('Mouse', 'aim')}${k('Click', 'fire')}${k('E', 'jam')}${k('F', 'rocket')}<br>${k('X', 'buddy')}${k('C', 'camera')}${k('M', 'pause · options')}${k('R', 'home')}` +
             (state.mouseCaptureHint ? '<br><span style="color:#ffd24a">Click the game to capture the mouse for aiming</span>' : ''),
     );
 

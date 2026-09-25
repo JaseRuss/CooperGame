@@ -150,6 +150,17 @@ export function createFigureMesh(pose: 0 | 1, color: number): THREE.Mesh {
   return mesh;
 }
 
+/** Glossy strawberry jam, for soldiers caught by the jam cannon. */
+export const JAM_MATERIAL = new THREE.MeshPhysicalMaterial({
+  color: 0xe0294f,
+  emissive: 0x5a0616,
+  roughness: 0.1,
+  clearcoat: 1,
+  clearcoatRoughness: 0.05,
+  sheen: 0.4,
+  sheenColor: new THREE.Color(0xff5070),
+});
+
 /** A plastic army man: hops around, shoots at the other side, gets knocked flat by blasts. */
 export class Soldier {
   readonly mesh: THREE.Mesh;
@@ -167,6 +178,9 @@ export class Soldier {
   private readonly tipAxis = new THREE.Vector3(1, 0, 0);
   private tipAngle = 0;
   private tipTarget = Math.PI / 2;
+  /** Seconds left stuck in jam (0 = free). */
+  private jamTime = 0;
+  private jamWobble = 0;
 
   constructor(
     x: number,
@@ -199,9 +213,27 @@ export class Soldier {
     return this.state === 'down' && this.downTime > DOWN_LINGER;
   }
 
+  get isJammed(): boolean {
+    return this.jamTime > 0;
+  }
+
+  /**
+   * Splattered by the jam cannon: coated in jam and stuck fast, unable to move or shoot, until
+   * `duration` runs out and he slips over. Returns true if he wasn't already jammed.
+   */
+  jam(duration: number): boolean {
+    if (this.state !== 'active' || this.jamTime > 0) return false;
+    this.jamTime = duration;
+    this.jamWobble = this.rng() * 10;
+    this.mesh.material = JAM_MATERIAL;
+    this.tipAxis.set(Math.cos(this.heading), 0, -Math.sin(this.heading)); // sways side to side
+    return true;
+  }
+
   /** Blast or run over: fly away from `from` and land flat on the ground. */
   knockDown(from: THREE.Vector3, strength: number): void {
     if (this.state !== 'active') return;
+    this.jamTime = 0;
     const away = new THREE.Vector3(this.pos.x - from.x, 0, this.pos.z - from.z);
     if (away.lengthSq() < 0.01) away.set(this.rng() - 0.5, 0, this.rng() - 0.5);
     away.normalize();
@@ -231,6 +263,21 @@ export class Soldier {
       this.downTime += dt;
       if (this.downTime > DOWN_LINGER - 2) this.pos.y -= dt * 0.3; // sink away before removal
       this.applyTransform(0);
+      return null;
+    }
+
+    if (this.jamTime > 0) {
+      // Stuck in jam: struggling from side to side, sinking a little, then slipping over.
+      this.jamTime -= dt;
+      this.jamWobble += dt * (9 + (4 - Math.min(4, this.jamTime)) * 2);
+      this.tipAngle = Math.sin(this.jamWobble) * 0.16;
+      this.pos.y = surfaceHeightAt(this.pos.x, this.pos.z) - 0.06;
+      this.applyTransform(0);
+      if (this.jamTime <= 0) {
+        this.jamTime = 0;
+        const slip = new THREE.Vector3(this.rng() - 0.5, 0, this.rng() - 0.5).add(this.pos);
+        this.knockDown(slip, 0.15);
+      }
       return null;
     }
 

@@ -11,6 +11,8 @@ export interface InputState {
   /** turret/barrel pitch change this frame, radians */
   aimPitchDelta: number;
   firing: boolean;
+  /** Held: the short-range jam cannon (E / left trigger). */
+  jamFiring: boolean;
   cameraTogglePressed: boolean;
   resetPressed: boolean;
   mapTogglePressed: boolean;
@@ -144,6 +146,7 @@ export class InputManager {
     let aimYawDelta = 0;
     let aimPitchDelta = 0;
     let firing = this.mouseDown || this.keys.has('Space');
+    let jamFiring = this.keys.has('KeyE');
     let usingGamepad = false;
     let cameraTogglePressed = false;
 
@@ -225,6 +228,10 @@ export class InputManager {
         firing = true;
         usingGamepad = true;
       }
+      if ((pad.buttons[6]?.value ?? 0) > 0.2) {
+        jamFiring = true; // LT / L2
+        usingGamepad = true;
+      }
 
       camButtonHeld ||= pad.buttons[3]?.pressed ?? false; // Y / Triangle
       resetButtonHeld ||= pad.buttons[8]?.pressed ?? false; // Back / View / Share
@@ -270,6 +277,7 @@ export class InputManager {
       aimYawDelta,
       aimPitchDelta,
       firing,
+      jamFiring,
       cameraTogglePressed,
       resetPressed,
       mapTogglePressed,
