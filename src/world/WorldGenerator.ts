@@ -28,6 +28,7 @@ export interface EnemySpawnPoint {
   patrolRadius: number;
   facing: number;
   color: number;
+  helicopter: boolean;
   /** Keeps respawning only while this holds (guards stop coming once their base is taken). */
   holdWhile: (() => boolean) | null;
 }
@@ -483,6 +484,8 @@ function placeEnemySpawns(holds: HoldFor): EnemySpawnPoint[] {
       patrolRadius: randRange(rng, 60, 120),
       facing: randRange(rng, 0, Math.PI * 2),
       color: armyColorAt(x, z),
+      // Keep aircraft in the open roaming patrols rather than placing them inside landmark guards.
+      helicopter: spawns.length % 4 === 3,
       holdWhile: null,
     });
   }
@@ -507,6 +510,7 @@ function placeEnemySpawns(holds: HoldFor): EnemySpawnPoint[] {
         patrolRadius: radius[site.kind],
         facing: rng() * Math.PI * 2,
         color: armyColorAt(p.x, p.z),
+        helicopter: false,
         holdWhile,
       });
     }

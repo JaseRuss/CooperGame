@@ -87,6 +87,7 @@ function enableShadows(obj: THREE.Object3D): void {
 /** Loads and caches every Kenney GLB model used to populate the world. */
 export class AssetLibrary {
   private readonly models = new Map<string, THREE.Object3D>();
+  private helicopterAnimations: THREE.AnimationClip[] = [];
 
   async load(onProgress?: (loaded: number, total: number) => void): Promise<void> {
     const loader = new GLTFLoader();
@@ -94,26 +95,28 @@ export class AssetLibrary {
       MANIFEST[group].names.map((name) => ({ group, name, url: `${import.meta.env.BASE_URL}models/${MANIFEST[group].dir}/${name}.glb` })),
     );
     let loaded = 0;
+    const total = jobs.length + 1;
 
-    await Promise.all(
-      jobs.map(
-        (job) =>
-          new Promise<void>((resolve, reject) => {
-            loader.load(
-              job.url,
-              (gltf) => {
-                enableShadows(gltf.scene);
-                this.models.set(`${job.group}/${job.name}`, gltf.scene);
-                loaded += 1;
-                onProgress?.(loaded, jobs.length);
-                resolve();
-              },
-              undefined,
-              reject,
-            );
-          }),
-      ),
-    );
+    const requests = jobs.map((job) => new Promise<void>((resolve, reject) => {
+      loader.load(job.url, (gltf) => {
+        enableShadows(gltf.scene);
+        this.models.set(`${job.group}/${job.name}`, gltf.scene);
+        loaded += 1;
+        onProgress?.(loaded, total);
+        resolve();
+      }, undefined, reject);
+    }));
+    requests.push(new Promise<void>((resolve, reject) => {
+      loader.load(`${import.meta.env.BASE_URL}models/helicopter/light-utility-helicopter.glb`, (gltf) => {
+        enableShadows(gltf.scene);
+        this.models.set('helicopter/light-utility-helicopter', gltf.scene);
+        this.helicopterAnimations = gltf.animations;
+        loaded += 1;
+        onProgress?.(loaded, total);
+        resolve();
+      }, undefined, reject);
+    }));
+    await Promise.all(requests);
   }
 
   names(group: AssetGroup): string[] {
@@ -129,6 +132,16 @@ export class AssetLibrary {
 
   clone(group: AssetGroup, name: string): THREE.Object3D {
     return this.template(group, name).clone(true);
+  }
+
+  helicopter(): THREE.Object3D {
+    const model = this.models.get('helicopter/light-utility-helicopter');
+    if (!model) throw new Error('Helicopter model has not loaded');
+    return model.clone(true);
+  }
+
+  get helicopterClips(): THREE.AnimationClip[] {
+    return this.helicopterAnimations;
   }
 
   random(group: AssetGroup, rng: () => number, filter?: (name: string) => boolean): string {

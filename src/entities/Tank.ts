@@ -16,8 +16,9 @@ export const ARMOR_MULTIPLIER: Record<ArmorZone, number> = { front: 0.5, side: 1
 const FRONT_ARC = (40 * Math.PI) / 180;
 const REAR_ARC = (135 * Math.PI) / 180;
 const MAX_YAW_RATE = 1.7; // rad/s at full steer
+// Ground vehicles can elevate to engage aircraft; airborne subclasses can depress further.
 const BARREL_PITCH_MIN = -0.1;
-const BARREL_PITCH_MAX = 0.38;
+const BARREL_PITCH_MAX = 0.65;
 const GROUND_SEEK = 6; // m/s downward search bias fed to the character controller
 
 /** Shared hull+turret+barrel tank rig: visuals, kinematic movement/collision, health, firing. */
@@ -48,6 +49,8 @@ export class Tank {
 
   protected barrelYaw = 0;
   protected barrelPitch = 0.04;
+  protected barrelPitchMin = BARREL_PITCH_MIN;
+  protected barrelPitchMax = BARREL_PITCH_MAX;
   /**
    * Hull heading, kept as its own accumulator. Reading root.rotation.y back is unreliable:
    * once the heading passes ±90° three.js re-decomposes it as (π, π-yaw, π).
@@ -392,6 +395,13 @@ export class Tank {
     return this.hullYaw;
   }
 
+  /** Set heading for airborne tank variants that don't use ground driving. */
+  protected setHullHeading(yaw: number): void {
+    this.hullYaw = Math.atan2(Math.sin(yaw), Math.cos(yaw));
+    this.root.quaternion.setFromAxisAngle(Y_AXIS, this.hullYaw);
+    this.body.setNextKinematicRotation(this.root.quaternion);
+  }
+
   get aimPitch(): number {
     return this.barrelPitch;
   }
@@ -435,7 +445,7 @@ export class Tank {
   /** Rotate the turret/barrel by the given deltas (radians), clamping barrel pitch. */
   protected aim(yawDelta: number, pitchDelta: number): void {
     this.barrelYaw += yawDelta;
-    this.barrelPitch = clamp(this.barrelPitch + pitchDelta, BARREL_PITCH_MIN, BARREL_PITCH_MAX);
+    this.barrelPitch = clamp(this.barrelPitch + pitchDelta, this.barrelPitchMin, this.barrelPitchMax);
     this.applyAim();
   }
 
@@ -445,7 +455,7 @@ export class Tank {
     const localDir = toTarget.clone().applyQuaternion(this.root.quaternion.clone().invert());
     const desiredYaw = Math.atan2(-localDir.x, -localDir.z);
     const flatDist = Math.sqrt(localDir.x * localDir.x + localDir.z * localDir.z);
-    const desiredPitch = clamp(Math.atan2(localDir.y, flatDist), BARREL_PITCH_MIN, BARREL_PITCH_MAX);
+    const desiredPitch = clamp(Math.atan2(localDir.y, flatDist), this.barrelPitchMin, this.barrelPitchMax);
 
     let yawDelta = desiredYaw - this.barrelYaw;
     yawDelta = Math.atan2(Math.sin(yawDelta), Math.cos(yawDelta));
@@ -454,7 +464,7 @@ export class Tank {
 
     let pitchDelta = desiredPitch - this.barrelPitch;
     pitchDelta = clamp(pitchDelta, -maxStep, maxStep);
-    this.barrelPitch = clamp(this.barrelPitch + pitchDelta, BARREL_PITCH_MIN, BARREL_PITCH_MAX);
+    this.barrelPitch = clamp(this.barrelPitch + pitchDelta, this.barrelPitchMin, this.barrelPitchMax);
     this.applyAim();
   }
 
