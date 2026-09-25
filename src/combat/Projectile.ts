@@ -12,6 +12,8 @@ export interface ImpactResult {
   tankHit: { tank: Tank; zone: ArmorZone } | null;
   /** The shot landed in a lake. */
   water: boolean;
+  /** The shot struck a tree trunk. */
+  treeHit: boolean;
 }
 
 const GRAVITY = -9;
@@ -132,7 +134,7 @@ export class Projectile {
   private resolveHit(collider: RAPIER.Collider, hitRegistry: HitRegistry, point: THREE.Vector3): void {
     const target = hitRegistry.lookup(collider);
     const water = target?.kind === 'water' || (target?.kind !== 'tank' && isUnderwater(point.x, point.y, point.z));
-    const result: ImpactResult = { collapsedBuilding: null, tankHit: null, water };
+    const result: ImpactResult = { collapsedBuilding: null, tankHit: null, water, treeHit: target?.kind === 'tree' };
     if (target?.kind === 'tank') {
       // No friendly fire: shells just bounce off their own side's tanks.
       if (target.tank.faction !== this.faction) {

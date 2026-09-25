@@ -12,6 +12,7 @@ import { Bunker } from '../world/Bunker';
 import type { EnemyBase } from '../world/EnemyBase';
 import type { Fortress } from '../world/Fortress';
 import { ENEMY_BASE_HALF } from '../world/Landmarks';
+import type { Tree } from '../world/Tree';
 import type { LandmarkSet } from '../world/LandmarkBuilders';
 import { TOWNS } from '../world/TownPlan';
 import { PlayerTank } from '../entities/PlayerTank';
@@ -159,6 +160,7 @@ export class Game {
   private enemyBases: EnemyBase[] = [];
   private announcedBases = new Set<EnemyBase>();
   private buildings: Building[] = [];
+  private trees: Tree[] = [];
   private enemySlots: EnemySlot[] = [];
   /** Enemy pillboxes. */
   private bunkers: Bunker[] = [];
@@ -239,6 +241,7 @@ export class Game {
     });
 
     const content = generateWorld(this.world, this.scene, this.hitRegistry, assets);
+    this.trees = content.trees;
     this.familyBases = FRIENDLY_BASES.map((info) => {
       const gate = gateAngle(info, content.highways);
       return {
@@ -423,6 +426,7 @@ export class Game {
       (point, result) => {
         if (result.collapsedBuilding) this.collapseBuilding(result.collapsedBuilding, tank.faction);
         else if (result.water) this.impacts.splash(point, 1);
+        else if (result.treeHit) this.impacts.dustPuff(point);
         else this.explode(point, 1, tank.faction);
         if (tank === this.player && result.tankHit) this.hud.showHitMarker(result.tankHit.zone);
       },
@@ -767,7 +771,7 @@ export class Game {
   private classifyTarget(collider: RAPIER.Collider | null): AimTarget {
     if (!collider) return 'none';
     const hit = this.hitRegistry.lookup(collider);
-    if (!hit || hit.kind === 'terrain' || hit.kind === 'water') return 'ground';
+    if (!hit || hit.kind === 'terrain' || hit.kind === 'water' || hit.kind === 'tree') return 'ground';
     if (hit.kind === 'tank') return hit.tank.faction === 'player' ? 'ground' : 'enemy';
     if (hit.building.faction === 'player') return 'ground';
     return hit.building.faction === 'enemy' ? 'enemy' : 'building';
@@ -964,6 +968,11 @@ export class Game {
       (shot, faction) => this.fireBullet(shot, undefined, faction),
     );
     this.addRocketCharge(this.troops.runOver(this.player.position, RUN_OVER_RADIUS, 'player') * CHARGE_PER_TROOP);
+
+    const tankPositions = [this.player, ...this.buddies, ...this.enemySlots.flatMap((slot) => slot.tank ? [slot.tank] : []), ...this.redSlots.flatMap((slot) => slot.tank ? [slot.tank] : [])]
+      .filter((tank) => !tank.isDestroyed)
+      .map((tank) => tank.position);
+    for (const tree of this.trees) tree.update(dt, tankPositions);
 
     this.world.step();
     this.projectiles.update(dt);

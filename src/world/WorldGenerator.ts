@@ -19,6 +19,7 @@ import { mulberry32 } from '../utils/rng';
 import { randRange } from '../utils/math';
 import { ENEMY_ARMY_COLOR, ARMY_RED, ARMY_TAN, ARMY_BLUE, plastic } from '../utils/plastic';
 import { WORLD_HALF, WORLD_SEED, BASE_RADIUS, MAX_ENEMIES, FORTRESS_HALF, distanceToFriendlyBase } from '../core/config';
+import { Tree } from './Tree';
 
 export interface EnemySpawnPoint {
   x: number;
@@ -43,6 +44,7 @@ export interface WorldContent {
   redRoutes: THREE.Vector3[][];
   fortress: Fortress;
   forests: Forest[];
+  trees: Tree[];
 }
 
 /** A patch of dense woodland (drawn on the map too). */
@@ -101,11 +103,11 @@ export function generateWorld(
   ];
   const bunkers = [...placeBunkers(world, scene, hitRegistry, highways), ...enemyBases.map((b) => b.bunker), ...fortress.bunkers];
   const forests = planForests(highways, bunkers);
-  placeTrees(scene, assets, highways, bunkers, forests);
+  const trees = placeTrees(world, scene, hitRegistry, assets, highways, bunkers, forests);
   const holds = (site: Site) => whileBaseHolds(site, enemyBases, fortress);
   const enemySpawns = placeEnemySpawns(holds);
   const squads = [...planSquads(bunkers, holds), ...planRedSquads()];
-  return { buildings, enemySpawns, highways, bunkers, squads, landmarks, enemyBases, redRoutes: planRedRoutes(), fortress, forests };
+  return { buildings, enemySpawns, highways, bunkers, squads, landmarks, enemyBases, redRoutes: planRedRoutes(), fortress, forests, trees };
 }
 
 /** Anywhere a bunker, tree or spawn shouldn't go: towns, malls, the airfield, lakes. */
@@ -387,10 +389,11 @@ function planForests(highways: Polyline[], bunkers: Bunker[]): Forest[] {
   return forests;
 }
 
-function placeTrees(scene: THREE.Scene, assets: AssetLibrary, highways: Polyline[], bunkers: Bunker[], forests: Forest[]): void {
+function placeTrees(world: RAPIER.World, scene: THREE.Scene, hitRegistry: HitRegistry, assets: AssetLibrary, highways: Polyline[], bunkers: Bunker[], forests: Forest[]): Tree[] {
   const rng = mulberry32(WORLD_SEED + 41);
   const names = assets.names('tree');
-  const byModel = new Map<string, THREE.Matrix4[]>(names.map((n) => [n, []]));
+  const trees: Tree[] = [];
+  const placements: { name: string; x: number; y: number; z: number; yaw: number; scale: number }[] = [];
 
   const gridStep = 55;
   const steps = Math.floor((WORLD_HALF * 2) / gridStep);
@@ -406,7 +409,7 @@ function placeTrees(scene: THREE.Scene, assets: AssetLibrary, highways: Polyline
 
     const name = names[Math.floor(rng() * names.length)];
     const scale = randRange(rng, TREE_SCALE_MIN, TREE_SCALE_MAX);
-    byModel.get(name)?.push(placement(x, surfaceHeightAt(x, z), z, randRange(rng, 0, Math.PI * 2), scale));
+    placements.push({ name, x, y: surfaceHeightAt(x, z), z, yaw: randRange(rng, 0, Math.PI * 2), scale });
   }
 
   // Forests: trees packed close, thinning out toward a ragged edge.
@@ -421,11 +424,43 @@ function placeTrees(scene: THREE.Scene, assets: AssetLibrary, highways: Polyline
       const z = f.z + Math.sin(a) * r;
       const name = names[Math.floor(rng() * names.length)];
       const scale = randRange(rng, TREE_SCALE_MIN, TREE_SCALE_MAX) * (1.1 - (0.3 * r) / f.radius);
-      byModel.get(name)?.push(placement(x, surfaceHeightAt(x, z), z, randRange(rng, 0, Math.PI * 2), scale));
+      placements.push({ name, x, y: surfaceHeightAt(x, z), z, yaw: randRange(rng, 0, Math.PI * 2), scale });
     }
   }
 
-  for (const [name, spots] of byModel) scene.add(instanceTemplate(assets.template('tree', name), spots));
+  const staticBody = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+  for (const name of names) {
+    const modelPlacements = placements.filter((p) => p.name === name);
+    if (modelPlacements.length === 0) continue;
+    const template = assets.template('tree', name).clone(true);
+    template.position.set(0, 0, 0);
+    template.rotation.set(0, 0, 0);
+    template.scale.set(1, 1, 1);
+    template.updateMatrixWorld(true);
+    const meshes: { instanced: THREE.InstancedMesh; local: THREE.Matrix4 }[] = [];
+    template.traverse((child) => {
+      if (!(child instanceof THREE.Mesh)) return;
+      const instanced = new THREE.InstancedMesh(child.geometry, child.material, modelPlacements.length);
+      instanced.castShadow = true;
+      instanced.receiveShadow = true;
+      scene.add(instanced);
+      meshes.push({ instanced, local: child.matrixWorld.clone() });
+    });
+
+    modelPlacements.forEach((p, index) => {
+      const writeTransform = (transform: THREE.Matrix4) => {
+        const combined = new THREE.Matrix4();
+        for (const { instanced, local } of meshes) {
+          instanced.setMatrixAt(index, combined.multiplyMatrices(transform, local));
+          instanced.instanceMatrix.needsUpdate = true;
+        }
+      };
+      trees.push(new Tree(world, hitRegistry, staticBody, scene, null, p.x, p.y, p.z, p.yaw, p.scale, writeTransform));
+    });
+    for (const { instanced } of meshes) instanced.computeBoundingSphere();
+  }
+
+  return trees;
 }
 
 function placeEnemySpawns(holds: HoldFor): EnemySpawnPoint[] {

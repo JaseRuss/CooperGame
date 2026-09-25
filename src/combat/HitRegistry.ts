@@ -6,7 +6,8 @@ export type HitTarget =
   | { kind: 'tank'; tank: Tank }
   | { kind: 'building'; building: Building }
   | { kind: 'terrain' }
-  | { kind: 'water' };
+  | { kind: 'water' }
+  | { kind: 'tree' };
 
 /** Maps Rapier collider handles to the game entity they belong to, for raycast hit resolution. */
 export class HitRegistry {
