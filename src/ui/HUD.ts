@@ -59,6 +59,7 @@ const RETICLE_COLORS: Record<AimTarget, string> = {
   building: '#ffb050',
   ground: 'rgba(255,255,255,0.9)',
   none: 'rgba(255,255,255,0.6)',
+  critical: '#ffd24a',
 };
 
 const MINIMAP_SIZE = 200;
@@ -613,7 +614,8 @@ export class HUD {
       const color = RETICLE_COLORS[state.aimTarget];
       this.crosshair.style.borderColor = color;
       this.crosshair.style.color = color;
-      this.rangeLabel.textContent = state.aimRange === null ? 'out of range' : `${Math.round(state.aimRange)} m`;
+      const range = state.aimRange === null ? 'out of range' : `${Math.round(state.aimRange)} m`;
+      this.rangeLabel.textContent = state.aimTarget === 'critical' ? `CRITICAL · ${range}` : range;
     } else {
       this.crosshair.style.display = 'none';
     }

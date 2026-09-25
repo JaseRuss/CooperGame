@@ -109,6 +109,9 @@ and buddy name tags, and your choices are remembered.
   your own side: jam doesn't hurt them, but it gums up their guns for a few
   seconds.
 - **Rear hits** do double damage to enemy tanks. Front armour takes half damage.
+- **Critical hits:** put a shell through a pillbox's gun slit, or into a parked
+  jet's wing-tip missiles or fuel tanks, and it goes up in one shot. The
+  crosshair turns gold and says CRITICAL when you're lined up on one.
 - **Buddy tanks** (Keston, Max, Innes and Jason) follow you and join the fight.
   You can have all four out at once. The meter starts full and refills over
   five minutes.

@@ -181,6 +181,8 @@ export class Game {
   private rocketCharge = 0;
   private buddyCharge = 1;
   private rocketSeq: RocketSequence | null = null;
+  /** Delayed secondary explosions (missiles cooking off after a critical hit). */
+  private aftershocks: { at: THREE.Vector3; delay: number; size: number }[] = [];
   private victoryTimer = 0;
   private settings: Settings = loadSettings();
   private wakeTimer = 0;
@@ -434,10 +436,22 @@ export class Game {
         else if (result.water) this.impacts.splash(point, 1);
         else this.explode(point, 1, tank.faction);
         if (tank === this.player && result.tankHit) this.hud.showHitMarker(result.tankHit.zone);
+        if (result.critical) this.onCriticalHit(result.critical, point, tank === this.player);
       },
       1,
       tank.faction,
     );
+  }
+
+  /** A shell found a weak point: callout for the player, and missiles cook off in a chain of blasts. */
+  private onCriticalHit(label: string, point: THREE.Vector3, byPlayer: boolean): void {
+    if (byPlayer) this.hud.showCallout(`CRITICAL HIT! ${label.toUpperCase()}`, '#ffd24a');
+    if (label === 'Missiles' || label === 'Fuel tank') {
+      for (let i = 1; i <= 4; i++) {
+        const off = new THREE.Vector3((Math.random() - 0.5) * 12, Math.random() * 3, (Math.random() - 0.5) * 12);
+        this.aftershocks.push({ at: point.clone().add(off), delay: i * 0.22 + Math.random() * 0.15, size: 1.4 + Math.random() });
+      }
+    }
   }
 
   /** Small-arms fire from troops and bunker machine guns; a round landing by a soldier drops him. */
@@ -762,7 +776,9 @@ export class Game {
       this.player.muzzleSpeed,
       this.player.physicsCollider,
     );
-    const target = this.classifyTarget(traj.hitCollider);
+    const pts = traj.points;
+    const travel = pts.length > 1 ? pts[pts.length - 1].clone().sub(pts[pts.length - 2]) : this.player.muzzleWorldDirection;
+    const target = this.classifyTarget(traj.hitCollider, traj.impact, travel);
     this.aimGuide.update(traj, target, this.camera);
     return { screen: this.toScreen(traj.impact), range: traj.normal ? traj.range : null, target };
   }
@@ -773,12 +789,13 @@ export class Game {
     return { x: ((ndc.x + 1) / 2) * window.innerWidth, y: ((1 - ndc.y) / 2) * window.innerHeight };
   }
 
-  private classifyTarget(collider: RAPIER.Collider | null): AimTarget {
+  private classifyTarget(collider: RAPIER.Collider | null, impact: THREE.Vector3, travel: THREE.Vector3): AimTarget {
     if (!collider) return 'none';
     const hit = this.hitRegistry.lookup(collider);
     if (!hit || hit.kind === 'terrain' || hit.kind === 'water') return 'ground';
     if (hit.kind === 'tank') return hit.tank.faction === 'player' ? 'ground' : 'enemy';
     if (hit.building.faction === 'player') return 'ground';
+    if (hit.building.critAt(impact, travel)) return 'critical';
     return hit.building.faction === 'enemy' ? 'enemy' : 'building';
   }
 
@@ -995,6 +1012,13 @@ export class Game {
     this.world.step();
     this.projectiles.update(dt);
     this.impacts.update(dt);
+    for (let i = this.aftershocks.length - 1; i >= 0; i--) {
+      const a = this.aftershocks[i];
+      a.delay -= dt;
+      if (a.delay > 0) continue;
+      this.explode(a.at, a.size, 'player');
+      this.aftershocks.splice(i, 1);
+    }
     for (const building of this.buildings) building.update(dt);
     this.updateEnemyBases(dt);
 

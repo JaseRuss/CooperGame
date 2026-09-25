@@ -12,6 +12,8 @@ export interface ImpactResult {
   tankHit: { tank: Tank; zone: ArmorZone } | null;
   /** The shot landed in a lake. */
   water: boolean;
+  /** Name of the weak point hit ("Gun slit", "Missile"), when it was a critical hit. */
+  critical: string | null;
 }
 
 const GRAVITY = -9;
@@ -132,7 +134,7 @@ export class Projectile {
   private resolveHit(collider: RAPIER.Collider, hitRegistry: HitRegistry, point: THREE.Vector3): void {
     const target = hitRegistry.lookup(collider);
     const water = target?.kind === 'water' || (target?.kind !== 'tank' && isUnderwater(point.x, point.y, point.z));
-    const result: ImpactResult = { collapsedBuilding: null, tankHit: null, water };
+    const result: ImpactResult = { collapsedBuilding: null, tankHit: null, water, critical: null };
     if (target?.kind === 'tank') {
       // No friendly fire: shells just bounce off their own side's tanks.
       if (target.tank.faction !== this.faction) {
@@ -142,7 +144,7 @@ export class Projectile {
     } else if (target?.kind === 'building') {
       // Nor do they hurt their own side's bunkers and compounds.
       if (target.building.faction !== this.faction) {
-        target.building.takeDamage(this.damage);
+        result.critical = target.building.strike(this.damage, point, this.velocity)?.label ?? null;
         if (target.building.destroyed) result.collapsedBuilding = target.building;
       }
     }

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { Trajectory } from '../combat/Projectile';
 
-export type AimTarget = 'enemy' | 'building' | 'ground' | 'none';
+export type AimTarget = 'enemy' | 'building' | 'ground' | 'none' | 'critical';
 
 const DOT_SPACING = 6; // meters of arc between dots
 const TICK_EVERY = 50; // meters of ground range between bigger range ticks
@@ -14,6 +14,7 @@ const TARGET_COLORS: Record<AimTarget, number> = {
   building: 0xffa040,
   ground: 0xffffff,
   none: 0xffffff,
+  critical: 0xffd24a,
 };
 
 /** In-world aiming aid: dotted shell arc with range ticks, plus a ring where the shell lands. */
