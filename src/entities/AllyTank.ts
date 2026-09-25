@@ -23,13 +23,15 @@ function wrap(a: number): number {
   return Math.atan2(Math.sin(a), Math.cos(a));
 }
 
-/** A floating name tag, readable through walls so you can always spot your buddies. */
-function nameTag(name: string): THREE.Sprite {
+/** The name tag's picture: the name in a bold green outline, shrunk to fit longer names. */
+function nameTexture(name: string): THREE.CanvasTexture {
   const canvas = document.createElement('canvas');
   canvas.width = 256;
   canvas.height = 64;
   const ctx = canvas.getContext('2d') as CanvasRenderingContext2D;
-  ctx.font = '900 38px "Segoe UI", system-ui, sans-serif';
+  let size = 38;
+  do ctx.font = `900 ${size}px "Segoe UI", system-ui, sans-serif`;
+  while (ctx.measureText(name).width > 236 && --size > 16);
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.lineWidth = 7;
@@ -39,7 +41,12 @@ function nameTag(name: string): THREE.Sprite {
   ctx.fillText(name, 128, 34);
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
-  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, depthTest: false, transparent: true }));
+  return texture;
+}
+
+/** A floating name tag, readable through walls so you can always spot your buddies. */
+function nameTag(name: string): THREE.Sprite {
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: nameTexture(name), depthTest: false, transparent: true }));
   sprite.scale.set(4.8, 1.2, 1);
   sprite.position.y = 3.6;
   sprite.renderOrder = 11;
@@ -120,6 +127,13 @@ abstract class AllyTank extends Tank {
     if (this.tag) this.tag.visible = visible;
   }
 
+  /** Redraws the floating name, after it's been changed in the options. */
+  protected redrawNameTag(name: string): void {
+    if (!this.tag) return;
+    this.tag.material.map?.dispose();
+    this.tag.material.map = nameTexture(name);
+  }
+
   override dispose(): void {
     if (this.tag) {
       this.tag.material.map?.dispose();
@@ -146,10 +160,18 @@ export class BuddyTank extends AllyTank {
     facing: number,
     /** Formation position: 0 = behind-left, 1 = behind-right, 2 = further back-left, ... */
     readonly slot: number,
-    readonly name: string,
+    /** Which crew in the buddy rota this is (their name can be changed in the options). */
+    readonly crew: number,
+    public name: string,
   ) {
     super(world, x, z, facing, BUDDY_HEALTH, BUDDY_COLOR, name);
     this.addCommander(BUDDY_COLOR);
+  }
+
+  rename(name: string): void {
+    if (name === this.name) return;
+    this.name = name;
+    this.redrawNameTag(name);
   }
 
   /** Where this buddy should sit relative to the player's hull. */

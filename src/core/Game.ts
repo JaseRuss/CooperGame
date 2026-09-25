@@ -35,7 +35,7 @@ import { WorldMap, type MapMarker, type MapView } from '../ui/WorldMap';
 import { AimGuide, type AimTarget } from '../ui/AimGuide';
 import { FRIENDLY_BASES, nearestFriendlyBase, BASE_RADIUS, type FriendlyBase } from '../core/config';
 import { ARMY_GREEN, ARMY_RED, shade } from '../utils/plastic';
-import { loadSettings, saveSettings, AIM_SPEED_SCALE, type Settings } from './Settings';
+import { loadSettings, saveSettings, AIM_SPEED_SCALE, DEFAULT_BUDDY_NAMES, type Settings } from './Settings';
 
 const RESPAWN_DELAY = 25;
 const BASE_HEAL_RATE = 45; // HP/sec while inside a family base
@@ -78,8 +78,8 @@ const ROCKET_LINGER_TIME = 3.2;
 
 // Buddy tanks: a long recharge, starting full. Each slot has its own crew.
 const BUDDY_RECHARGE_TIME = 300;
-const BUDDY_NAMES = ['Keston', 'Max', 'Innes', 'Jason'];
-const MAX_BUDDIES = BUDDY_NAMES.length;
+// Crews come from the options (Keston, Max, Innes and Jason unless renamed).
+const MAX_BUDDIES = DEFAULT_BUDDY_NAMES.length;
 
 // Enemy base objectives.
 const CHECKLIST_RANGE = 350; // show the target list when this close to an enemy base
@@ -379,19 +379,19 @@ export class Game {
     const offset = new THREE.Vector3(side * 9, 0, row * 12).applyAxisAngle(new THREE.Vector3(0, 1, 0), this.player.yaw);
     const spot = this.player.position.clone().add(offset);
 
-    // Take the next name in the rota that isn't already out.
-    const out = new Set(this.buddies.map((b) => b.name));
+    // Take the next crew in the rota that isn't already out.
+    const out = new Set(this.buddies.map((b) => b.crew));
     let pick = this.nextBuddy;
-    for (let k = 0; k < BUDDY_NAMES.length; k++) {
-      const i = (this.nextBuddy + k) % BUDDY_NAMES.length;
-      if (!out.has(BUDDY_NAMES[i])) {
+    for (let k = 0; k < MAX_BUDDIES; k++) {
+      const i = (this.nextBuddy + k) % MAX_BUDDIES;
+      if (!out.has(i)) {
         pick = i;
         break;
       }
     }
-    this.nextBuddy = (pick + 1) % BUDDY_NAMES.length;
-    const name = BUDDY_NAMES[pick];
-    const buddy = new BuddyTank(this.world, spot.x, spot.z, this.player.yaw, slot, name);
+    this.nextBuddy = (pick + 1) % MAX_BUDDIES;
+    const name = this.settings.buddyNames[pick];
+    const buddy = new BuddyTank(this.world, spot.x, spot.z, this.player.yaw, slot, pick, name);
     this.scene.add(buddy.root);
     buddy.setNameTagVisible(this.settings.nameTags);
     this.hitRegistry.register(buddy.physicsCollider, { kind: 'tank', tank: buddy });
@@ -404,7 +404,10 @@ export class Game {
   private applySettings(): void {
     this.player.driveStyle = this.settings.driveStyle;
     this.input.setAimScale(AIM_SPEED_SCALE[this.settings.aimSpeed]);
-    for (const b of this.buddies) b.setNameTagVisible(this.settings.nameTags);
+    for (const b of this.buddies) {
+      b.setNameTagVisible(this.settings.nameTags);
+      b.rename(this.settings.buddyNames[b.crew]);
+    }
   }
 
   private removeBuddy(buddy: BuddyTank): void {
@@ -980,8 +983,8 @@ export class Game {
       aaRearming: this.aaLoaded < AA_CAPACITY && inside,
       aaLockScreen,
       buddyCharge: this.buddyCharge,
-      buddyRoster: BUDDY_NAMES,
-      buddyNames: this.buddies.map((b) => b.name),
+      buddyRoster: this.settings.buddyNames,
+      buddyOut: this.settings.buddyNames.map((_, i) => this.buddies.some((b) => b.crew === i)),
       driveStyle: this.settings.driveStyle,
       mouseCaptureHint: !input.usingGamepad && !input.pointerLocked && input.pointerLockAvailable,
       buddyMax: MAX_BUDDIES,
@@ -1005,6 +1008,8 @@ export class Game {
     if (!this.ready) return;
 
     const dt = Math.min(this.clock.getDelta(), 0.05);
+    // Typing a buddy name on the options screen: letters are text, not menu or map keys.
+    this.input.textEntry = this.hud.editingText;
     const rawInput = this.input.update(dt);
 
     // Full map doubles as the pause screen: nothing moves while it's open.

@@ -76,6 +76,8 @@ export class InputManager {
   private aaLatch = false;
   private buddyLatch = false;
   private rightMouseDown = false;
+  /** Set while the options screen is taking typed text (a buddy's name). */
+  textEntry = false;
 
   constructor(canvas: HTMLCanvasElement) {
     window.addEventListener('keydown', (e) => this.keys.add(e.code));
@@ -168,7 +170,7 @@ export class InputManager {
     this.resetKeyLatch = resetKeyHeld;
 
     let mapTogglePressed = false;
-    const mapKeyHeld = this.keys.has('KeyM');
+    const mapKeyHeld = this.keys.has('KeyM') && !this.textEntry;
     if (mapKeyHeld && !this.mapKeyLatch) mapTogglePressed = true;
     this.mapKeyLatch = mapKeyHeld;
 
@@ -193,14 +195,16 @@ export class InputManager {
     let buddyHeld = this.keys.has('KeyX');
     let aaHeld = this.keys.has('KeyQ');
     const k = (...codes: string[]) => codes.some((c) => this.keys.has(c));
+    // While a name is being typed, letters, Space and Backspace are text, not menu moves.
+    const typing = this.textEntry;
     const menuHeld: MenuInput = {
-      up: k('ArrowUp', 'KeyW'),
-      down: k('ArrowDown', 'KeyS'),
-      left: k('ArrowLeft', 'KeyA'),
-      right: k('ArrowRight', 'KeyD'),
-      confirm: k('Enter', 'Space'),
-      back: k('Escape', 'Backspace'),
-      options: k('KeyO'),
+      up: typing ? k('ArrowUp') : k('ArrowUp', 'KeyW'),
+      down: typing ? k('ArrowDown') : k('ArrowDown', 'KeyS'),
+      left: typing ? k('ArrowLeft') : k('ArrowLeft', 'KeyA'),
+      right: typing ? k('ArrowRight') : k('ArrowRight', 'KeyD'),
+      confirm: typing ? k('Enter') : k('Enter', 'Space'),
+      back: typing ? k('Escape') : k('Escape', 'Backspace'),
+      options: typing ? false : k('KeyO'),
     };
 
     const pads = navigator.getGamepads ? navigator.getGamepads() : [];

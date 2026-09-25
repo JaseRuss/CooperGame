@@ -2,7 +2,7 @@ import type { WorldMap, MapView } from './WorldMap';
 import type { AimTarget } from './AimGuide';
 import type { ArmorZone } from '../entities/Tank';
 import type { MenuInput } from '../input/InputManager';
-import { OPTION_ROWS, type Settings } from '../core/Settings';
+import { OPTION_ROWS, DEFAULT_BUDDY_NAMES, BUDDY_NAME_MAX, cleanBuddyName, type Settings } from '../core/Settings';
 import { WORLD_SIZE } from '../core/config';
 
 export interface ObjectiveLine {
@@ -39,7 +39,7 @@ export interface HUDState {
   buddyCharge: number;
   /** Every buddy's name, and which of them are out right now. */
   buddyRoster: string[];
-  buddyNames: string[];
+  buddyOut: boolean[];
   buddyMax: number;
   /** True while the rocket cam / explosion replay is playing. */
   cinematic: boolean;
@@ -68,6 +68,9 @@ const RETICLE_COLORS: Record<AimTarget, string> = {
   none: 'rgba(255,255,255,0.6)',
   critical: '#ffd24a',
 };
+
+/** Letters a controller cycles through when editing a buddy's name. */
+const NAME_LETTERS = [...'ABCDEFGHIJKLMNOPQRSTUVWXYZ', ' ', '-'];
 
 const MINIMAP_SIZE = 200;
 const MINIMAP_METERS = 700; // meters shown across the minimap
@@ -172,6 +175,12 @@ const STYLE = `
 .hud .opt .val b { font-family:"Black Ops One", Impact, sans-serif; font-weight:400; letter-spacing:1px; color:#ffd24a; min-width:92px; text-align:center; }
 .hud .opt .arrow { opacity:0.5; font-size:13px; }
 .hud .opt.sel .arrow { opacity:1; }
+.hud .opt.first-name { margin-top:8px; border-top-color:rgba(214,196,138,0.25); }
+.hud .opt .val b.pen { color:#9be27a; }
+.hud .letters { display:flex; gap:3px; }
+.hud .letters span { width:17px; height:26px; display:flex; align-items:center; justify-content:center; font-family:"Black Ops One", Impact, sans-serif;
+  font-size:17px; color:#ffd24a; border-bottom:2px solid rgba(255,210,74,0.35); }
+.hud .letters span.cur { background:rgba(255,210,74,0.22); border-bottom-color:#ffd24a; animation:hudPulse 0.5s ease-in-out infinite alternate; }
 .hud .hint { min-height:42px; max-width:520px; text-align:center; font-size:13px; line-height:1.5; opacity:0.85; margin-top:4px; }
 .hud .footer { font-size:12px; opacity:0.75; margin-top:4px; }
 
@@ -270,6 +279,8 @@ export class HUD {
   private pausedOpen = false;
   private page: 'map' | 'options' = 'map';
   private optionIndex = 0;
+  /** The buddy name being edited on the options screen, if any. */
+  private nameEdit: { crew: number; chars: string[]; cursor: number } | null = null;
   private settings: Settings | null = null;
   private onSettingsChange: ((s: Settings) => void) | null = null;
   private hitMarkerAge = HIT_MARKER_TIME;
@@ -400,6 +411,7 @@ export class HUD {
 
     this.optionList = el('div', 'panel options', this.pages.options);
     this.optionHint = el('div', 'hint shadow', this.pages.options);
+    window.addEventListener('keydown', (e) => this.onNameKey(e));
     this.footer = el('div', 'footer shadow', this.overlay);
 
     // --- crosshair: where the shell will land ---
@@ -438,8 +450,14 @@ export class HUD {
     return this.pausedOpen;
   }
 
+  /** True while a buddy's name is being edited, so typed letters are text rather than controls. */
+  get editingText(): boolean {
+    return this.nameEdit !== null;
+  }
+
   /** Opens or closes the pause screen (it always opens on the map). */
   toggleBigMap(): void {
+    this.nameEdit = null;
     this.pausedOpen = !this.pausedOpen;
     this.overlay.style.display = this.pausedOpen ? 'flex' : 'none';
     this.showPage('map');
@@ -458,15 +476,102 @@ export class HUD {
       else if (menu.back) this.toggleBigMap();
       return;
     }
+    if (this.nameEdit) {
+      this.handleNameEdit(menu);
+      return;
+    }
     if (menu.back) {
       this.showPage('map');
       return;
     }
-    if (menu.up) this.optionIndex = (this.optionIndex + OPTION_ROWS.length - 1) % OPTION_ROWS.length;
-    if (menu.down) this.optionIndex = (this.optionIndex + 1) % OPTION_ROWS.length;
-    if (menu.left) this.cycleOption(this.optionIndex, -1);
-    if (menu.right || menu.confirm) this.cycleOption(this.optionIndex, 1);
-    if (menu.up || menu.down) this.renderOptions();
+    const rows = OPTION_ROWS.length + DEFAULT_BUDDY_NAMES.length;
+    if (menu.up) this.optionIndex = (this.optionIndex + rows - 1) % rows;
+    if (menu.down) this.optionIndex = (this.optionIndex + 1) % rows;
+    const crew = this.optionIndex - OPTION_ROWS.length;
+    if (crew >= 0) {
+      if (menu.confirm || menu.right) this.startNameEdit(crew);
+    } else {
+      if (menu.left) this.cycleOption(this.optionIndex, -1);
+      if (menu.right || menu.confirm) this.cycleOption(this.optionIndex, 1);
+    }
+    this.renderOptions();
+  }
+
+  // ---------- buddy name editor ----------
+  // Arcade-style on a pad (up/down picks the letter, left/right moves along, X deletes) and
+  // plain typing on a keyboard. A / Enter saves, B / Esc cancels.
+
+  private startNameEdit(crew: number): void {
+    if (!this.settings) return;
+    const chars = [...this.settings.buddyNames[crew]];
+    this.nameEdit = { crew, chars, cursor: Math.min(chars.length, BUDDY_NAME_MAX - 1) };
+    this.showPage('options');
+  }
+
+  private handleNameEdit(menu: MenuInput): void {
+    const edit = this.nameEdit;
+    if (!edit) return;
+    if (menu.back) {
+      this.nameEdit = null;
+    } else if (menu.confirm) {
+      this.saveNameEdit();
+    } else {
+      if (menu.up || menu.down) this.cycleLetter(menu.up ? 1 : -1);
+      if (menu.left) edit.cursor = Math.max(0, edit.cursor - 1);
+      if (menu.right) edit.cursor = Math.min(edit.chars.length, BUDDY_NAME_MAX - 1, edit.cursor + 1);
+      if (menu.options && edit.cursor < edit.chars.length) {
+        edit.chars.splice(edit.cursor, 1);
+      }
+    }
+    this.showPage('options');
+  }
+
+  /** Steps the letter under the cursor through A–Z, space and hyphen, capitalising word starts. */
+  private cycleLetter(dir: 1 | -1): void {
+    const edit = this.nameEdit;
+    if (!edit) return;
+    const set = NAME_LETTERS;
+    const at = edit.cursor;
+    const current = edit.chars[at];
+    // A new slot starts at A going up, or Z going down.
+    let i = current === undefined ? (dir > 0 ? -1 : set.indexOf('Z') + 1) : set.indexOf(current.toUpperCase());
+    i = (i + dir + set.length) % set.length;
+    const wordStart = at === 0 || edit.chars[at - 1] === ' ' || edit.chars[at - 1] === '-';
+    const letter = wordStart ? set[i] : set[i].toLowerCase();
+    if (current === undefined) edit.chars.push(letter);
+    else edit.chars[at] = letter;
+  }
+
+  /** Typing on the keyboard while a name is open. */
+  private onNameKey(e: KeyboardEvent): void {
+    const edit = this.nameEdit;
+    if (!edit || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.key === 'Backspace') {
+      if (edit.cursor > 0) {
+        edit.chars.splice(edit.cursor - 1, 1);
+        edit.cursor--;
+      }
+    } else if (e.key === 'Delete') {
+      if (edit.cursor < edit.chars.length) edit.chars.splice(edit.cursor, 1);
+    } else if (e.key.length === 1 && /[A-Za-z0-9 '-]/.test(e.key)) {
+      if (edit.chars.length >= BUDDY_NAME_MAX) return;
+      edit.chars.splice(edit.cursor, 0, e.key);
+      edit.cursor = Math.min(edit.cursor + 1, BUDDY_NAME_MAX - 1);
+    } else {
+      return; // arrows, Enter and Esc arrive as menu moves
+    }
+    e.preventDefault();
+    this.renderOptions();
+  }
+
+  private saveNameEdit(): void {
+    const edit = this.nameEdit;
+    if (!edit || !this.settings) return;
+    const buddyNames = [...this.settings.buddyNames];
+    buddyNames[edit.crew] = cleanBuddyName(edit.chars.join(''), DEFAULT_BUDDY_NAMES[edit.crew]);
+    this.nameEdit = null;
+    this.settings = { ...this.settings, buddyNames };
+    this.onSettingsChange?.(this.settings);
   }
 
   private showPage(page: 'map' | 'options'): void {
@@ -478,7 +583,9 @@ export class HUD {
     this.footer.textContent =
       page === 'map'
         ? 'Start / M: resume  ·  X / O: options  ·  B / Esc: resume'
-        : 'D-pad / arrows: choose and change  ·  A / Enter: change  ·  B / Esc: back to map';
+        : this.nameEdit
+          ? 'Type, or D-pad ↑↓: letter  ·  ←→: move  ·  X / Backspace: delete  ·  A / Enter: save  ·  B / Esc: cancel'
+          : 'D-pad / arrows: choose and change  ·  A / Enter: change  ·  B / Esc: back to map';
     if (page === 'options') this.renderOptions();
   }
 
@@ -519,6 +626,41 @@ export class HUD {
       });
       line.addEventListener('click', () => this.cycleOption(i, 1));
       if (i === this.optionIndex) this.optionHint.textContent = current.hint;
+    });
+
+    // One row per buddy crew, in rota order; pick one to rename it.
+    settings.buddyNames.forEach((name, crew) => {
+      const i = OPTION_ROWS.length + crew;
+      const editing = this.nameEdit?.crew === crew ? this.nameEdit : null;
+      const line = el('div', `opt${i === this.optionIndex ? ' sel' : ''}${crew === 0 ? ' first-name' : ''}`, this.optionList);
+      el('div', 'name', line, `Buddy ${crew + 1}`);
+      const val = el('div', 'val', line);
+      if (editing) {
+        const letters = el('div', 'letters', val);
+        const slots = Math.min(BUDDY_NAME_MAX, Math.max(editing.chars.length, editing.cursor + 1));
+        for (let c = 0; c < slots; c++) {
+          const ch = editing.chars[c] ?? '';
+          el('span', c === editing.cursor ? 'cur' : '', letters, ch === ' ' ? ' ' : ch);
+        }
+      } else {
+        el('b', '', val, name);
+        el('span', 'arrow', val, '✎');
+      }
+      line.addEventListener('mouseenter', () => {
+        if (this.optionIndex === i || this.nameEdit) return;
+        this.optionIndex = i;
+        this.renderOptions();
+      });
+      line.addEventListener('click', () => {
+        if (this.nameEdit) return;
+        this.optionIndex = i;
+        this.startNameEdit(crew);
+      });
+      if (i === this.optionIndex) {
+        this.optionHint.textContent = editing
+          ? `Leave it empty to go back to ${DEFAULT_BUDDY_NAMES[crew]}. Up to ${BUDDY_NAME_MAX} letters.`
+          : `Press A / Enter to rename. ${name === DEFAULT_BUDDY_NAMES[crew] ? '' : `(Was ${DEFAULT_BUDDY_NAMES[crew]}.)`}`;
+      }
     });
   }
 
@@ -611,7 +753,7 @@ export class HUD {
 
     this.jamText.textContent = state.usingGamepad ? 'HOLD LT' : 'HOLD E';
 
-    const allOut = state.buddyNames.length >= state.buddyMax;
+    const allOut = state.buddyOut.filter(Boolean).length >= state.buddyMax;
     const buddyReady = state.buddyCharge >= 1 && !allOut;
     this.buddyFill.style.width = `${Math.floor(state.buddyCharge * 100)}%`;
     this.buddyText.textContent = allOut
@@ -622,7 +764,8 @@ export class HUD {
     this.buddyText.style.color = buddyReady ? '#9be27a' : '#eef3f8';
     this.setHTML(
       this.buddyChips,
-      state.buddyRoster.map((n) => `<div class="chip${state.buddyNames.includes(n) ? ' on' : ''}">${n}</div>`).join(''),
+      // Names only ever hold letters, digits, spaces, hyphens and apostrophes, so they're safe as HTML.
+      state.buddyRoster.map((n, i) => `<div class="chip${state.buddyOut[i] ? ' on' : ''}">${n}</div>`).join(''),
     );
 
     const k = (key: string, what: string) => `<span class="key">${key}</span>${what}`;

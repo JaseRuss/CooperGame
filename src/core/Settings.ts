@@ -9,9 +9,20 @@ export interface Settings {
   aimSpeed: AimSpeed;
   /** Floating names over the buddy tanks. */
   nameTags: boolean;
+  /** The four buddy tank crews, in the order they're called in. */
+  buddyNames: string[];
 }
 
-export const DEFAULT_SETTINGS: Settings = { driveStyle: 'warthog', aimSpeed: 'normal', nameTags: true };
+export const DEFAULT_BUDDY_NAMES = ['Keston', 'Max', 'Innes', 'Jason'];
+export const BUDDY_NAME_MAX = 10;
+
+export const DEFAULT_SETTINGS: Settings = { driveStyle: 'warthog', aimSpeed: 'normal', nameTags: true, buddyNames: [...DEFAULT_BUDDY_NAMES] };
+
+/** Tidies a typed name: allowed characters only, trimmed, capped; blank falls back to `fallback`. */
+export function cleanBuddyName(name: string, fallback: string): string {
+  const tidy = name.replace(/[^A-Za-z0-9 '-]/g, '').replace(/\s+/g, ' ').trim().slice(0, BUDDY_NAME_MAX).trim();
+  return tidy || fallback;
+}
 
 export const AIM_SPEED_SCALE: Record<AimSpeed, number> = { slow: 0.65, normal: 1, fast: 1.45 };
 
@@ -20,7 +31,13 @@ const STORAGE_KEY = 'cooper-tank-settings';
 export function loadSettings(): Settings {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return { ...DEFAULT_SETTINGS, ...(JSON.parse(raw) as Partial<Settings>) };
+    if (raw) {
+      const saved = JSON.parse(raw) as Partial<Settings>;
+      // Older saves have no names; a damaged list falls back name by name.
+      const names = Array.isArray(saved.buddyNames) ? saved.buddyNames : [];
+      const buddyNames = DEFAULT_BUDDY_NAMES.map((d, i) => (typeof names[i] === 'string' ? cleanBuddyName(names[i], d) : d));
+      return { ...DEFAULT_SETTINGS, ...saved, buddyNames };
+    }
   } catch {
     // Storage can be blocked (private windows, embedded previews); defaults are fine.
   }
@@ -36,7 +53,7 @@ export function saveSettings(settings: Settings): void {
 }
 
 /** One row on the options screen: its label and the values it cycles through. */
-export interface OptionRow<K extends keyof Settings = keyof Settings> {
+export interface OptionRow<K extends Exclude<keyof Settings, 'buddyNames'> = Exclude<keyof Settings, 'buddyNames'>> {
   key: K;
   label: string;
   values: { value: Settings[K]; label: string; hint: string }[];
@@ -64,7 +81,7 @@ export const OPTION_ROWS: OptionRow[] = [
     key: 'nameTags',
     label: 'Buddy name tags',
     values: [
-      { value: true, label: 'On', hint: 'Show Keston, Max, Innes and Jason above their tanks.' },
+      { value: true, label: 'On', hint: "Show each buddy's name above their tank." },
       { value: false, label: 'Off', hint: 'Hide the floating names.' },
     ],
   },

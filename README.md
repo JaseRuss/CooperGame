@@ -87,8 +87,10 @@ plug one in and press a button so the browser detects it.
 Driving works like the Warthog in Halo by default: push the stick the way you
 want to go relative to the camera. Pull back to reverse. Let go and the tank
 turns to face where you're aiming. Prefer the old way? Pause, open **Options**
-(X or O) and switch **Tank controls** to **Classic**. Options also has aim speed
-and buddy name tags, and your choices are remembered.
+(X or O) and switch **Tank controls** to **Classic**. Options also has aim speed,
+buddy name tags and the **buddy names**: pick a buddy and press A or Enter, then
+type a new name, or on a controller use up and down to pick each letter, left
+and right to move, and X to delete. Your choices are remembered.
 
 ## Playing
 
@@ -122,8 +124,8 @@ and buddy name tags, and your choices are remembered.
 - **Critical hits:** put a shell through a pillbox's gun slit, or into a parked
   jet's wing-tip missiles or fuel tanks, and it goes up in one shot. The
   crosshair turns gold and says CRITICAL when you're lined up on one.
-- **Buddy tanks** (Keston, Max, Innes and Jason) follow you and join the fight.
-  You can have all four out at once. The meter starts full and refills over
-  five minutes.
+- **Buddy tanks** (Keston, Max, Innes and Jason, unless you rename them) follow
+  you and join the fight. You can have all four out at once. The meter starts
+  full and refills over five minutes.
 - Hit a building and a health bar pops up over it for a few seconds.
 - The pause map shows where the enemy is gathered as a red glow.
