@@ -323,7 +323,7 @@ export class Tank {
     }
     const scale = 1.1;
     figure.scale.setScalar(scale);
-    figure.position.set(0.3, 0.9 - 0.86 * scale, 0.2); // belt just above the cupola rim, in turret space
+    figure.position.set(0.3, 0.62 - 0.86 * scale, 0.2); // down in the hatch to mid-chest, in turret space
     this.turretPivot.add(figure);
   }
 
