@@ -5,6 +5,16 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 export type AssetGroup = 'house' | 'tree' | 'commercial' | 'industrial' | 'prop' | 'car';
 
 const letters = (s: string) => s.split('');
+const BUILD_SHA = import.meta.env.VITE_BUILD_SHA as string | undefined;
+
+/** Give stable public model/texture paths a deploy-specific URL for CDN cache busting. */
+function versionAssetURL(url: string): string {
+  if (!BUILD_SHA || BUILD_SHA === 'local' || url.startsWith('data:') || url.startsWith('blob:')) return url;
+  const resolved = new URL(url, window.location.href);
+  if (resolved.origin !== window.location.origin) return url;
+  resolved.searchParams.set('v', BUILD_SHA);
+  return resolved.href;
+}
 
 const MANIFEST: Record<AssetGroup, { dir: string; names: string[] }> = {
   house: { dir: 'buildings', names: letters('abcdefghijklmnopqrstu').map((l) => `building-type-${l}`) },
@@ -89,7 +99,9 @@ export class AssetLibrary {
   private readonly models = new Map<string, THREE.Object3D>();
 
   async load(onProgress?: (loaded: number, total: number) => void): Promise<void> {
-    const loader = new GLTFLoader();
+    const manager = new THREE.LoadingManager();
+    manager.setURLModifier(versionAssetURL);
+    const loader = new GLTFLoader(manager);
     const jobs = (Object.keys(MANIFEST) as AssetGroup[]).flatMap((group) =>
       MANIFEST[group].names.map((name) => ({ group, name, url: `${import.meta.env.BASE_URL}models/${MANIFEST[group].dir}/${name}.glb` })),
     );
