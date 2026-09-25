@@ -101,6 +101,8 @@ and buddy name tags, and your choices are remembered.
 - **The Fortress** in the middle of the map is locked until all five enemy
   bases are down. Then its gates open and a column of green and red tanks and
   troops joins you for the final assault. Flatten it to win.
+- **Enemy helicopters** patrol the open country and circle in to attack. Raise
+  your gun to shoot them down; they show as pink markers on the maps.
 - The **red army** is on your side. Their tanks and soldiers guard every town.
 - **Family bases** sit around the edge of the map. Drive inside one to repair.
 - The **jam cannon** sprays a stream of strawberry jam that lands in a line along

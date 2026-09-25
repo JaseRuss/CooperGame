@@ -7,6 +7,7 @@ export type CameraMode = 'third' | 'first';
 const THIRD_PERSON_OFFSET = new THREE.Vector3(0, 4.6, 9.2);
 const THIRD_PERSON_LOOK_OFFSET = new THREE.Vector3(0, 1.6, 0);
 const FOLLOW_LAMBDA = 8;
+const MAX_CAMERA_DIP_PITCH = 0.38;
 const UP = new THREE.Vector3(0, 1, 0);
 
 /**
@@ -86,7 +87,9 @@ export class CameraRig {
     const aimQuat = new THREE.Quaternion().setFromAxisAngle(UP, yaw);
     const behind = THIRD_PERSON_OFFSET.clone().applyQuaternion(aimQuat);
     const desiredPos = target.position.clone().add(behind);
-    desiredPos.y -= target.aimPitch * 6; // dip the camera as the barrel raises, to look up the shot
+    // Dip the camera as the barrel raises, to look up the shot; capped so steep anti-aircraft
+    // elevation doesn't drag the camera down into the ground behind the tank.
+    desiredPos.y -= Math.min(target.aimPitch, MAX_CAMERA_DIP_PITCH) * 6;
 
     const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(aimQuat);
     const desiredLook = target.position

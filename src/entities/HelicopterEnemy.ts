@@ -7,7 +7,8 @@ import type { AssetLibrary } from '../world/AssetLibrary';
 import { ARMY_TAN, plastic } from '../utils/plastic';
 
 const CRUISE_HEIGHT = 38;
-const MODEL_SCALE = 0.58 * 100;
+// The GLB is authored in metres (about 9 x 3.5 x 11 m); a touch over life size reads well next to the tanks.
+const MODEL_SCALE = 1.2;
 const ENGAGE_RANGE = 125;
 const DISENGAGE_RANGE = 145;
 const ORBIT_RANGE = 62;
