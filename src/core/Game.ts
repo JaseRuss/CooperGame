@@ -43,7 +43,7 @@ const BULLET_HIT_RADIUS = 1.2; // a rifle round landing this close knocks a sold
 const RUN_OVER_RADIUS = 2.8;
 // Jam cannon: short-range lobbed jam that sticks infantry fast, then they slip over.
 const JAM_SPEED = 36;
-const JAM_RADIUS = 5;
+const JAM_RADIUS = 3; // per splat; a held spray lays a whole line of them
 const JAM_STUCK_TIME = 5;
 const RED_RESPAWN_DELAY = 40;
 const GARRISON_SQUAD_SIZE = 6;
@@ -914,7 +914,7 @@ export class Game {
     if (playerShot) this.fire(this.player, playerShot);
     if (input.jamFiring) {
       const glob = this.player.tryJam();
-      if (glob) this.jam.fire(glob.origin, glob.direction, JAM_SPEED);
+      if (glob) this.jam.fire(glob.origin, glob.direction, JAM_SPEED * glob.speedScale);
     }
     this.jam.update(dt, this.world, this.player.physicsCollider, (point) => {
       const caught = this.troops.jam(point, JAM_RADIUS, 'player', JAM_STUCK_TIME);

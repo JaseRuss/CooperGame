@@ -4,8 +4,10 @@ import { surfaceHeightAt } from '../world/Terrain';
 
 const GRAVITY = -12;
 const MAX_LIFETIME = 4;
-const SPLAT_LIFETIME = 22;
-const SPLAT_FADE = 4;
+const SPLAT_LIFETIME = 14;
+const SPLAT_FADE = 3;
+/** Most puddles on the ground at once; the oldest go first (a long spray lays a lot of jam). */
+const MAX_SPLATS = 70;
 const DROPLET_LIFETIME = 1.2;
 
 // Bright strawberry jam (glossy and pinkish so it reads as jam, not anything nastier).
@@ -21,7 +23,7 @@ const blobMaterial = new THREE.MeshPhysicalMaterial({
 });
 const chunkMaterial = new THREE.MeshPhysicalMaterial({ color: 0xff5a78, roughness: 0.2, clearcoat: 1 });
 const chunkGeometry = new THREE.SphereGeometry(0.16, 8, 6).scale(1, 0.55, 1);
-const blobGeometry = new THREE.SphereGeometry(0.34, 14, 10);
+const blobGeometry = new THREE.SphereGeometry(0.24, 12, 8);
 const dropletGeometry = new THREE.SphereGeometry(0.12, 8, 6);
 
 /** An irregular jam puddle, lying flat (built in XY; laid onto the ground by the caller). */
@@ -92,9 +94,10 @@ export class JamCannon {
         const ground = surfaceHeightAt(b.mesh.position.x, b.mesh.position.z);
         if (b.mesh.position.y <= ground) landed = b.mesh.position.clone().setY(ground);
       }
-      // Wobble like a jelly in flight.
-      const w = Math.sin(b.age * 28) * 0.18;
-      b.mesh.scale.set(1 + w, 1 - w, 1 + w * 0.5);
+      // Stretched along its flight so a spray of globs reads as one stream, with a jelly wobble.
+      const w = Math.sin(b.age * 28 + i) * 0.15;
+      b.mesh.lookAt(b.mesh.position.clone().add(b.velocity));
+      b.mesh.scale.set(1 + w, 1 - w, 2.2);
       if (landed || b.age > MAX_LIFETIME) {
         this.scene.remove(b.mesh);
         this.blobs.splice(i, 1);
@@ -139,7 +142,7 @@ export class JamCannon {
 
   /** Droplets flying out, and a glossy puddle left on the ground. */
   private burst(point: THREE.Vector3): void {
-    for (let i = 0; i < 12; i++) {
+    for (let i = 0; i < 4; i++) {
       const mesh = new THREE.Mesh(dropletGeometry, blobMaterial);
       mesh.position.copy(point).setY(point.y + 0.3);
       const a = Math.random() * Math.PI * 2;
@@ -158,12 +161,12 @@ export class JamCannon {
       polygonOffsetFactor: -6,
       polygonOffsetUnits: -6,
     });
-    const mesh = new THREE.Mesh(splatGeometry(1.7 + Math.random() * 0.6, Math.random), material);
+    const mesh = new THREE.Mesh(splatGeometry(1.0 + Math.random() * 0.45, Math.random), material);
     // Strawberry chunks sitting in the jam.
-    for (let i = 0; i < 6; i++) {
+    for (let i = 0; i < 2; i++) {
       const chunk = new THREE.Mesh(chunkGeometry, chunkMaterial);
       const a = Math.random() * Math.PI * 2;
-      const r = Math.random() * 1.3;
+      const r = Math.random() * 0.7;
       chunk.position.set(Math.cos(a) * r, 0.04, Math.sin(a) * r);
       chunk.rotation.y = Math.random() * Math.PI;
       mesh.add(chunk);
@@ -174,5 +177,11 @@ export class JamCannon {
     mesh.receiveShadow = true;
     this.scene.add(mesh);
     this.splats.push({ mesh, material, age: 0 });
+    while (this.splats.length > MAX_SPLATS) {
+      const old = this.splats.shift() as Splat;
+      this.scene.remove(old.mesh);
+      old.mesh.geometry.dispose();
+      old.material.dispose();
+    }
   }
 }

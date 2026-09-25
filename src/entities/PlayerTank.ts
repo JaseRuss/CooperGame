@@ -39,7 +39,9 @@ export class PlayerTank extends Tank {
   /** Tip of the jam cannon's barrel, on the turret's right cheek. */
   private readonly jamMuzzle = new THREE.Object3D();
   private jamCooldown = 0;
-  readonly jamInterval = 0.28;
+  readonly jamInterval = 0.07; // a hose, not a mortar
+  /** Walks each glob's range from near to far and back, so a held spray paints a line of jam. */
+  private jamSweep = 0;
 
   constructor(world: RAPIER.World, spawnX: number, spawnZ: number, facingRadians = 0) {
     super(world, spawnX, spawnZ, PLAYER_MAX_HEALTH, ARMY_GREEN, facingRadians, 'player');
@@ -101,11 +103,19 @@ export class PlayerTank extends Tank {
     mount.add(this.jamMuzzle);
   }
 
-  /** Lobs a glob of jam while the trigger's held, a few times a second. */
-  tryJam(): { origin: THREE.Vector3; direction: THREE.Vector3 } | null {
+  /**
+   * Sprays jam while the trigger's held. Each glob's speed sweeps between short and long, so they
+   * land in a line along the aim; speedScale is that glob's share of full speed.
+   */
+  tryJam(): { origin: THREE.Vector3; direction: THREE.Vector3; speedScale: number } | null {
     if (this.jamCooldown > 0) return null;
     this.jamCooldown = this.jamInterval;
-    return { origin: this.jamMuzzle.getWorldPosition(new THREE.Vector3()), direction: this.muzzleWorldDirection };
+    this.jamSweep = (this.jamSweep + 0.17) % 2;
+    const t = this.jamSweep < 1 ? this.jamSweep : 2 - this.jamSweep; // 0 → 1 → 0
+    const direction = this.muzzleWorldDirection;
+    direction.x += (Math.random() - 0.5) * 0.03;
+    direction.z += (Math.random() - 0.5) * 0.03;
+    return { origin: this.jamMuzzle.getWorldPosition(new THREE.Vector3()), direction: direction.normalize(), speedScale: 0.62 + 0.45 * t };
   }
 
   /** Shows the rocket on its rail (and blinks the lamp) when it's charged. */
