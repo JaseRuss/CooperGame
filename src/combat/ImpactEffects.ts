@@ -234,6 +234,24 @@ export class ImpactEffects {
     });
   }
 
+  /** A thin, short-lived smoke wisp: the trail of the little AA missiles. */
+  wispPuff(point: THREE.Vector3): void {
+    const shade = 0.75 + Math.random() * 0.15;
+    this.add({
+      geometry: SMOKE_SPHERE,
+      position: point.clone().add(randomInSphere(0.08)),
+      velocity: randomInSphere(0.4).setY(0.4),
+      life: 0.7 + Math.random() * 0.4,
+      startScale: 0.15,
+      endScale: 0.7,
+      startOpacity: 0.5,
+      additive: false,
+      colorFrom: new THREE.Color(shade, shade, shade),
+      colorTo: new THREE.Color(shade - 0.1, shade - 0.1, shade - 0.1),
+      drag: 1.5,
+    });
+  }
+
   /** Little dust kick where a bullet lands. */
   dustPuff(point: THREE.Vector3): void {
     this.add({

@@ -28,6 +28,13 @@ export interface HUDState {
   rocketCharge: number;
   /** Screen position of the enemy the rocket would lock onto, when ready. */
   rocketLockScreen: { x: number; y: number } | null;
+  /** AA darts left, out of `aaMax`; they're only restocked at a home base. */
+  aaLoaded: number;
+  aaMax: number;
+  aaFiring: boolean;
+  aaRearming: boolean;
+  /** Screen position of the helicopter the AA salvo would chase, when loaded. */
+  aaLockScreen: { x: number; y: number } | null;
   /** 0..1; a buddy tank can be called in at 1. */
   buddyCharge: number;
   /** Every buddy's name, and which of them are out right now. */
@@ -132,11 +139,19 @@ const STYLE = `
 .hud .crosshair::before { left:50%; top:-8px; width:2px; height:6px; margin-left:-1px; box-shadow:0 30px 0 currentColor; }
 .hud .crosshair::after { top:50%; left:-8px; height:2px; width:6px; margin-top:-1px; box-shadow:30px 0 0 currentColor; }
 .hud .crosshair .dot { position:absolute; left:50%; top:50%; width:4px; height:4px; margin:-2px 0 0 -2px; background:currentColor; border-radius:50%; }
+.hud .helitag { position:absolute; left:0; top:0; display:none; align-items:center; gap:5px; margin:-11px 0 0 26px; padding:2px 7px 2px 4px;
+  border-radius:5px; background:rgba(10,30,50,0.55); border:1px solid #8fd3ff; color:#8fd3ff; font-size:12px; font-weight:800; white-space:nowrap;
+  text-shadow:0 1px 3px #000; box-shadow:0 0 8px rgba(143,211,255,0.5); animation:hudPulse 0.8s ease-in-out infinite alternate; }
 .hud .crosshair .range { position:absolute; left:50%; top:30px; transform:translateX(-50%); font-size:12px; font-weight:800; white-space:nowrap; text-shadow:0 1px 3px #000; }
 
 .hud .lock { position:absolute; left:0; top:0; width:36px; height:36px; margin:-18px 0 0 -18px; border:2px solid #ff5a4a; display:none;
   box-shadow:0 0 8px rgba(255,90,74,0.8); }
 .hud .lock span { position:absolute; left:50%; top:-22px; transform:translateX(-50%) rotate(-45deg); font-size:11px; font-weight:800; color:#ff6a5a; }
+.hud .lock.aa { border-color:#8fd3ff; box-shadow:0 0 8px rgba(143,211,255,0.8); border-radius:50%; }
+.hud .lock.aa span { color:#8fd3ff; transform:translateX(-50%); }
+.hud .pips { display:flex; gap:2px; }
+.hud .pip { flex:1; height:8px; border-radius:2px; background:rgba(0,0,0,0.5); border:1px solid rgba(255,255,255,0.12); }
+.hud .pip.on { background:linear-gradient(180deg,#f0ece0,#d0463a); }
 
 .hud .overlay { position:absolute; inset:0; display:none; align-items:center; justify-content:center; flex-direction:column; gap:10px; pointer-events:auto;
   background:radial-gradient(ellipse at center, rgba(20,30,14,0.72), rgba(0,0,0,0.82)); backdrop-filter:blur(3px); }
@@ -174,6 +189,18 @@ const ARMY_KEY =
   '<div class="sides"><span style="color:#9be27a">FRIENDS</span><i style="background:#4b7a2e"></i>Green<i style="background:#b8392e"></i>Red' +
   '<span style="color:#ff8a7a; margin-left:12px">ENEMIES</span><i style="background:#c4a468"></i>Tan<i style="background:#3d6fc4"></i>Blue</div>';
 
+/** Side view of a helicopter, for the AA lock tag. */
+const HELI_ICON = `<svg width="20" height="14" viewBox="0 0 20 14" fill="#8fd3ff"><rect x="1" y="1" width="16" height="1.4" rx=".7"/>
+<rect x="8.3" y="2" width="1.4" height="2.5"/><path d="M4 5.5h7.5c2 0 3.5 1.5 3.5 3.3S13.5 12 11.5 12H6.5C5 12 4 10.8 4 9.3z"/>
+<path d="M11 7h-3v2.5h4z" fill="#0a1e32"/><rect x="0" y="7.3" width="5" height="1.4"/><rect x="0" y="5.5" width="1.3" height="3.2"/>
+<rect x="6" y="12.6" width="8" height="1.2" rx=".6"/></svg>`;
+
+/** Three little darts climbing on wobbly smoke trails. */
+const AA_ICON = `<svg width="22" height="22" viewBox="0 0 24 24"><g fill="none" stroke="#cfd6dc" stroke-width="1.3" opacity=".7">
+<path d="M5 22c-1-3 2-4 1-7"/><path d="M12 22c1-3-2-5 0-8"/><path d="M19 22c-1-2 2-4 0-7"/></g>
+<g fill="#f0ece0"><rect x="5" y="7" width="2.2" height="7" rx="1"/><rect x="10.9" y="5" width="2.2" height="7" rx="1"/><rect x="17" y="8" width="2.2" height="7" rx="1"/></g>
+<g fill="#d0463a"><path d="M5 7l1.1-2.5L7.2 7z"/><path d="M10.9 5L12 2.5 13.1 5z"/><path d="M17 8l1.1-2.5L19.2 8z"/></g></svg>`;
+
 const JAM_ICON = `<svg width="22" height="22" viewBox="0 0 24 24"><rect x="6" y="7" width="12" height="14" rx="2.5" fill="#dff4ff" opacity=".5"/>
 <rect x="7" y="10" width="10" height="10" rx="2" fill="#b3142e"/><path d="M4.5 7.5 L12 3 L19.5 7.5 L18 8.5 H6z" fill="#fff"/>
 <path d="M6 5.6h3v2.4H6zM12 4h3v3h-3zM9 3.9h3v2.2H9z" fill="#d33" opacity=".7"/><circle cx="10" cy="13" r="1.2" fill="#ff8aa0"/></svg>`;
@@ -207,6 +234,10 @@ export class HUD {
   private readonly rocketText: HTMLSpanElement;
   private readonly buddyFill: HTMLDivElement;
   private readonly jamText: HTMLSpanElement;
+  private readonly aaSlot: HTMLDivElement;
+  private readonly aaText: HTMLSpanElement;
+  private readonly aaPips: HTMLDivElement;
+  private readonly aaLockMarker: HTMLDivElement;
   private readonly buddyText: HTMLSpanElement;
   private readonly buddyChips: HTMLDivElement;
   private readonly modeText: HTMLSpanElement;
@@ -222,6 +253,8 @@ export class HUD {
   private readonly footer: HTMLDivElement;
   private readonly crosshair: HTMLDivElement;
   private readonly rangeLabel: HTMLDivElement;
+  private readonly heliTag: HTMLDivElement;
+  private readonly heliTagText: HTMLSpanElement;
   private readonly promptLabel: HTMLDivElement;
   private readonly lockMarker: HTMLDivElement;
   private readonly hitMarker: HTMLDivElement;
@@ -277,6 +310,15 @@ export class HUD {
     this.rocketFill = el('div', 'fill', el('div', 'bar', rocketBody));
     this.rocketFill.style.background = 'linear-gradient(90deg,#c0392b,#ff8a3d)';
 
+    this.aaSlot = el('div', 'slot', card);
+    el('div', 'icon', this.aaSlot).innerHTML = AA_ICON;
+    const aaBody = el('div', 'body', this.aaSlot);
+    const aaLabel = el('div', 'row-label', aaBody);
+    aaLabel.style.marginTop = '0';
+    el('span', '', aaLabel, 'AA MISSILES');
+    this.aaText = el('span', '', aaLabel);
+    this.aaPips = el('div', 'pips', aaBody);
+
     const jamSlot = el('div', 'slot', card);
     el('div', 'icon', jamSlot).innerHTML = JAM_ICON;
     const jamBody = el('div', 'body', jamSlot);
@@ -301,6 +343,8 @@ export class HUD {
     // --- lock-on diamond over the rocket's target ---
     this.lockMarker = el('div', 'lock', root);
     this.lockMarker.innerHTML = '<span>LOCK</span>';
+    this.aaLockMarker = el('div', 'lock aa', root);
+    this.aaLockMarker.innerHTML = '<span>AA</span>';
 
     this.hitMarker = el('div', 'hitmark', root);
 
@@ -362,6 +406,10 @@ export class HUD {
     this.crosshair = el('div', 'crosshair', root);
     el('div', 'dot', this.crosshair);
     this.rangeLabel = el('div', 'range', this.crosshair);
+    // "HELI LOCKED" tag beside the reticle while the AA missiles have a target.
+    this.heliTag = el('div', 'helitag', root);
+    this.heliTag.innerHTML = `${HELI_ICON}<span></span>`;
+    this.heliTagText = this.heliTag.querySelector('span') as HTMLSpanElement;
 
     this.promptLabel = el('div', 'prompt shadow', root);
 
@@ -538,6 +586,29 @@ export class HUD {
     this.rocketText.style.color = rocketReady ? '#ff9a5a' : '#eef3f8';
     this.rocketSlot.classList.toggle('ready', rocketReady);
 
+    const aaLocked = state.aaLockScreen !== null;
+    this.aaText.textContent = state.aaRearming
+      ? 'REARMING'
+      : state.aaFiring
+        ? 'FIRING'
+        : state.aaLoaded === 0
+          ? 'EMPTY · RETURN TO BASE'
+          : aaLocked
+            ? `LOCKED · ${state.usingGamepad ? 'RB' : 'Q'}`
+            : `${state.aaLoaded} · NO LOCK`;
+    this.aaText.style.color = state.aaLoaded === 0 ? '#ff8a7a' : aaLocked ? '#8fd3ff' : '#eef3f8';
+    this.aaSlot.classList.toggle('ready', aaLocked);
+    this.setHTML(
+      this.aaPips,
+      Array.from({ length: state.aaMax }, (_, i) => `<div class="pip${i < state.aaLoaded ? ' on' : ''}"></div>`).join(''),
+    );
+    if (state.aaLockScreen) {
+      this.aaLockMarker.style.display = 'block';
+      this.aaLockMarker.style.transform = `translate(${state.aaLockScreen.x}px, ${state.aaLockScreen.y}px)`;
+    } else {
+      this.aaLockMarker.style.display = 'none';
+    }
+
     this.jamText.textContent = state.usingGamepad ? 'HOLD LT' : 'HOLD E';
 
     const allOut = state.buddyNames.length >= state.buddyMax;
@@ -558,8 +629,8 @@ export class HUD {
     this.setHTML(
       this.keys,
       state.usingGamepad
-        ? `${k('LS', 'drive')}${k('RS', 'aim')}${k('RT', 'fire')}${k('LT', 'jam')}${k('LB', 'rocket')}<br>${k('X', 'buddy')}${k('Y', 'camera')}${k('Start', 'pause · options')}${k('Back', 'home')}`
-        : `${k('WASD', 'drive')}${k('Mouse', 'aim')}${k('Click', 'fire')}${k('E', 'jam')}${k('F', 'rocket')}<br>${k('X', 'buddy')}${k('C', 'camera')}${k('M', 'pause · options')}${k('R', 'home')}` +
+        ? `${k('LS', 'drive')}${k('RS', 'aim')}${k('RT', 'fire')}${k('LT', 'jam')}${k('LB', 'rocket')}${k('RB', 'AA')}<br>${k('X', 'buddy')}${k('Y', 'camera')}${k('Start', 'pause · options')}${k('Back', 'home')}`
+        : `${k('WASD', 'drive')}${k('Mouse', 'aim')}${k('Click', 'fire')}${k('E', 'jam')}${k('F', 'rocket')}${k('Q', 'AA')}<br>${k('X', 'buddy')}${k('C', 'camera')}${k('M', 'pause · options')}${k('R', 'home')}` +
             (state.mouseCaptureHint ? '<br><span style="color:#ffd24a">Click the game to capture the mouse for aiming</span>' : ''),
     );
 
@@ -619,6 +690,16 @@ export class HUD {
       this.rangeLabel.textContent = state.aimTarget === 'critical' ? `CRITICAL · ${range}` : range;
     } else {
       this.crosshair.style.display = 'none';
+    }
+
+    // Beside the reticle (or mid-screen when the reticle is off-screen, aiming high).
+    if (state.aaLockScreen && !state.cinematic && !this.pausedOpen) {
+      const at = state.aimScreen ?? { x: window.innerWidth / 2, y: window.innerHeight / 2 };
+      this.heliTag.style.display = 'flex';
+      this.heliTag.style.transform = `translate(${at.x}px, ${at.y}px)`;
+      this.heliTagText.textContent = `HELI LOCKED · ${state.usingGamepad ? 'RB' : 'Q'}`;
+    } else {
+      this.heliTag.style.display = 'none';
     }
 
     if (this.pausedOpen) {

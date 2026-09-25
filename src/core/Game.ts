@@ -28,6 +28,7 @@ import { ImpactEffects } from '../combat/ImpactEffects';
 import { predictTrajectory } from '../combat/Projectile';
 import { HomingRocket, type RocketTarget } from '../combat/HomingRocket';
 import { JamCannon } from '../combat/JamCannon';
+import { AAMissiles, AA_SALVO, AA_CAPACITY, type AirTrack } from '../combat/AAMissiles';
 import { CameraRig } from '../camera/CameraRig';
 import { HUD, type HUDState } from '../ui/HUD';
 import { WorldMap, type MapMarker, type MapView } from '../ui/WorldMap';
@@ -48,6 +49,12 @@ const JAM_SPEED = 36;
 const JAM_RADIUS = 3; // per splat; a held spray lays a whole line of them
 const JAM_STUCK_TIME = 5;
 const GUN_JAM_TIME = 4; // friendly fire: a teammate's gun is gummed up this long
+// Drunken AA missiles: six-dart salvos at a locked helicopter; rearm at a home base.
+const AA_REARM_TIME = 0.4; // seconds per dart while parked at a home base
+const AA_RANGE = 450;
+const AA_LOCK_CONE = (45 * Math.PI) / 180; // the helicopter must be roughly where the turret points
+const AA_DAMAGE = 26; // a helicopter has 85 HP: four close darts out of six
+const AA_BLAST_RADIUS = 8;
 const RED_RESPAWN_DELAY = 40;
 const GARRISON_SQUAD_SIZE = 6;
 // Final assault on the Fortress.
@@ -160,6 +167,10 @@ export class Game {
   private projectiles!: ProjectileManager;
   private impacts!: ImpactEffects;
   private jam!: JamCannon;
+  private aa!: AAMissiles;
+  /** AA darts left; they only come back by returning to a home base. */
+  private aaLoaded = AA_CAPACITY;
+  private aaRearm = 0;
   private aimGuide!: AimGuide;
   private landmarks!: LandmarkSet;
   private troops!: TroopManager;
@@ -239,6 +250,7 @@ export class Game {
     this.projectiles = new ProjectileManager(this.scene, this.world, this.hitRegistry);
     this.impacts = new ImpactEffects(this.scene);
     this.jam = new JamCannon(this.scene);
+    this.aa = new AAMissiles(this.scene);
     this.aimGuide = new AimGuide(this.scene);
 
     const terrain = buildTerrain();
@@ -269,6 +281,7 @@ export class Game {
     this.landmarks = content.landmarks;
     this.buildings = [...content.buildings, ...content.bunkers.map((b) => b.building)];
     this.troops = new TroopManager(this.scene, content.squads, Math.random);
+    this.troops.shielded = (p) => this.sealedInFortress(p);
     this.hud.setWorldMap(
       new WorldMap(
         content.highways,
@@ -324,6 +337,7 @@ export class Game {
       : new EnemyTank(this.world, x, z, patrolCenter, patrolRadius, Math.random, color);
     this.scene.add(tank.root);
     this.hitRegistry.register(tank.physicsCollider, { kind: 'tank', tank });
+    if (!(tank instanceof HelicopterEnemy)) tank.shielded = this.sealedInFortress(tank.position);
     slot.tank = tank;
   }
 
@@ -496,21 +510,31 @@ export class Game {
     ];
   }
 
+  /** Inside the Fortress walls while its gates are still locked: out of reach of everything. */
+  private sealedInFortress(p: THREE.Vector3): boolean {
+    return this.fortress.locked && this.fortress.contains(p.x, p.z);
+  }
+
+  /** Enemy tanks and helicopters that can be shot at (not the Fortress's locked-in guards). */
+  private get targetableEnemies(): (EnemyTank | HelicopterEnemy)[] {
+    return this.enemySlots.flatMap((s) => (s.tank && !s.tank.shielded && !s.tank.isDestroyed ? [s.tank] : []));
+  }
+
+  /** Enemy pillboxes that can be shot at. */
+  private get targetableBunkers(): Bunker[] {
+    return this.bunkers.filter((b) => b.alive && !this.sealedInFortress(b.position));
+  }
+
   /** Everything the player's side shoots at. */
   private playerSideTargets(): { position: THREE.Vector3 }[] {
-    return [
-      ...this.enemySlots.flatMap((s) => (s.tank ? [s.tank] : [])),
-      ...this.troops.activeSoldiers('enemy'),
-      ...this.bunkers.filter((b) => b.alive),
-    ];
+    return [...this.targetableEnemies, ...this.troops.activeSoldiers('enemy'), ...this.targetableBunkers];
   }
 
   /** Everything an allied tank might shoot at, most valuable first. */
   private allyTargets(): AllyTarget[] {
     const targets: AllyTarget[] = [];
-    for (const slot of this.enemySlots) {
-      const tank = slot.tank;
-      if (tank) targets.push({ position: tank.position, priority: 3, alive: () => !tank.isDestroyed });
+    for (const tank of this.targetableEnemies) {
+      targets.push({ position: tank.position, priority: 3, alive: () => !tank.isDestroyed && !tank.shielded });
     }
     for (const base of this.enemyBases) {
       for (const o of base.objectives) if (!o.isDestroyed()) targets.push({ position: o.position, priority: 2.5, alive: () => !o.isDestroyed() });
@@ -518,9 +542,7 @@ export class Game {
     if (!this.fortress.locked) {
       for (const o of this.fortress.objectives) if (!o.isDestroyed()) targets.push({ position: o.position, priority: 2.5, alive: () => !o.isDestroyed() });
     }
-    for (const bunker of this.bunkers) {
-      if (bunker.alive) targets.push({ position: bunker.position, priority: 2, alive: () => bunker.alive });
-    }
+    for (const bunker of this.targetableBunkers) targets.push({ position: bunker.position, priority: 2, alive: () => bunker.alive });
     for (const s of this.troops.activeSoldiers('enemy')) targets.push({ position: s.position, priority: 1, alive: () => s.isActive });
     return targets;
   }
@@ -550,19 +572,14 @@ export class Game {
       }
     };
 
-    for (const slot of this.enemySlots) {
-      const tank = slot.tank;
-      if (tank && !tank.isDestroyed) consider(tank.position, 0, () => (tank.isDestroyed ? null : tank.position));
-    }
+    for (const tank of this.targetableEnemies) consider(tank.position, 0, () => (tank.isDestroyed ? null : tank.position));
     for (const base of this.enemyBases) {
       for (const o of base.objectives) if (!o.isDestroyed()) consider(o.position, 0.05, () => (o.isDestroyed() ? null : o.position));
     }
     if (!this.fortress.locked) {
       for (const o of this.fortress.objectives) if (!o.isDestroyed()) consider(o.position, 0.05, () => (o.isDestroyed() ? null : o.position));
     }
-    for (const bunker of this.bunkers) {
-      if (bunker.alive) consider(bunker.position, 0.08, () => (bunker.alive ? bunker.position : null));
-    }
+    for (const bunker of this.targetableBunkers) consider(bunker.position, 0.08, () => (bunker.alive ? bunker.position : null));
     for (const soldier of this.troops.activeSoldiers('enemy')) {
       consider(soldier.position, 0.2, () => (soldier.isActive ? soldier.position.clone().setY(soldier.position.y + 1) : null));
     }
@@ -595,6 +612,73 @@ export class Game {
     this.player.setRocketReady(false);
     this.player.invulnerable = true;
     this.rocketSeq = { rocket, phase: 'flight', timer: 0, point: new THREE.Vector3(), orbit: 0 };
+  }
+
+  // ---------- drunken AA missiles ----------
+
+  private get helicopters(): HelicopterEnemy[] {
+    return this.targetableEnemies.filter((t): t is HelicopterEnemy => t instanceof HelicopterEnemy);
+  }
+
+  private trackHelicopter(heli: HelicopterEnemy): AirTrack {
+    return () => (heli.isDestroyed ? null : heli.position);
+  }
+
+  /** The helicopter the AA salvo would lock onto: in range and near the turret's aim, closest to it first. */
+  private findAirTarget(): HelicopterEnemy | null {
+    const origin = this.player.position;
+    const yaw = this.player.turretWorldYaw;
+    let best: HelicopterEnemy | null = null;
+    let bestScore = Infinity;
+    for (const heli of this.helicopters) {
+      const dx = heli.position.x - origin.x;
+      const dz = heli.position.z - origin.z;
+      const dist = Math.hypot(dx, dz);
+      if (dist > AA_RANGE) continue;
+      const angle = Math.acos(Math.max(-1, Math.min(1, (-dx * Math.sin(yaw) - dz * Math.cos(yaw)) / Math.max(dist, 1))));
+      if (angle > AA_LOCK_CONE) continue;
+      const score = angle + (dist / AA_RANGE) * 0.6;
+      if (score < bestScore) {
+        bestScore = score;
+        best = heli;
+      }
+    }
+    return best;
+  }
+
+  /** A missile whose helicopter went down staggers off after the nearest other one. */
+  private retargetAA(from: THREE.Vector3): AirTrack | null {
+    let best: HelicopterEnemy | null = null;
+    for (const heli of this.helicopters) {
+      if (heli.position.distanceTo(from) < (best?.position.distanceTo(from) ?? AA_RANGE)) best = heli;
+    }
+    return best ? this.trackHelicopter(best) : null;
+  }
+
+  /** AA only fires with a helicopter locked, and the pod only refills back at base. */
+  private tryFireAA(): void {
+    if (this.aa.firing) return;
+    if (this.aaLoaded === 0) {
+      this.hud.showCallout('AA EMPTY! RETURN TO BASE', '#8fd3ff');
+      return;
+    }
+    const target = this.findAirTarget();
+    if (!target) {
+      this.hud.showCallout('NO AA LOCK', '#8fd3ff');
+      return;
+    }
+    this.aa.fire(() => this.player.aaLaunch, this.trackHelicopter(target), Math.min(AA_SALVO, this.aaLoaded));
+  }
+
+  /** A dart goes off: a small blast that hurts any enemy tank or helicopter close by. */
+  private aaBurst(point: THREE.Vector3): void {
+    this.explode(point, 0.55, 'player');
+    for (const tank of this.targetableEnemies) {
+      const d = tank.position.distanceTo(point);
+      if (d >= AA_BLAST_RADIUS) continue;
+      tank.takeDamage(AA_DAMAGE * (1 - 0.3 * (d / AA_BLAST_RADIUS)));
+      if (tank.isDestroyed && tank instanceof HelicopterEnemy) this.hud.showCallout('CHOPPER DOWN!', '#8fd3ff');
+    }
   }
 
   /** Big blast: wrecks tanks, buildings and troops around the impact. */
@@ -801,8 +885,8 @@ export class Game {
     if (!collider) return 'none';
     const hit = this.hitRegistry.lookup(collider);
     if (!hit || hit.kind === 'terrain' || hit.kind === 'water' || hit.kind === 'tree') return 'ground';
-    if (hit.kind === 'tank') return hit.tank.faction === 'player' ? 'ground' : 'enemy';
-    if (hit.building.faction === 'player') return 'ground';
+    if (hit.kind === 'tank') return hit.tank.faction === 'player' || hit.tank.shielded ? 'ground' : 'enemy';
+    if (hit.building.faction === 'player' || hit.building.locked) return 'ground';
     if (hit.building.critAt(impact, travel)) return 'critical';
     return hit.building.faction === 'enemy' ? 'enemy' : 'building';
   }
@@ -850,7 +934,13 @@ export class Game {
     };
   }
 
-  private hudState(input: InputState, cinematic: boolean, aim: ReturnType<Game['updateAim']>, lockScreen: { x: number; y: number } | null): HUDState {
+  private hudState(
+    input: InputState,
+    cinematic: boolean,
+    aim: ReturnType<Game['updateAim']>,
+    lockScreen: { x: number; y: number } | null,
+    aaLockScreen: { x: number; y: number } | null = null,
+  ): HUDState {
     const near = this.nearestEnemyBase(false);
     const inside = isInsideBase(this.player.position);
     const f = this.fortress;
@@ -884,6 +974,11 @@ export class Game {
       aimTarget: aim.target,
       rocketCharge: this.rocketCharge,
       rocketLockScreen: lockScreen,
+      aaLoaded: this.aaLoaded,
+      aaMax: AA_CAPACITY,
+      aaFiring: this.aa.firing,
+      aaRearming: this.aaLoaded < AA_CAPACITY && inside,
+      aaLockScreen,
       buddyCharge: this.buddyCharge,
       buddyRoster: BUDDY_NAMES,
       buddyNames: this.buddies.map((b) => b.name),
@@ -935,11 +1030,41 @@ export class Game {
       }
       if (input.mapTogglePressed) this.hud.toggleBigMap();
       if (input.rocketPressed && this.rocketCharge >= 1) this.launchRocket();
+      if (input.aaPressed) this.tryFireAA();
       if (input.buddyPressed && this.buddyCharge >= 1 && this.buddies.length < MAX_BUDDIES) this.spawnBuddy();
       this.addRocketCharge(dt / ROCKET_RECHARGE_TIME);
       this.buddyCharge = Math.min(1, this.buddyCharge + dt / BUDDY_RECHARGE_TIME);
     }
     this.player.setRocketReady(this.rocketCharge >= 1 && !this.rocketSeq);
+
+    // AA darts are only restocked back at a home base, one at a time.
+    if (this.aaLoaded < AA_CAPACITY && !this.aa.firing && isInsideBase(this.player.position)) {
+      this.aaRearm += dt;
+      while (this.aaRearm >= AA_REARM_TIME && this.aaLoaded < AA_CAPACITY) {
+        this.aaRearm -= AA_REARM_TIME;
+        this.aaLoaded++;
+      }
+    } else {
+      this.aaRearm = 0;
+    }
+    this.aa.update(
+      dt,
+      this.world,
+      this.player.physicsCollider,
+      (from) => this.retargetAA(from),
+      (p) => this.impacts.wispPuff(p),
+      (origin) => {
+        this.aaLoaded = Math.max(0, this.aaLoaded - 1);
+        this.impacts.trailPuff(origin);
+      },
+      (point) => this.aaBurst(point),
+    );
+    this.player.setAALoaded(Math.min(AA_SALVO, this.aaLoaded));
+
+    // The Fortress's guards can't be hurt or targeted until its gates open.
+    for (const slot of this.enemySlots) {
+      if (slot.tank && !(slot.tank instanceof HelicopterEnemy)) slot.tank.shielded = this.sealedInFortress(slot.tank.position);
+    }
 
     const playerShot = this.player.step(input, dt);
     if (playerShot) this.fire(this.player, playerShot);
@@ -1043,7 +1168,7 @@ export class Game {
     const insideBase = isInsideBase(this.player.position);
     if (insideBase) this.player.heal(BASE_HEAL_RATE * dt);
     const repairingAt = insideBase && this.player.health < this.player.maxHealth ? nearestFriendlyBase(this.player.position.x, this.player.position.z) : null;
-    for (const fb of this.familyBases) fb.camp.update(dt, fb.info === repairingAt);
+    for (const fb of this.familyBases) fb.camp.update(dt, fb.info === repairingAt, this.camera.position, this.player.position);
     this.landmarks.update(dt);
 
     // Bow wave while the tank wades through a lake.
@@ -1059,6 +1184,7 @@ export class Game {
     const cinematic = this.updateRocketSequence(dt);
     let aim: ReturnType<Game['updateAim']> = { screen: null, range: null, target: 'none' };
     let lockScreen: { x: number; y: number } | null = null;
+    let aaLockScreen: { x: number; y: number } | null = null;
     if (cinematic) {
       this.player.setTurretHidden(false);
       this.aimGuide.setVisible(false);
@@ -1069,6 +1195,10 @@ export class Game {
         const lock = this.findLockTarget();
         if (lock) lockScreen = this.toScreen(lock.position.clone().add(new THREE.Vector3(0, 1.5, 0)));
       }
+      if (this.aaLoaded > 0 && !this.aa.firing) {
+        const heli = this.findAirTarget();
+        if (heli) aaLockScreen = this.toScreen(heli.position);
+      }
     }
 
     const sunOffset = new THREE.Vector3(120, 220, 90);
@@ -1076,7 +1206,7 @@ export class Game {
     this.sun.target.position.copy(this.player.position);
     this.sun.target.updateMatrixWorld();
 
-    this.hud.update(this.hudState(input, cinematic, aim, lockScreen));
+    this.hud.update(this.hudState(input, cinematic, aim, lockScreen, aaLockScreen));
     this.renderer.render(this.scene, this.camera);
   };
 }

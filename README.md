@@ -78,6 +78,7 @@ plug one in and press a button so the browser detects it.
 | Fire | RT or A | Left click or Space |
 | Jam cannon (hold, short range) | LT | E |
 | Homing rocket (when charged) | LB | F or right click |
+| AA missiles (with a helicopter locked) | RB | Q |
 | Call a buddy tank (when charged) | X | X |
 | Switch first / third person | Y | C |
 | Pause, full map and options | Start | M |
@@ -99,12 +100,17 @@ and buddy name tags, and your choices are remembered.
 - Once a base falls, **green troops and bunkers** move in and fight anything
   nearby.
 - **The Fortress** in the middle of the map is locked until all five enemy
-  bases are down. Then its gates open and a column of green and red tanks and
-  troops joins you for the final assault. Flatten it to win.
+  bases are down, and nothing inside can be shot until then. Then its gates
+  open and a column of green and red tanks and troops joins you for the final
+  assault. Flatten it to win.
 - **Enemy helicopters** patrol the open country and circle in to attack. Raise
-  your gun to shoot them down; they show as pink markers on the maps.
+  your gun to shoot them down, or aim roughly at one until **HELI LOCKED** shows
+  by the crosshair and fire a salvo of wobbly **AA missiles** (RB / Q). You
+  carry 12, six per salvo; when they run out, drive back to a family base to
+  rearm. Helicopters show as pink markers on the maps.
 - The **red army** is on your side. Their tanks and soldiers guard every town.
-- **Family bases** sit around the edge of the map. Drive inside one to repair.
+- **Family bases** sit around the edge of the map. Drive inside one to repair
+  and restock your AA missiles.
 - The **jam cannon** sprays a stream of strawberry jam that lands in a line along
   your aim; sweep the turret to hose down a whole squad. Enemy soldiers caught in
   it get stuck, can't shoot, and slip over a few seconds later. Careful with

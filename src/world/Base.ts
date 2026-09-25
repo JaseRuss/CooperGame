@@ -87,6 +87,10 @@ export class HomeBase {
   private readonly beaconMaterial: THREE.MeshStandardMaterial;
   private readonly healRingMaterial: THREE.MeshStandardMaterial;
   private time = 0;
+  /** The repair bay's side walls, which fade when they'd hide the tank from the camera. */
+  private readonly bayWalls: { side: number; x: number; materials: THREE.Material[]; opacity: number }[] = [];
+  private bayFrame: THREE.Object3D | null = null;
+  private bayHalf = { x: 0, z: 0 };
 
   /**
    * @param center where the camp stands; `name` goes on the gate sign.
@@ -663,16 +667,8 @@ export class HomeBase {
     // Portal frames: posts, an arched rafter in segments, and a tie beam.
     for (let i = 0; i <= 4; i++) {
       const z = -HALF_L + i * 4;
-      const end = i === 0 || i === 4;
-      for (const s of [-1, 1]) {
-        b.add(new THREE.BoxGeometry(0.5, EAVE, 0.5), green, s * HALF_W, EAVE / 2, z);
-        b.add(new THREE.BoxGeometry(1.0, 0.25, 1.0), dark, s * HALF_W, 0.12, z);
-        this.solid(...this.bayToBase(yaw, s * HALF_W, EAVE / 2, z), 0.3, EAVE / 2, 0.3, yaw);
-        if (end) {
-          // Hazard stripes wrapped round the entrance posts.
-          for (let k = 0; k < 7; k++) b.add(new THREE.BoxGeometry(0.56, 0.36, 0.56), k % 2 ? black : yellow, s * HALF_W, 0.3 + k * 0.38, z);
-        }
-      }
+      // (The posts themselves are built with the side walls below, so they fade with them.)
+      for (const s of [-1, 1]) this.solid(...this.bayToBase(yaw, s * HALF_W, EAVE / 2, z), 0.3, EAVE / 2, 0.3, yaw);
       for (let k = 0; k < 10; k++) b.beam(archPoint(k / 10, z), archPoint((k + 1) / 10, z), 0.35, green);
       b.add(new THREE.BoxGeometry(HALF_W * 2, 0.25, 0.25), dark, 0, EAVE, z);
     }
@@ -694,24 +690,61 @@ export class HomeBase {
     }
     roof.buildInto(bay, true, true);
 
-    // Overhead crane rail along the ridge, a trolley and a spare engine hanging on its chain.
-    const crane = new PartBuilder();
-    crane.add(new THREE.BoxGeometry(0.4, 0.5, HALF_L * 2), steel, 0, EAVE + RISE - 0.9, 0);
-    crane.add(new THREE.BoxGeometry(0.9, 0.45, 1.2), yellow, 0, EAVE + RISE - 1.4, 3);
-    for (let i = 0; i < 12; i++) {
-      crane.add(new THREE.TorusGeometry(0.08, 0.025, 4, 8), steel, 0, EAVE + RISE - 1.75 - i * 0.18, 3, 0, (i % 2) * (Math.PI / 2));
-    }
-    crane.add(new THREE.TorusGeometry(0.22, 0.06, 5, 10, Math.PI * 1.4), steel, 0, 4.2, 3, 0, 0, Math.PI * 0.8);
-    crane.add(new THREE.BoxGeometry(1.8, 1.0, 1.2), dark, 0, 3.4, 3); // engine block
-    for (let i = 0; i < 3; i++) crane.add(tubeX(0.2, 0.3, 10), steel, -0.45 + i * 0.45, 4.0, 3);
-    crane.add(tubeZ(0.25, 0.25, 0.4, 12), steel, 1.0, 3.4, 3);
-    // Hanging work lamps between the frames.
+    // Work lamps hanging from the roof between the frames, kept high so the chase cam sees over them.
+    const lamps = new PartBuilder();
     for (const z of [-6, -2, 2, 6]) {
-      crane.add(new THREE.CylinderGeometry(0.02, 0.02, 1.2, 4), black, 0, EAVE + RISE - 1.2, z);
-      crane.add(new THREE.ConeGeometry(0.5, 0.4, 12, 1, true), dark, 0, EAVE + RISE - 1.9, z);
-      crane.add(new THREE.SphereGeometry(0.16, 8, 6), plastic(0xfff3c0), 0, EAVE + RISE - 2.05, z);
+      lamps.add(new THREE.CylinderGeometry(0.02, 0.02, 0.8, 4), black, 0, EAVE + RISE - 0.6, z);
+      lamps.add(new THREE.ConeGeometry(0.5, 0.4, 12, 1, true), dark, 0, EAVE + RISE - 1.1, z);
+      lamps.add(new THREE.SphereGeometry(0.16, 8, 6), plastic(0xfff3c0), 0, EAVE + RISE - 1.25, z);
     }
-    crane.buildInto(bay);
+    lamps.buildInto(bay);
+
+    // Corrugated side walls between the end frames, with a band of windows under the eaves.
+    // Each side has its own materials so it can fade out when it's between the camera and the tank.
+    for (const s of [-1, 1]) {
+      const side = new THREE.Group();
+      const sheet = new THREE.MeshPhysicalMaterial({ color: 0x8e9a78, roughness: 0.5, clearcoat: 0.4, transparent: true });
+      const glass = new THREE.MeshStandardMaterial({ color: 0x9fc6d8, emissive: 0x1d3440, roughness: 0.15, transparent: true });
+      const kerb = new THREE.MeshStandardMaterial({ color: 0xa99f86, roughness: 0.9, transparent: true });
+      const fade = (m: THREE.Material) => {
+        const c = m.clone();
+        c.transparent = true;
+        return c;
+      };
+      const [postMat, footMat, stripeA, stripeB] = [green, dark, yellow, black].map(fade);
+      const x = s * (HALF_W + 0.32);
+      const len = HALF_L * 2;
+      const w = new PartBuilder();
+      // The portal-frame posts on this side, with hazard stripes round the entrance posts.
+      for (let i = 0; i <= 4; i++) {
+        const z = -HALF_L + i * 4;
+        w.add(new THREE.BoxGeometry(0.5, EAVE, 0.5), postMat, s * HALF_W, EAVE / 2, z);
+        w.add(new THREE.BoxGeometry(1.0, 0.25, 1.0), footMat, s * HALF_W, 0.12, z);
+        if (i === 0 || i === 4) {
+          for (let k = 0; k < 7; k++) w.add(new THREE.BoxGeometry(0.56, 0.36, 0.56), k % 2 ? stripeB : stripeA, s * HALF_W, 0.3 + k * 0.38, z);
+        }
+      }
+      w.add(new THREE.BoxGeometry(0.4, 0.6, len + 0.4), kerb, x, 0.3, 0);
+      w.add(new THREE.BoxGeometry(0.12, 3.2, len), sheet, x, 2.2, 0); // sheet below the windows
+      w.add(new THREE.BoxGeometry(0.12, 0.5, len), sheet, x, EAVE - 0.25, 0); // strip above them
+      // Window band: panes between mullions, set into each bay between frames.
+      for (let i = 0; i < 4; i++) {
+        const z = -HALF_L + 2 + i * 4;
+        w.add(new THREE.BoxGeometry(0.06, 1.1, 3.1), glass, x, 4.35, z);
+        w.add(new THREE.BoxGeometry(0.14, 1.1, 0.12), sheet, x, 4.35, z);
+      }
+      w.add(new THREE.BoxGeometry(0.16, 0.1, len), sheet, x, 3.85, 0); // sill
+      // Vertical corrugation ribs on both faces.
+      for (let z = -HALF_L + 0.25; z < HALF_L; z += 0.5) {
+        for (const f of [-1, 1]) w.add(new THREE.BoxGeometry(0.05, 3.2, 0.12), sheet, x + f * 0.08, 2.2, z);
+      }
+      w.buildInto(side);
+      bay.add(side);
+      this.bayWalls.push({ side: s, x, materials: [sheet, glass, kerb, postMat, footMat, stripeA, stripeB], opacity: 1 });
+      this.solid(...this.bayToBase(yaw, x, EAVE / 2, 0), 0.25, EAVE / 2, HALF_L, yaw);
+    }
+    this.bayFrame = bay;
+    this.bayHalf = { x: HALF_W, z: HALF_L };
 
     // Workbenches down each side with toolboxes, a vice and pegboards of tools.
     const kit = new PartBuilder();
@@ -771,6 +804,24 @@ export class HomeBase {
     }
   }
 
+  /** A side wall goes see-through while it stands between the chase camera and the tank. */
+  private fadeBayWalls(dt: number, camera: THREE.Vector3, focus: THREE.Vector3): void {
+    if (!this.bayFrame) return;
+    const cam = this.bayFrame.worldToLocal(camera.clone());
+    const tank = this.bayFrame.worldToLocal(focus.clone());
+    const near = (p: THREE.Vector3) => Math.abs(p.z) < this.bayHalf.z + 6;
+    for (const wall of this.bayWalls) {
+      // The wall's line separates the camera from the tank, somewhere along the bay.
+      const between = Math.sign(cam.x - wall.x) !== Math.sign(tank.x - wall.x) && (near(cam) || near(tank)) && cam.y < 12;
+      const goal = between ? 0.15 : 1;
+      wall.opacity += (goal - wall.opacity) * Math.min(1, dt * 10);
+      for (const m of wall.materials) {
+        m.opacity = wall.opacity;
+        m.depthWrite = wall.opacity > 0.95;
+      }
+    }
+  }
+
   /** Bay-local (x, y, z) → base-local, for colliders, given the bay's yaw. */
   private bayToBase(yaw: number, x: number, y: number, z: number): [number, number, number] {
     const p = new THREE.Vector3(x, 0, z).applyAxisAngle(UP, yaw);
@@ -816,8 +867,9 @@ export class HomeBase {
     }
   }
 
-  update(dt: number, repairing: boolean): void {
+  update(dt: number, repairing: boolean, camera?: THREE.Vector3, focus?: THREE.Vector3): void {
     this.time += dt;
+    if (camera && focus) this.fadeBayWalls(dt, camera, focus);
     // Tandem rotors turn in opposite directions.
     this.rotor.rotation.y += dt * 0.6;
     this.rearRotor.rotation.y -= dt * 0.6;

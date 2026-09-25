@@ -26,6 +26,8 @@ interface Squad {
 
 export class TroopManager {
   private readonly squads: Squad[] = [];
+  /** Soldiers standing where this holds can't be targeted or hurt. */
+  shielded: ((p: THREE.Vector3) => boolean) | null = null;
 
   constructor(
     private readonly scene: THREE.Scene,
@@ -168,12 +170,15 @@ export class TroopManager {
     return knocked;
   }
 
-  /** Standing soldiers, optionally only one side's. */
+  /**
+   * Standing soldiers that can be shot at, optionally only one side's. Soldiers `shielded` says
+   * are out of reach (inside the locked Fortress) are left out, so nothing can target or hurt them.
+   */
   activeSoldiers(faction?: Faction): Soldier[] {
     const out: Soldier[] = [];
     for (const squad of this.squads) {
       if (faction && squad.spawn.faction !== faction) continue;
-      for (const s of squad.soldiers) if (s.isActive) out.push(s);
+      for (const s of squad.soldiers) if (s.isActive && !this.shielded?.(s.position)) out.push(s);
     }
     return out;
   }

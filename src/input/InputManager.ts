@@ -17,6 +17,8 @@ export interface InputState {
   resetPressed: boolean;
   mapTogglePressed: boolean;
   rocketPressed: boolean;
+  /** A salvo of drunken AA missiles (Q / right bumper). */
+  aaPressed: boolean;
   buddyPressed: boolean;
   usingGamepad: boolean;
   pointerLocked: boolean;
@@ -71,6 +73,7 @@ export class InputManager {
   private mapKeyLatch = false;
   private gamepadMapLatch = false;
   private rocketLatch = false;
+  private aaLatch = false;
   private buddyLatch = false;
   private rightMouseDown = false;
 
@@ -188,6 +191,7 @@ export class InputManager {
     let mapButtonHeld = false;
     let rocketHeld = this.keys.has('KeyF') || this.rightMouseDown;
     let buddyHeld = this.keys.has('KeyX');
+    let aaHeld = this.keys.has('KeyQ');
     const k = (...codes: string[]) => codes.some((c) => this.keys.has(c));
     const menuHeld: MenuInput = {
       up: k('ArrowUp', 'KeyW'),
@@ -237,6 +241,7 @@ export class InputManager {
       resetButtonHeld ||= pad.buttons[8]?.pressed ?? false; // Back / View / Share
       mapButtonHeld ||= pad.buttons[9]?.pressed ?? false; // Start / Menu / Options
       rocketHeld ||= pad.buttons[4]?.pressed ?? false; // LB / L1
+      aaHeld ||= pad.buttons[5]?.pressed ?? false; // RB / R1
       buddyHeld ||= pad.buttons[2]?.pressed ?? false; // X / Square
 
       const btn = (i: number) => pad.buttons[i]?.pressed ?? false;
@@ -251,6 +256,8 @@ export class InputManager {
 
     const rocketPressed = rocketHeld && !this.rocketLatch;
     this.rocketLatch = rocketHeld;
+    const aaPressed = aaHeld && !this.aaLatch;
+    this.aaLatch = aaHeld;
     const buddyPressed = buddyHeld && !this.buddyLatch;
     this.buddyLatch = buddyHeld;
 
@@ -282,6 +289,7 @@ export class InputManager {
       resetPressed,
       mapTogglePressed,
       rocketPressed,
+      aaPressed,
       buddyPressed,
       usingGamepad,
       pointerLocked: this.pointerLocked,

@@ -22,6 +22,8 @@ const CLASSIC_STOP_REVERSING = 1.2;
 const ALIGN_DELAY = 0.6;
 const ALIGN_DEADBAND = 0.04;
 const ALIGN_TURN_RATE = 0.8;
+/** The AA pod's six tube mouths (x, y on its front face): two rows of three. */
+const AA_TUBES = [-0.15, 0, 0.15].flatMap((x) => [0.07, -0.08].map((y) => [x, y] as const));
 
 function wrap(a: number): number {
   return Math.atan2(Math.sin(a), Math.cos(a));
@@ -42,6 +44,9 @@ export class PlayerTank extends Tank {
   readonly jamInterval = 0.07; // a hose, not a mortar
   /** Walks each glob's range from near to far and back, so a held spray paints a line of jam. */
   private jamSweep = 0;
+  private readonly aaPod = new THREE.Group();
+  private readonly aaMuzzle = new THREE.Object3D();
+  private readonly aaNoses: THREE.Mesh[] = [];
 
   constructor(world: RAPIER.World, spawnX: number, spawnZ: number, facingRadians = 0) {
     super(world, spawnX, spawnZ, PLAYER_MAX_HEALTH, ARMY_GREEN, facingRadians, 'player');
@@ -65,6 +70,44 @@ export class PlayerTank extends Tank {
     this.rocketRail.add(this.readyRocket);
     this.setRocketReady(false);
     this.buildJamCannon();
+    this.buildAAPod();
+  }
+
+  /** A six-tube anti-aircraft pod on the turret bustle, angled up; loaded tubes show red noses. */
+  private buildAAPod(): void {
+    this.aaPod.position.set(-0.42, 0.72, 0.8);
+    this.aaPod.rotation.x = 0.55;
+    this.turretPivot.add(this.aaPod);
+    const dark = plastic(shade(ARMY_GREEN, 0.6));
+    const deep = plastic(shade(ARMY_GREEN, 0.35));
+    const p = new PartBuilder();
+    p.add(new THREE.BoxGeometry(0.5, 0.34, 0.64), plastic(shade(ARMY_GREEN, 0.85)), 0, 0, 0);
+    p.add(new THREE.BoxGeometry(0.54, 0.05, 0.68), dark, 0, 0.19, 0); // lid
+    p.add(new THREE.BoxGeometry(0.1, 0.3, 0.12), dark, 0, -0.3, 0.12); // post down to the bustle
+    for (const [x, y] of AA_TUBES) p.add(tubeZ(0.065, 0.065, 0.04, 10), deep, x, y, -0.32);
+    p.buildInto(this.aaPod);
+    const red = plastic(0xd0463a);
+    const nose = new THREE.ConeGeometry(0.055, 0.14, 10).rotateX(-Math.PI / 2);
+    for (const [x, y] of AA_TUBES) {
+      const m = new THREE.Mesh(nose, red);
+      m.position.set(x, y, -0.36);
+      this.aaPod.add(m);
+      this.aaNoses.push(m);
+    }
+    this.aaMuzzle.position.set(0, 0, -0.5);
+    this.aaPod.add(this.aaMuzzle);
+  }
+
+  /** Shows how many AA missiles are still in the pod. */
+  setAALoaded(count: number): void {
+    this.aaNoses.forEach((m, i) => (m.visible = i < count));
+  }
+
+  /** Where the next AA missile leaves the pod, and which way (up and out along the turret). */
+  get aaLaunch(): { origin: THREE.Vector3; direction: THREE.Vector3 } {
+    const origin = this.aaMuzzle.getWorldPosition(new THREE.Vector3());
+    const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(this.aaPod.getWorldQuaternion(new THREE.Quaternion()));
+    return { origin, direction };
   }
 
   /** A jam jar with a gingham lid feeding a stubby barrel, on the turret's right cheek. */

@@ -446,6 +446,17 @@ export class Fortress {
     for (const p of this.padlocks) p.removeFromParent();
   }
 
+  /** True for a point within the walls. */
+  contains(x: number, z: number): boolean {
+    const yaw = siteYaw(this.site);
+    const c = Math.cos(yaw);
+    const s = Math.sin(yaw);
+    const dx = x - this.site.cx;
+    const dz = z - this.site.cz;
+    // Inverse of siteToWorld.
+    return Math.abs(dx * c - dz * s) < WALL + WALL_THICK && Math.abs(dx * s + dz * c) < WALL + WALL_THICK;
+  }
+
   /** Staging points just outside each gate, for reinforcements. */
   get rallyPoints(): THREE.Vector3[] {
     return [WALL + 45, -WALL - 45].map((lz) => {

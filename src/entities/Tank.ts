@@ -38,6 +38,8 @@ export class Tank {
   alive = true;
   /** Green (player + buddies) or tan (enemy). Shells never hurt their own side. */
   readonly faction: Faction;
+  /** Can't be hurt or targeted: a Fortress defender while the gates are still locked. */
+  shielded = false;
 
   fireCooldown = 0;
   /** Seconds left with jam gumming up the barrel (friendly fire from the jam cannon). */
@@ -434,7 +436,7 @@ export class Tank {
 
   /** Applies damage, scaled by armour when the hit point is known. Returns the face that was hit. */
   takeDamage(amount: number, hitPoint?: THREE.Vector3): ArmorZone | null {
-    if (!this.alive) return null;
+    if (!this.alive || this.shielded) return null;
     const zone = hitPoint ? this.hitZone(hitPoint) : null;
     this.health = Math.max(0, this.health - amount * (zone ? ARMOR_MULTIPLIER[zone] : 1));
     return zone;
