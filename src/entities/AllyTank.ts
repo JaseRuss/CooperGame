@@ -165,6 +165,7 @@ export class BuddyTank extends AllyTank {
     public name: string,
   ) {
     super(world, x, z, facing, BUDDY_HEALTH, BUDDY_COLOR, name);
+    this.fasterOnRoads = true; // so they keep up with the player on the highway
     this.addCommander(BUDDY_COLOR);
   }
 

@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { heightAt, waterDepthAt } from '../world/Terrain';
+import { isOnRoad } from '../world/RoadNetwork';
 import { clamp } from '../utils/math';
 import { plastic, shade } from '../utils/plastic';
 import { PartBuilder, tubeX, tubeZ } from '../utils/modelKit';
@@ -16,6 +17,8 @@ export const ARMOR_MULTIPLIER: Record<ArmorZone, number> = { front: 0.5, side: 1
 const FRONT_ARC = (40 * Math.PI) / 180;
 const REAR_ARC = (135 * Math.PI) / 180;
 const MAX_YAW_RATE = 1.7; // rad/s at full steer
+/** Speed multiplier on a road, for tanks with fasterOnRoads. */
+const ROAD_SPEED_BOOST = 1.2;
 // Ground vehicles can elevate to engage aircraft; airborne subclasses can depress further.
 const BARREL_PITCH_MIN = -0.1;
 const BARREL_PITCH_MAX = 0.65;
@@ -40,6 +43,9 @@ export class Tank {
   readonly faction: Faction;
   /** Can't be hurt or targeted: a Fortress defender while the gates are still locked. */
   shielded = false;
+  /** Drives a bit faster on roads (the player and buddies). */
+  protected fasterOnRoads = false;
+  private roadBoost = 1;
 
   fireCooldown = 0;
   /** Seconds left with jam gumming up the barrel (friendly fire from the jam cannon). */
@@ -536,7 +542,12 @@ export class Tank {
     this.root.quaternion.setFromAxisAngle(Y_AXIS, this.hullYaw);
 
     const wading = waterDepthAt(this.root.position.x, this.root.position.z) > 0.4;
-    const speed = throttle * maxSpeed * (wading ? 0.5 : 1);
+    if (this.fasterOnRoads) {
+      // Eases up to the road speed (and back down off it) rather than jumping.
+      const goal = isOnRoad(this.root.position.x, this.root.position.z) ? ROAD_SPEED_BOOST : 1;
+      this.roadBoost += (goal - this.roadBoost) * Math.min(1, dt * 2.5);
+    }
+    const speed = throttle * maxSpeed * (wading ? 0.5 : this.roadBoost);
     const fwd = this.forward;
     const desired = new THREE.Vector3(fwd.x * speed * dt, -GROUND_SEEK * dt, fwd.z * speed * dt);
 

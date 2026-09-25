@@ -10,7 +10,7 @@ import { Fortress } from './Fortress';
 import { plantBuilding, fitScale } from './placeModel';
 import { instanceTemplate, placement } from '../utils/instancing';
 import { PartBuilder } from '../utils/modelKit';
-import { planHighways, buildHighwayMeshes, distanceToPolyline, HIGHWAY_WIDTH, type Polyline } from './RoadNetwork';
+import { planHighways, buildHighwayMeshes, distanceToPolyline, setSurfaceRoads, HIGHWAY_WIDTH, type Polyline } from './RoadNetwork';
 import { Bunker } from './Bunker';
 import { LandmarkSet } from './LandmarkBuilders';
 import { SITES, isInLandmark, siteToWorld, siteLocalHalf, enemyArmyAt, type Site } from './Landmarks';
@@ -90,6 +90,7 @@ export function generateWorld(
 ): WorldContent {
   placeRoads(scene);
   const highways = planHighways();
+  setSurfaceRoads(highways);
   scene.add(buildHighwayMeshes(highways));
   placePowerLines(scene, assets, highways);
   const landmarks = new LandmarkSet(world, scene, hitRegistry, assets);

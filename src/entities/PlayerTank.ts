@@ -50,6 +50,7 @@ export class PlayerTank extends Tank {
 
   constructor(world: RAPIER.World, spawnX: number, spawnZ: number, facingRadians = 0) {
     super(world, spawnX, spawnZ, PLAYER_MAX_HEALTH, ARMY_GREEN, facingRadians, 'player');
+    this.fasterOnRoads = true;
     this.addCommander(ARMY_GREEN);
 
     this.rocketRail.position.set(-0.98, 0.62, 0.15);

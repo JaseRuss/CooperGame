@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { TOWNS, type Town } from './TownPlan';
+import { TOWNS, ROAD_WIDTH, type Town } from './TownPlan';
 import { SITES, LAKES, siteEntries, distanceToSite, type Site } from './Landmarks';
 import { surfaceHeightAt } from './Terrain';
 import { FRIENDLY_BASES, BASE_RADIUS } from '../core/config';
@@ -268,4 +268,38 @@ export function distanceToPolyline(x: number, z: number, path: Polyline): number
     best = Math.min(best, Math.hypot(x - (a.x + abx * t), z - (a.y + abz * t)));
   }
   return best;
+}
+
+// ---------- road surface, for the speed boost on roads ----------
+
+const ROAD_EDGE_SLACK = 0.5; // counts as on the road with the tracks just over the edge
+const TOWN_ROAD_HALF_WIDTH = ROAD_WIDTH / 2;
+let surfaceRoads: { path: Polyline; minX: number; maxX: number; minZ: number; maxZ: number }[] = [];
+
+/** Registers the highways (from world generation) for isOnRoad. */
+export function setSurfaceRoads(highways: Polyline[]): void {
+  const pad = HIGHWAY_WIDTH;
+  surfaceRoads = highways.map((path) => ({
+    path,
+    minX: Math.min(...path.map((p) => p.x)) - pad,
+    maxX: Math.max(...path.map((p) => p.x)) + pad,
+    minZ: Math.min(...path.map((p) => p.y)) - pad,
+    maxZ: Math.max(...path.map((p) => p.y)) + pad,
+  }));
+}
+
+/** True on a highway or any town street. */
+export function isOnRoad(x: number, z: number): boolean {
+  for (const town of TOWNS) {
+    for (const r of town.roads) {
+      const hx = (r.alongX ? r.length / 2 : TOWN_ROAD_HALF_WIDTH) + ROAD_EDGE_SLACK;
+      const hz = (r.alongX ? TOWN_ROAD_HALF_WIDTH : r.length / 2) + ROAD_EDGE_SLACK;
+      if (Math.abs(x - r.x) < hx && Math.abs(z - r.z) < hz) return true;
+    }
+  }
+  for (const r of surfaceRoads) {
+    if (x < r.minX || x > r.maxX || z < r.minZ || z > r.maxZ) continue;
+    if (distanceToPolyline(x, z, r.path) < HIGHWAY_WIDTH / 2 + ROAD_EDGE_SLACK) return true;
+  }
+  return false;
 }
