@@ -1,35 +1,36 @@
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { initPhysics, createWorld } from '../physics/PhysicsWorld';
-import { InputManager } from '../input/InputManager';
-import { buildTerrain } from '../world/Terrain';
+import { InputManager, type InputState } from '../input/InputManager';
+import { buildTerrain, surfaceHeightAt, waterDepthAt } from '../world/Terrain';
 import { AssetLibrary } from '../world/AssetLibrary';
 import { generateWorld, type EnemySpawnPoint } from '../world/WorldGenerator';
 import { HomeBase, isInsideBase } from '../world/Base';
 import type { Polyline } from '../world/RoadNetwork';
 import type { Building } from '../world/Building';
+import type { Bunker } from '../world/Bunker';
+import type { EnemyBase } from '../world/EnemyBase';
+import type { LandmarkSet } from '../world/LandmarkBuilders';
+import { TOWNS } from '../world/TownPlan';
 import { PlayerTank } from '../entities/PlayerTank';
 import type { Tank } from '../entities/Tank';
 import { EnemyTank } from '../entities/EnemyTank';
+import { BuddyTank, type BuddyTarget } from '../entities/BuddyTank';
+import { TroopManager } from '../entities/TroopManager';
+import type { Shot } from '../entities/Soldier';
 import { HitRegistry } from '../combat/HitRegistry';
 import { ProjectileManager } from '../combat/ProjectileManager';
 import { ImpactEffects } from '../combat/ImpactEffects';
-import { CameraRig } from '../camera/CameraRig';
-import { HUD } from '../ui/HUD';
-import { WorldMap, type MapMarker } from '../ui/WorldMap';
-import { TOWNS } from '../world/TownPlan';
 import { predictTrajectory } from '../combat/Projectile';
-import { AimGuide, type AimTarget } from '../ui/AimGuide';
-import { BASE_POSITION } from '../core/config';
-import type { Bunker } from '../world/Bunker';
-import { TroopManager } from '../entities/TroopManager';
-import type { Shot } from '../entities/Soldier';
 import { HomingRocket, type RocketTarget } from '../combat/HomingRocket';
-import { surfaceHeightAt, waterDepthAt } from '../world/Terrain';
-import type { LandmarkSet } from '../world/LandmarkBuilders';
+import { CameraRig } from '../camera/CameraRig';
+import { HUD, type HUDState } from '../ui/HUD';
+import { WorldMap, type MapMarker, type MapView } from '../ui/WorldMap';
+import { AimGuide, type AimTarget } from '../ui/AimGuide';
+import { FRIENDLY_BASES, nearestFriendlyBase, BASE_RADIUS, type FriendlyBase } from '../core/config';
 
 const RESPAWN_DELAY = 25;
-const BASE_HEAL_RATE = 45; // HP/sec while inside the base
+const BASE_HEAL_RATE = 45; // HP/sec while inside a family base
 const BULLET_SPEED = 220;
 const BULLET_DAMAGE = 0.7;
 const BLAST_RADIUS = 7; // per unit of explosion size, for knocking soldiers over
@@ -41,11 +42,20 @@ const CHARGE_PER_TANK = 0.25;
 const CHARGE_PER_BUNKER = 0.2;
 const CHARGE_PER_BUILDING = 0.08;
 const CHARGE_PER_TROOP = 0.02;
+const CHARGE_PER_ENEMY_BASE = 0.5;
 const ROCKET_LOCK_RANGE = 700;
 const ROCKET_LOCK_CONE = (35 * Math.PI) / 180;
 const ROCKET_BLAST_RADIUS = 16;
 const ROCKET_DAMAGE = 140;
 const ROCKET_LINGER_TIME = 3.2;
+
+// Buddy tanks: a long recharge, starting full.
+const BUDDY_RECHARGE_TIME = 300;
+const MAX_BUDDIES = 6;
+
+// Enemy base objectives.
+const CHECKLIST_RANGE = 350; // show the target list when this close to an enemy base
+const VICTORY_SCREEN_TIME = 9;
 
 interface RocketSequence {
   rocket: HomingRocket;
@@ -55,27 +65,35 @@ interface RocketSequence {
   orbit: number;
 }
 
-/** Direction (x = cos, z = sin) from the base centre to where the highway leaves it. */
-function baseGateAngle(highways: Polyline[]): number {
+interface EnemySlot {
+  spawn: EnemySpawnPoint;
+  tank: EnemyTank | null;
+  respawnTimer: number;
+}
+
+interface FamilyBase {
+  info: FriendlyBase;
+  camp: HomeBase;
+  /** Hull yaw that faces out of the gate, for spawning/resetting here. */
+  spawnYaw: number;
+}
+
+/** Direction (x = cos, z = sin) from a base centre to where its highway leaves. */
+function gateAngle(base: { x: number; z: number }, highways: Polyline[]): number {
   let best: { x: number; y: number } | null = null;
   let bestDist = Infinity;
   for (const road of highways) {
     for (const end of [road[0], road[road.length - 1]]) {
-      const d = Math.hypot(end.x - BASE_POSITION.x, end.y - BASE_POSITION.z);
+      const d = Math.hypot(end.x - base.x, end.y - base.z);
       if (d < bestDist) {
         bestDist = d;
         best = end;
       }
     }
   }
-  if (!best) return -Math.PI / 2; // default: face into the map (-Z)
-  return Math.atan2(best.y - BASE_POSITION.z, best.x - BASE_POSITION.x);
-}
-
-interface EnemySlot {
-  spawn: EnemySpawnPoint;
-  tank: EnemyTank | null;
-  respawnTimer: number;
+  // No road nearby: face the middle of the map.
+  if (!best || bestDist > BASE_RADIUS * 2) return Math.atan2(-base.z, -base.x);
+  return Math.atan2(best.y - base.z, best.x - base.x);
 }
 
 export class Game {
@@ -94,17 +112,22 @@ export class Game {
   private projectiles!: ProjectileManager;
   private impacts!: ImpactEffects;
   private aimGuide!: AimGuide;
-  private homeBase!: HomeBase;
-  private spawnYaw = 0;
-  private rocketCharge = 0;
-  private rocketSeq: RocketSequence | null = null;
   private landmarks!: LandmarkSet;
-  private wakeTimer = 0;
+  private troops!: TroopManager;
   private player!: PlayerTank;
+  private familyBases: FamilyBase[] = [];
+  private enemyBases: EnemyBase[] = [];
+  private enemyBuildings = new Set<Building>();
+  private announcedBases = new Set<EnemyBase>();
   private buildings: Building[] = [];
   private enemySlots: EnemySlot[] = [];
   private bunkers: Bunker[] = [];
-  private troops!: TroopManager;
+  private buddies: BuddyTank[] = [];
+  private rocketCharge = 0;
+  private buddyCharge = 1;
+  private rocketSeq: RocketSequence | null = null;
+  private victoryTimer = 0;
+  private wakeTimer = 0;
   private ready = false;
 
   constructor(container: HTMLElement) {
@@ -130,8 +153,7 @@ export class Game {
     this.scene.background = new THREE.Color(0x9fd3f0);
     this.scene.fog = new THREE.Fog(0x9fd3f0, 500, 1700);
 
-    const hemi = new THREE.HemisphereLight(0xbfd9ff, 0x3a3226, 0.9);
-    this.scene.add(hemi);
+    this.scene.add(new THREE.HemisphereLight(0xbfd9ff, 0x3a3226, 0.9));
     this.sun = new THREE.DirectionalLight(0xfff2d9, 1.7);
     this.sun.castShadow = true;
     this.sun.shadow.mapSize.set(2048, 2048);
@@ -162,20 +184,27 @@ export class Game {
     const terrainCollider = this.world.createCollider(terrain.colliderDesc, terrainBody);
     this.hitRegistry.register(terrainCollider, { kind: 'terrain' });
 
-
     const assets = new AssetLibrary();
     await assets.load((loaded, total) => {
       this.loadingLabel.textContent = `Loading world… ${loaded}/${total}`;
     });
 
     const content = generateWorld(this.world, this.scene, this.hitRegistry, assets);
-    const gate = baseGateAngle(content.highways);
-    this.homeBase = new HomeBase(this.world, this.scene, gate);
-    // Face the gate: hull forward (-sin, -cos) should equal (cos gate, sin gate).
-    this.spawnYaw = Math.atan2(-Math.cos(gate), -Math.sin(gate));
+    this.familyBases = FRIENDLY_BASES.map((info) => {
+      const gate = gateAngle(info, content.highways);
+      return {
+        info,
+        camp: new HomeBase(this.world, this.scene, info, gate),
+        // Face the gate: hull forward (-sin, -cos) should equal (cos gate, sin gate).
+        spawnYaw: Math.atan2(-Math.cos(gate), -Math.sin(gate)),
+      };
+    });
     this.bunkers = content.bunkers;
+    this.enemyBases = content.enemyBases;
     this.landmarks = content.landmarks;
     this.buildings = [...content.buildings, ...content.bunkers.map((b) => b.building)];
+    for (const b of content.bunkers) this.enemyBuildings.add(b.building);
+    for (const base of content.enemyBases) for (const b of base.buildings) this.enemyBuildings.add(b);
     this.troops = new TroopManager(this.scene, content.squads, Math.random);
     this.hud.setWorldMap(
       new WorldMap(
@@ -193,7 +222,8 @@ export class Game {
     this.enemySlots = content.enemySpawns.map((spawn) => ({ spawn, tank: null, respawnTimer: 0 }));
     for (const slot of this.enemySlots) this.spawnEnemy(slot);
 
-    this.player = new PlayerTank(this.world, BASE_POSITION.x, BASE_POSITION.z, this.spawnYaw);
+    const home = this.familyBases[0];
+    this.player = new PlayerTank(this.world, home.info.x, home.info.z, home.spawnYaw);
     this.scene.add(this.player.root);
     this.hitRegistry.register(this.player.physicsCollider, { kind: 'tank', tank: this.player });
 
@@ -204,31 +234,65 @@ export class Game {
     requestAnimationFrame(this.animate);
   }
 
+  // ---------- spawning ----------
+
   private spawnEnemy(slot: EnemySlot): void {
-    const tank = new EnemyTank(
-      this.world,
-      slot.spawn.x,
-      slot.spawn.z,
-      slot.spawn.patrolCenter,
-      slot.spawn.patrolRadius,
-      Math.random,
-    );
+    const tank = new EnemyTank(this.world, slot.spawn.x, slot.spawn.z, slot.spawn.patrolCenter, slot.spawn.patrolRadius, Math.random);
     this.scene.add(tank.root);
     this.hitRegistry.register(tank.physicsCollider, { kind: 'tank', tank });
     slot.tank = tank;
   }
 
+  private removeEnemy(slot: EnemySlot): void {
+    if (!slot.tank) return;
+    this.explode(slot.tank.position.clone(), 2.5);
+    this.addRocketCharge(CHARGE_PER_TANK);
+    this.hitRegistry.unregister(slot.tank.physicsCollider);
+    this.scene.remove(slot.tank.root);
+    slot.tank.dispose();
+    slot.tank = null;
+    slot.respawnTimer = RESPAWN_DELAY;
+  }
+
+  /** Calls in a buddy tank; it rolls in just behind the player in the first free formation slot. */
+  private spawnBuddy(): void {
+    const used = new Set(this.buddies.map((b) => b.slot));
+    let slot = 0;
+    while (used.has(slot)) slot++;
+    const side = slot % 2 === 0 ? -1 : 1;
+    const row = Math.floor(slot / 2) + 1;
+    const offset = new THREE.Vector3(side * 9, 0, row * 12).applyAxisAngle(new THREE.Vector3(0, 1, 0), this.player.yaw);
+    const spot = this.player.position.clone().add(offset);
+
+    const buddy = new BuddyTank(this.world, spot.x, spot.z, this.player.yaw, slot);
+    this.scene.add(buddy.root);
+    this.hitRegistry.register(buddy.physicsCollider, { kind: 'tank', tank: buddy });
+    this.buddies.push(buddy);
+    this.impacts.splash(spot, 0.6); // a puff of dust as it rolls in
+    this.buddyCharge = 0;
+    this.hud.showBanner('BUDDY TANK INCOMING!', `${this.buddies.length} buddy tank${this.buddies.length > 1 ? 's' : ''} with you`);
+  }
+
+  private removeBuddy(buddy: BuddyTank): void {
+    this.explode(buddy.position.clone(), 2.5);
+    this.hitRegistry.unregister(buddy.physicsCollider);
+    this.scene.remove(buddy.root);
+    buddy.dispose();
+    this.buddies = this.buddies.filter((b) => b !== buddy);
+  }
+
+  // ---------- combat ----------
+
   private addRocketCharge(amount: number): void {
     this.rocketCharge = Math.min(1, this.rocketCharge + amount);
   }
 
-  private explode(point: THREE.Vector3, size: number, byPlayer = false): void {
+  private explode(point: THREE.Vector3, size: number, byPlayerSide = false): void {
     this.impacts.explode(point, size);
     const knocked = this.troops.blast(point, BLAST_RADIUS * size);
-    if (byPlayer) this.addRocketCharge(knocked * CHARGE_PER_TROOP);
-    const dist = point.distanceTo(this.player.position);
+    if (byPlayerSide) this.addRocketCharge(knocked * CHARGE_PER_TROOP);
     // During rocket cam the camera is near the blast, not the tank.
-    const camDist = this.rocketSeq ? point.distanceTo(this.camera.position) : dist;
+    const camDist = point.distanceTo(this.rocketSeq ? this.camera.position : this.player.position);
     this.cameraRig.addShake((size * 0.9) / Math.max(1, camDist / 12));
   }
 
@@ -236,17 +300,17 @@ export class Game {
     return this.bunkers.some((b) => b.building === building);
   }
 
-  private collapseBuilding(building: Building, byPlayer: boolean): void {
-    this.explode(building.center.clone(), 2.2, byPlayer);
+  private collapseBuilding(building: Building, byPlayerSide: boolean): void {
+    this.explode(building.center.clone(), building.explosionSize, byPlayerSide);
     const footprint = Math.max(building.halfExtents.x, building.halfExtents.z);
     this.impacts.addSmokeSource(building.groundCenter, footprint * 0.6);
-    if (byPlayer) this.addRocketCharge(this.isBunker(building) ? CHARGE_PER_BUNKER : CHARGE_PER_BUILDING);
+    if (byPlayerSide) this.addRocketCharge(this.isBunker(building) ? CHARGE_PER_BUNKER : CHARGE_PER_BUILDING);
   }
 
   private fire(tank: Tank, shot: Shot): void {
-    const byPlayer = tank === this.player;
+    const byPlayerSide = tank.faction === 'player';
     this.impacts.muzzleFlash(shot.origin, shot.direction);
-    if (byPlayer) this.cameraRig.addShake(0.35);
+    if (tank === this.player) this.cameraRig.addShake(0.35);
     this.projectiles.spawn(
       shot.origin,
       shot.direction,
@@ -254,11 +318,13 @@ export class Game {
       tank.shellDamage,
       tank.physicsCollider,
       (point, result) => {
-        if (result.collapsedBuilding) this.collapseBuilding(result.collapsedBuilding, byPlayer);
+        if (result.collapsedBuilding) this.collapseBuilding(result.collapsedBuilding, byPlayerSide);
         else if (result.water) this.impacts.splash(point, 1);
-        else this.explode(point, 1, byPlayer);
-        if (byPlayer && result.tankHit && result.tankHit.tank !== this.player) this.hud.showHitMarker(result.tankHit.zone);
+        else this.explode(point, 1, byPlayerSide);
+        if (tank === this.player && result.tankHit) this.hud.showHitMarker(result.tankHit.zone);
       },
+      1,
+      tank.faction,
     );
   }
 
@@ -276,7 +342,43 @@ export class Game {
         else this.impacts.dustPuff(point);
       },
       0.45,
+      'enemy',
     );
+  }
+
+  /** The player plus any buddies: everything the enemy shoots at. */
+  private get friendlies(): Tank[] {
+    return [this.player, ...this.buddies];
+  }
+
+  private nearestFriendlyPosition(from: THREE.Vector3): THREE.Vector3 {
+    let best = this.player.position;
+    let bestD = best.distanceToSquared(from);
+    for (const b of this.buddies) {
+      const d = b.position.distanceToSquared(from);
+      if (d < bestD) {
+        bestD = d;
+        best = b.position;
+      }
+    }
+    return best;
+  }
+
+  /** Everything a buddy might shoot at, most valuable first. */
+  private buddyTargets(): BuddyTarget[] {
+    const targets: BuddyTarget[] = [];
+    for (const slot of this.enemySlots) {
+      const tank = slot.tank;
+      if (tank) targets.push({ position: tank.position, priority: 3, alive: () => !tank.isDestroyed });
+    }
+    for (const base of this.enemyBases) {
+      for (const o of base.objectives) if (!o.isDestroyed()) targets.push({ position: o.position, priority: 2.5, alive: () => !o.isDestroyed() });
+    }
+    for (const bunker of this.bunkers) {
+      if (bunker.alive) targets.push({ position: bunker.position, priority: 2, alive: () => bunker.alive });
+    }
+    for (const s of this.troops.activeSoldiers()) targets.push({ position: s.position, priority: 1, alive: () => s.isActive });
+    return targets;
   }
 
   // ---------- homing rocket ----------
@@ -297,7 +399,7 @@ export class Game {
       if (dist > ROCKET_LOCK_RANGE || dist < 8) return;
       const angle = Math.acos(Math.max(-1, Math.min(1, (dx * aimX + dz * aimZ) / dist)));
       if (angle > ROCKET_LOCK_CONE) return;
-      const score = angle + bias + dist / ROCKET_LOCK_RANGE * 0.15;
+      const score = angle + bias + (dist / ROCKET_LOCK_RANGE) * 0.15;
       if (score < bestScore) {
         bestScore = score;
         best = { position: pos, track };
@@ -307,6 +409,9 @@ export class Game {
     for (const slot of this.enemySlots) {
       const tank = slot.tank;
       if (tank && !tank.isDestroyed) consider(tank.position, 0, () => (tank.isDestroyed ? null : tank.position));
+    }
+    for (const base of this.enemyBases) {
+      for (const o of base.objectives) if (!o.isDestroyed()) consider(o.position, 0.05, () => (o.isDestroyed() ? null : o.position));
     }
     for (const bunker of this.bunkers) {
       if (bunker.alive) consider(bunker.position, 0.08, () => (bunker.alive ? bunker.position : null));
@@ -404,6 +509,41 @@ export class Game {
     return true;
   }
 
+  // ---------- enemy base objectives ----------
+
+  /** Announces bases as they fall, and the victory when the last one goes. */
+  private updateEnemyBases(dt: number): void {
+    for (const base of this.enemyBases) {
+      base.update(dt, (p, r) => this.impacts.chimneyPuff(p, r));
+      if (!base.isDestroyed || this.announcedBases.has(base)) continue;
+      this.announcedBases.add(base);
+      this.addRocketCharge(CHARGE_PER_ENEMY_BASE);
+      const left = this.enemyBases.length - this.announcedBases.size;
+      if (left === 0) {
+        this.hud.showVictory();
+        this.victoryTimer = VICTORY_SCREEN_TIME;
+      } else {
+        this.hud.showBanner(`ENEMY BASE ${base.name.toUpperCase()} DESTROYED!`, `${left} enemy base${left > 1 ? 's' : ''} to go`);
+      }
+    }
+    if (this.victoryTimer > 0) {
+      this.victoryTimer -= dt;
+      if (this.victoryTimer <= 0) this.hud.hideVictory();
+    }
+  }
+
+  private nearestEnemyBase(onlyStanding: boolean): { base: EnemyBase; distance: number } | null {
+    let best: { base: EnemyBase; distance: number } | null = null;
+    for (const base of this.enemyBases) {
+      if (onlyStanding && base.isDestroyed) continue;
+      const d = Math.hypot(base.center.x - this.player.position.x, base.center.z - this.player.position.z);
+      if (!best || d < best.distance) best = { base, distance: d };
+    }
+    return best;
+  }
+
+  // ---------- aiming / HUD helpers ----------
+
   /** Where the player's next shell would fly and land, and what it would hit. */
   private updateAim(): { screen: { x: number; y: number } | null; range: number | null; target: AimTarget } {
     const traj = predictTrajectory(
@@ -415,7 +555,6 @@ export class Game {
     );
     const target = this.classifyTarget(traj.hitCollider);
     this.aimGuide.update(traj, target, this.camera);
-
     return { screen: this.toScreen(traj.impact), range: traj.normal ? traj.range : null, target };
   }
 
@@ -429,8 +568,8 @@ export class Game {
     if (!collider) return 'none';
     const hit = this.hitRegistry.lookup(collider);
     if (!hit || hit.kind === 'terrain' || hit.kind === 'water') return 'ground';
-    if (hit.kind === 'tank') return hit.tank === this.player ? 'ground' : 'enemy';
-    return this.bunkers.some((b) => b.building === hit.building) ? 'enemy' : 'building';
+    if (hit.kind === 'tank') return hit.tank.faction === 'player' ? 'ground' : 'enemy';
+    return this.enemyBuildings.has(hit.building) ? 'enemy' : 'building';
   }
 
   private collectMarkers(): MapMarker[] {
@@ -445,15 +584,50 @@ export class Game {
     return markers;
   }
 
-  private removeEnemy(slot: EnemySlot): void {
-    if (!slot.tank) return;
-    this.explode(slot.tank.position.clone(), 2.5);
-    this.addRocketCharge(CHARGE_PER_TANK);
-    this.hitRegistry.unregister(slot.tank.physicsCollider);
-    this.scene.remove(slot.tank.root);
-    slot.tank.dispose();
-    slot.tank = null;
-    slot.respawnTimer = RESPAWN_DELAY;
+  private mapView(): MapView {
+    const objective = this.nearestEnemyBase(true);
+    return {
+      playerX: this.player.position.x,
+      playerZ: this.player.position.z,
+      playerYaw: this.player.yaw,
+      friendlyBases: FRIENDLY_BASES,
+      enemyBases: this.enemyBases.map((b) => ({ x: b.center.x, z: b.center.z, name: b.name, destroyed: b.isDestroyed })),
+      buddies: this.buddies.map((b) => ({ x: b.position.x, z: b.position.z })),
+      markers: this.collectMarkers(),
+      objective: objective ? { x: objective.base.center.x, z: objective.base.center.z, name: objective.base.name } : null,
+    };
+  }
+
+  private hudState(input: InputState, cinematic: boolean, aim: ReturnType<Game['updateAim']>, lockScreen: { x: number; y: number } | null): HUDState {
+    const near = this.nearestEnemyBase(false);
+    const inside = isInsideBase(this.player.position);
+    return {
+      health: this.player.health,
+      maxHealth: this.player.maxHealth,
+      reloadFraction: this.player.fireCooldown / this.player.fireInterval,
+      cameraMode: this.cameraRig.mode,
+      usingGamepad: input.usingGamepad,
+      insideBase: inside ? nearestFriendlyBase(this.player.position.x, this.player.position.z).name : null,
+      map: this.mapView(),
+      aimScreen: aim.screen,
+      aimRange: aim.range,
+      aimTarget: aim.target,
+      rocketCharge: this.rocketCharge,
+      rocketLockScreen: lockScreen,
+      buddyCharge: this.buddyCharge,
+      buddyCount: this.buddies.length,
+      cinematic,
+      enemyBasesLeft: this.enemyBases.filter((b) => !b.isDestroyed).length,
+      enemyBasesTotal: this.enemyBases.length,
+      nearbyBase:
+        near && near.distance < CHECKLIST_RANGE
+          ? {
+              name: near.base.name,
+              distance: near.distance,
+              objectives: near.base.objectives.map((o) => ({ label: o.label, done: o.isDestroyed() })),
+            }
+          : null,
+    };
   }
 
   private onResize(): void {
@@ -462,12 +636,23 @@ export class Game {
     this.renderer.setSize(window.innerWidth, window.innerHeight);
   }
 
+  // ---------- main loop ----------
+
   private readonly animate = (): void => {
     requestAnimationFrame(this.animate);
     if (!this.ready) return;
 
     const dt = Math.min(this.clock.getDelta(), 0.05);
     const rawInput = this.input.update(dt);
+
+    // Full map doubles as the pause screen: nothing moves while it's open.
+    if (this.hud.paused) {
+      if (rawInput.mapTogglePressed) this.hud.toggleBigMap();
+      this.hud.update(this.hudState(rawInput, false, { screen: null, range: null, target: 'none' }, null));
+      this.renderer.render(this.scene, this.camera);
+      return;
+    }
+
     const inSequence = this.rocketSeq !== null;
     // The tank sits still (and can't be hurt) while the rocket cam plays.
     const input = inSequence
@@ -476,22 +661,28 @@ export class Game {
 
     if (!inSequence) {
       if (input.cameraTogglePressed) this.cameraRig.toggle();
-      if (input.resetPressed) this.player.teleport(BASE_POSITION.x, BASE_POSITION.z, this.spawnYaw);
+      if (input.resetPressed) {
+        const base = this.familyBases.find((b) => b.info === nearestFriendlyBase(this.player.position.x, this.player.position.z));
+        if (base) this.player.teleport(base.info.x, base.info.z, base.spawnYaw);
+      }
       if (input.mapTogglePressed) this.hud.toggleBigMap();
       if (input.rocketPressed && this.rocketCharge >= 1) this.launchRocket();
+      if (input.buddyPressed && this.buddyCharge >= 1 && this.buddies.length < MAX_BUDDIES) this.spawnBuddy();
       this.addRocketCharge(dt / ROCKET_RECHARGE_TIME);
+      this.buddyCharge = Math.min(1, this.buddyCharge + dt / BUDDY_RECHARGE_TIME);
     }
 
     const playerShot = this.player.step(input, dt);
     if (playerShot) this.fire(this.player, playerShot);
 
+    const friendlies = this.friendlies;
     for (const slot of this.enemySlots) {
       if (slot.tank) {
         if (slot.tank.isDestroyed) {
           this.removeEnemy(slot);
           continue;
         }
-        const shot = slot.tank.ai(this.world, this.player, dt);
+        const shot = slot.tank.ai(this.world, friendlies, dt);
         if (shot) this.fire(slot.tank, shot);
       } else {
         slot.respawnTimer -= dt;
@@ -499,22 +690,35 @@ export class Game {
       }
     }
 
+    if (this.buddies.length > 0) {
+      const targets = this.buddyTargets();
+      for (const buddy of [...this.buddies]) {
+        if (buddy.isDestroyed) {
+          this.removeBuddy(buddy);
+          continue;
+        }
+        const shot = buddy.think(dt, this.world, this.player, targets);
+        if (shot) this.fire(buddy, shot);
+      }
+    }
+
     for (const bunker of this.bunkers) {
-      const shot = bunker.update(dt, this.world, this.player.position);
+      const shot = bunker.update(dt, this.world, this.nearestFriendlyPosition(bunker.position));
       if (shot) this.fireBullet(shot, bunker.building.physicsCollider ?? undefined);
     }
-    this.troops.update(dt, this.world, this.player.position, (shot) => this.fireBullet(shot, undefined));
+    this.troops.update(dt, this.world, friendlies.map((t) => t.position), (shot) => this.fireBullet(shot, undefined));
     this.addRocketCharge(this.troops.runOver(this.player.position, RUN_OVER_RADIUS) * CHARGE_PER_TROOP);
 
     this.world.step();
     this.projectiles.update(dt);
     this.impacts.update(dt);
     for (const building of this.buildings) building.update(dt);
+    this.updateEnemyBases(dt);
 
     const insideBase = isInsideBase(this.player.position);
-    const repairing = insideBase && this.player.health < this.player.maxHealth;
     if (insideBase) this.player.heal(BASE_HEAL_RATE * dt);
-    this.homeBase.update(dt, repairing);
+    const repairingAt = insideBase && this.player.health < this.player.maxHealth ? nearestFriendlyBase(this.player.position.x, this.player.position.z) : null;
+    for (const fb of this.familyBases) fb.camp.update(dt, fb.info === repairingAt);
     this.landmarks.update(dt);
 
     // Bow wave while the tank wades through a lake.
@@ -547,27 +751,7 @@ export class Game {
     this.sun.target.position.copy(this.player.position);
     this.sun.target.updateMatrixWorld();
 
-    this.hud.update({
-      health: this.player.health,
-      maxHealth: this.player.maxHealth,
-      reloadFraction: this.player.fireCooldown / this.player.fireInterval,
-      cameraMode: this.cameraRig.mode,
-      usingGamepad: input.usingGamepad,
-      insideBase,
-      playerX: this.player.position.x,
-      playerZ: this.player.position.z,
-      playerYaw: this.player.yaw,
-      markers: this.collectMarkers(),
-      baseX: BASE_POSITION.x,
-      baseZ: BASE_POSITION.z,
-      aimScreen: aim.screen,
-      aimRange: aim.range,
-      aimTarget: aim.target,
-      rocketCharge: this.rocketCharge,
-      rocketLockScreen: lockScreen,
-      cinematic,
-    });
-
+    this.hud.update(this.hudState(input, cinematic, aim, lockScreen));
     this.renderer.render(this.scene, this.camera);
   };
 }

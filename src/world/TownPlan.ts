@@ -1,6 +1,6 @@
 import { mulberry32 } from '../utils/rng';
 import { randRange } from '../utils/math';
-import { WORLD_HALF, WORLD_SEED, BASE_POSITION } from '../core/config';
+import { WORLD_HALF, WORLD_SEED, distanceToFriendlyBase } from '../core/config';
 
 export const ROAD_WIDTH = 12;
 const TOWN_COUNT = 8;
@@ -23,6 +23,10 @@ export interface Lot {
   z: number;
   /** rotation.y that turns the model's front (+Z) toward the road */
   facing: number;
+  /** Shops line the town's central high street; everything else is houses. */
+  kind: 'house' | 'shop';
+  /** Z of the street this lot fronts onto. */
+  streetZ: number;
 }
 
 export interface Town {
@@ -34,6 +38,10 @@ export interface Town {
   maxZ: number;
   roads: Road[];
   lots: Lot[];
+  /** Z of each east-west street, and X of each north-south cross street. */
+  streetZs: number[];
+  crossXs: number[];
+  halfLen: number;
 }
 
 function buildTown(cx: number, cz: number, rng: () => number): Town {
@@ -56,15 +64,17 @@ function buildTown(cx: number, cz: number, rng: () => number): Town {
     roads.push({ x, z: (crossZMin + crossZMax) / 2, length: crossZMax - crossZMin, alongX: false });
   }
 
-  for (const z of streetZs) {
+  const highStreet = Math.floor((streetCount - 1) / 2);
+  streetZs.forEach((z, streetIndex) => {
+    const kind = streetIndex === highStreet ? 'shop' : 'house';
     for (let x = cx - halfLen + LOT_WIDTH; x <= cx + halfLen - LOT_WIDTH + 0.01; x += LOT_WIDTH) {
       if (crossXs.some((cxRoad) => Math.abs(cxRoad - x) < LOT_WIDTH * 0.75)) continue;
       if (rng() < 0.12) continue; // occasional empty lot
-      lots.push({ x, z: z - LOT_SETBACK, facing: 0 });
+      lots.push({ x, z: z - LOT_SETBACK, facing: 0, kind, streetZ: z });
       if (rng() < 0.12) continue;
-      lots.push({ x, z: z + LOT_SETBACK, facing: Math.PI });
+      lots.push({ x, z: z + LOT_SETBACK, facing: Math.PI, kind, streetZ: z });
     }
-  }
+  });
 
   return {
     cx,
@@ -75,6 +85,9 @@ function buildTown(cx: number, cz: number, rng: () => number): Town {
     maxZ: crossZMax + TOWN_MARGIN,
     roads,
     lots,
+    streetZs,
+    crossXs,
+    halfLen,
   };
 }
 
@@ -87,7 +100,7 @@ function generateTowns(): Town[] {
     attempts++;
     const x = randRange(rng, -WORLD_HALF + 260, WORLD_HALF - 260);
     const z = randRange(rng, -WORLD_HALF + 260, WORLD_HALF - 260);
-    if (Math.hypot(x - BASE_POSITION.x, z - BASE_POSITION.z) < TOWN_MIN_DIST_FROM_BASE) continue;
+    if (distanceToFriendlyBase(x, z) < TOWN_MIN_DIST_FROM_BASE) continue;
     if (towns.some((t) => Math.hypot(x - t.cx, z - t.cz) < TOWN_MIN_SPACING)) continue;
     towns.push(buildTown(x, z, rng));
   }

@@ -18,7 +18,7 @@ export class PlayerTank extends Tank {
   private driveDir: 1 | -1 = 1;
 
   constructor(world: RAPIER.World, spawnX: number, spawnZ: number, facingRadians = 0) {
-    super(world, spawnX, spawnZ, PLAYER_MAX_HEALTH, ARMY_GREEN, facingRadians);
+    super(world, spawnX, spawnZ, PLAYER_MAX_HEALTH, ARMY_GREEN, facingRadians, 'player');
   }
 
   /** Set while a rocket-cam sequence plays: the player can't be hurt while not in control. */

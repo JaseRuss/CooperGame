@@ -1,11 +1,13 @@
 import { mulberry32 } from '../utils/rng';
 import { randRange } from '../utils/math';
-import { WORLD_HALF, WORLD_SEED, BASE_POSITION } from '../core/config';
+import { WORLD_HALF, WORLD_SEED, FRIENDLY_BASES, ENEMY_BASE_COUNT, distanceToFriendlyBase } from '../core/config';
 import { TOWNS } from './TownPlan';
 
 /** A flattened rectangular site. `flip` = which way the site's front faces along Z (+1 or -1). */
 export interface Site {
-  kind: 'mall' | 'airport';
+  kind: 'mall' | 'airport' | 'enemyBase';
+  /** Call sign for enemy bases ("Alpha", ...); empty otherwise. */
+  name: string;
   cx: number;
   cz: number;
   halfX: number;
@@ -23,6 +25,10 @@ export interface Lake {
 
 const MALL_HALF = { x: 95, z: 80 };
 const AIRPORT_HALF = { x: 390, z: 150 };
+export const ENEMY_BASE_HALF = 75;
+const ENEMY_BASE_NAMES = ['Alpha', 'Bravo', 'Charlie', 'Delta', 'Echo', 'Foxtrot'];
+const ENEMY_BASE_MIN_DIST_FROM_FRIENDLY = 420;
+const ENEMY_BASE_MIN_SPACING = 420;
 const LAKE_COUNT = 5;
 const MALL_COUNT = 3;
 
@@ -48,7 +54,7 @@ function plan(): { sites: Site[]; lakes: Lake[] } {
   const clearOfEverything = (x: number, z: number, hx: number, hz: number, margin: number): boolean => {
     if (Math.abs(x) + hx > WORLD_HALF - 60 || Math.abs(z) + hz > WORLD_HALF - 60) return false;
     const probe = { cx: x, cz: z, halfX: hx, halfZ: hz };
-    if (rectDistance(probe, BASE_POSITION.x, BASE_POSITION.z) < 200 + margin) return false;
+    if (FRIENDLY_BASES.some((b) => rectDistance(probe, b.x, b.z) < 200 + margin)) return false;
     for (const t of TOWNS) {
       const town = { cx: (t.minX + t.maxX) / 2, cz: (t.minZ + t.maxZ) / 2, halfX: (t.maxX - t.minX) / 2, halfZ: (t.maxZ - t.minZ) / 2 };
       if (rectRectDistance(probe, town) < margin) return false;
@@ -66,7 +72,21 @@ function plan(): { sites: Site[]; lakes: Lake[] } {
     const x = randRange(rng, -WORLD_HALF + hx + 60, WORLD_HALF - hx - 60);
     const z = randRange(rng, -WORLD_HALF + hz + 60, WORLD_HALF - hz - 60);
     if (clearOfEverything(x, z, hx, hz, 60)) {
-      sites.push({ kind: 'airport', cx: x, cz: z, halfX: hx, halfZ: hz, rotated, flip: rng() < 0.5 ? 1 : -1 });
+      sites.push({ kind: 'airport', name: '', cx: x, cz: z, halfX: hx, halfZ: hz, rotated, flip: rng() < 0.5 ? 1 : -1 });
+    }
+  }
+
+  // Enemy bases next: they're the objective, so they get first pick of the open ground.
+  const enemyBases = () => sites.filter((s) => s.kind === 'enemyBase');
+  for (let attempt = 0; attempt < 2000 && enemyBases().length < ENEMY_BASE_COUNT; attempt++) {
+    const h = ENEMY_BASE_HALF;
+    const x = randRange(rng, -WORLD_HALF + h + 80, WORLD_HALF - h - 80);
+    const z = randRange(rng, -WORLD_HALF + h + 80, WORLD_HALF - h - 80);
+    if (distanceToFriendlyBase(x, z) < ENEMY_BASE_MIN_DIST_FROM_FRIENDLY) continue;
+    if (enemyBases().some((b) => Math.hypot(b.cx - x, b.cz - z) < ENEMY_BASE_MIN_SPACING)) continue;
+    if (clearOfEverything(x, z, h, h, 50)) {
+      const name = ENEMY_BASE_NAMES[enemyBases().length];
+      sites.push({ kind: 'enemyBase', name, cx: x, cz: z, halfX: h, halfZ: h, rotated: false, flip: rng() < 0.5 ? 1 : -1 });
     }
   }
 
@@ -74,7 +94,7 @@ function plan(): { sites: Site[]; lakes: Lake[] } {
     const x = randRange(rng, -WORLD_HALF, WORLD_HALF);
     const z = randRange(rng, -WORLD_HALF, WORLD_HALF);
     if (clearOfEverything(x, z, MALL_HALF.x, MALL_HALF.z, 70)) {
-      sites.push({ kind: 'mall', cx: x, cz: z, halfX: MALL_HALF.x, halfZ: MALL_HALF.z, rotated: false, flip: rng() < 0.5 ? 1 : -1 });
+      sites.push({ kind: 'mall', name: '', cx: x, cz: z, halfX: MALL_HALF.x, halfZ: MALL_HALF.z, rotated: false, flip: rng() < 0.5 ? 1 : -1 });
     }
   }
 
@@ -139,18 +159,20 @@ export interface SiteEntry {
 /** Paved points on the site edge where a highway may join, each with its outward direction. */
 export function siteEntries(site: Site): SiteEntry[] {
   const half = siteLocalHalf(site);
-  const local: [number, number, number, number][] =
-    site.kind === 'mall'
-      ? [
-          [0, half.z, 0, 1],
-          [-half.x, MALL_SIDE_ENTRY_Z, -1, 0],
-          [half.x, MALL_SIDE_ENTRY_Z, 1, 0],
-        ]
-      : [
-          [AIRPORT_ACCESS_X, half.z, 0, 1],
-          [-half.x, APRON.z, -1, 0],
-          [half.x, APRON.z, 1, 0],
-        ];
+  const byKind: Record<Site['kind'], [number, number, number, number][]> = {
+    mall: [
+      [0, half.z, 0, 1],
+      [-half.x, MALL_SIDE_ENTRY_Z, -1, 0],
+      [half.x, MALL_SIDE_ENTRY_Z, 1, 0],
+    ],
+    airport: [
+      [AIRPORT_ACCESS_X, half.z, 0, 1],
+      [-half.x, APRON.z, -1, 0],
+      [half.x, APRON.z, 1, 0],
+    ],
+    enemyBase: [[0, half.z, 0, 1]], // the checkpoint gate
+  };
+  const local = byKind[site.kind];
   return local.map(([lx, lz, dx, dz]) => {
     const p = siteToWorld(site, lx, lz);
     const tip = siteToWorld(site, lx + dx, lz + dz);

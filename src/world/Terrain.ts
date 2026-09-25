@@ -9,7 +9,7 @@ import {
   TERRAIN_SEGMENTS,
   TERRAIN_HEIGHT,
   WORLD_SEED,
-  BASE_POSITION,
+  FRIENDLY_BASES,
   BASE_RADIUS,
 } from '../core/config';
 
@@ -89,13 +89,13 @@ export function heightAt(x: number, z: number): number {
     }
   }
 
-  const dx = x - BASE_POSITION.x;
-  const dz = z - BASE_POSITION.z;
-  const distToBase = Math.sqrt(dx * dx + dz * dz);
   const flattenRadius = BASE_RADIUS * 2.2;
-  if (distToBase < flattenRadius) {
-    const t = distToBase / flattenRadius;
-    h *= t * t;
+  for (const base of FRIENDLY_BASES) {
+    const distToBase = Math.hypot(x - base.x, z - base.z);
+    if (distToBase < flattenRadius) {
+      const t = distToBase / flattenRadius;
+      h *= t * t;
+    }
   }
 
   return h;

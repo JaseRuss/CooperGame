@@ -29,13 +29,31 @@ export interface MapMarker {
   kind: MarkerKind;
 }
 
+export interface MapBase {
+  x: number;
+  z: number;
+  name: string;
+}
+
 export interface MapView {
   playerX: number;
   playerZ: number;
   playerYaw: number;
-  baseX: number;
-  baseZ: number;
+  friendlyBases: MapBase[];
+  enemyBases: (MapBase & { destroyed: boolean })[];
+  buddies: { x: number; z: number }[];
   markers: MapMarker[];
+  /** Nearest enemy base still standing; the minimap points at it. */
+  objective: MapBase | null;
+}
+
+export interface MapDrawOptions {
+  /** Size multiplier for the player arrow (bigger on the full-screen map). */
+  arrowScale: number;
+  /** Write base names next to their icons. */
+  labels: boolean;
+  /** Draw an arrow on the rim of a round map pointing at `view.objective` when it's out of view. */
+  rimPointer: boolean;
 }
 
 const LAYER_SIZE = 1024;
@@ -92,6 +110,15 @@ export class WorldMap {
       const runwayLen = half.x * 2 - 40;
       const apronFront = APRON.z + APRON.halfZ;
       const serviceLen = half.x - APRON.halfX;
+      if (site.kind === 'enemyBase') {
+        ctx.fillStyle = '#8a7d5c';
+        ctx.fillRect(site.cx - site.halfX, site.cz - site.halfZ, site.halfX * 2, site.halfZ * 2);
+        ctx.strokeStyle = '#5a4a2a';
+        ctx.lineWidth = 4;
+        ctx.strokeRect(site.cx - site.halfX, site.cz - site.halfZ, site.halfX * 2, site.halfZ * 2);
+        ctx.fillStyle = '#3a3d42';
+        continue;
+      }
       const rects =
         site.kind === 'mall'
           ? [siteRectToWorld(site, 0, (half.z + MALL_LOT_BACK_Z) / 2, half.x, (half.z - MALL_LOT_BACK_Z) / 2)]
@@ -120,7 +147,16 @@ export class WorldMap {
    * Draws the map into `ctx` (a width x height canvas) centered on (cx, cz), showing
    * `metersAcross` meters horizontally.
    */
-  draw(ctx: CanvasRenderingContext2D, width: number, height: number, cx: number, cz: number, metersAcross: number, view: MapView): void {
+  draw(
+    ctx: CanvasRenderingContext2D,
+    width: number,
+    height: number,
+    cx: number,
+    cz: number,
+    metersAcross: number,
+    view: MapView,
+    opts: MapDrawOptions,
+  ): void {
     const s = width / metersAcross;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, width, height);
@@ -140,11 +176,45 @@ export class WorldMap {
       ctx.fillRect(h.x - hx, h.z - hz, hx * 2, hz * 2);
     }
 
+    // Family bases: yellow rings.
     ctx.strokeStyle = '#ffcc33';
     ctx.lineWidth = 3 / s;
-    ctx.beginPath();
-    ctx.arc(view.baseX, view.baseZ, Math.max(40, 7 / s), 0, Math.PI * 2);
-    ctx.stroke();
+    for (const b of view.friendlyBases) {
+      ctx.beginPath();
+      ctx.arc(b.x, b.z, Math.max(40, 7 / s), 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    // Enemy bases: red squares (green tick once destroyed).
+    for (const b of view.enemyBases) {
+      const r = Math.max(30, 7 / s);
+      ctx.fillStyle = b.destroyed ? 'rgba(80,160,80,0.85)' : 'rgba(210,60,50,0.85)';
+      ctx.fillRect(b.x - r, b.z - r, r * 2, r * 2);
+      ctx.strokeStyle = '#1a1a1a';
+      ctx.lineWidth = 2 / s;
+      ctx.strokeRect(b.x - r, b.z - r, r * 2, r * 2);
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 3 / s;
+      ctx.beginPath();
+      if (b.destroyed) {
+        ctx.moveTo(b.x - r * 0.5, b.z);
+        ctx.lineTo(b.x - r * 0.1, b.z + r * 0.45);
+        ctx.lineTo(b.x + r * 0.55, b.z - r * 0.45);
+      } else {
+        ctx.moveTo(b.x - r * 0.5, b.z - r * 0.5);
+        ctx.lineTo(b.x + r * 0.5, b.z + r * 0.5);
+        ctx.moveTo(b.x + r * 0.5, b.z - r * 0.5);
+        ctx.lineTo(b.x - r * 0.5, b.z + r * 0.5);
+      }
+      ctx.stroke();
+    }
+
+    for (const b of view.buddies) {
+      ctx.fillStyle = '#9be27a';
+      ctx.beginPath();
+      ctx.arc(b.x, b.z, 4 / s, 0, Math.PI * 2);
+      ctx.fill();
+    }
 
     for (const m of view.markers) {
       if (m.kind === 'bunker') {
@@ -162,10 +232,31 @@ export class WorldMap {
       }
     }
 
-    // Player arrow in screen space so it stays a constant size.
-    const px = width / 2 + (view.playerX - cx) * s;
-    const pz = height / 2 + (view.playerZ - cz) * s;
-    ctx.setTransform(1, 0, 0, 1, px, pz);
+    // Everything below is in screen pixels so it stays readable at any zoom.
+    const toScreen = (x: number, z: number) => [width / 2 + (x - cx) * s, height / 2 + (z - cz) * s] as const;
+
+    if (opts.labels) {
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.font = '700 12px "Segoe UI", system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = 'rgba(0,0,0,0.75)';
+      const label = (x: number, z: number, text: string, color: string) => {
+        const [lx, lz] = toScreen(x, z);
+        ctx.fillStyle = color;
+        ctx.strokeText(text, lx, lz - 16);
+        ctx.fillText(text, lx, lz - 16);
+      };
+      for (const b of view.friendlyBases) label(b.x, b.z, b.name, '#ffe07a');
+      for (const b of view.enemyBases) label(b.x, b.z, `Enemy Base ${b.name}${b.destroyed ? ' ✓' : ''}`, b.destroyed ? '#9be27a' : '#ff8a7a');
+    }
+
+    if (opts.rimPointer && view.objective) this.drawRimPointer(ctx, width, height, toScreen(view.objective.x, view.objective.z), view);
+
+    // Player arrow.
+    const [px, pz] = toScreen(view.playerX, view.playerZ);
+    const k = opts.arrowScale;
+    ctx.setTransform(k, 0, 0, k, px, pz);
     ctx.rotate(-view.playerYaw);
     ctx.fillStyle = '#5fe05f';
     ctx.strokeStyle = '#0d2a0d';
@@ -179,5 +270,65 @@ export class WorldMap {
     ctx.fill();
     ctx.stroke();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
+  }
+
+  /**
+   * On a round minimap: when the objective is off the edge, a red arrow on the rim points at it
+   * with the distance; when it's on the map, a pulsing ring marks it.
+   */
+  private drawRimPointer(
+    ctx: CanvasRenderingContext2D,
+    width: number,
+    height: number,
+    [tx, tz]: readonly [number, number],
+    view: MapView,
+  ): void {
+    const cx = width / 2;
+    const cz = height / 2;
+    const dx = tx - cx;
+    const dz = tz - cz;
+    const r = Math.min(width, height) / 2 - 12;
+    const dist = view.objective ? Math.round(Math.hypot(view.objective.x - view.playerX, view.objective.z - view.playerZ)) : 0;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+
+    if (Math.hypot(dx, dz) < r) {
+      const pulse = 8 + 4 * Math.sin(performance.now() / 200);
+      ctx.strokeStyle = '#ff5a4a';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.arc(tx, tz, pulse, 0, Math.PI * 2);
+      ctx.stroke();
+      return;
+    }
+
+    const a = Math.atan2(dz, dx);
+    const ax = cx + Math.cos(a) * r;
+    const az = cz + Math.sin(a) * r;
+    ctx.setTransform(1, 0, 0, 1, ax, az);
+    ctx.rotate(a + Math.PI / 2);
+    ctx.fillStyle = '#ff5a4a';
+    ctx.strokeStyle = '#2a0a0a';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(0, -10);
+    ctx.lineTo(8, 6);
+    ctx.lineTo(-8, 6);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    const lx = cx + Math.cos(a) * (r - 22);
+    const lz = cz + Math.sin(a) * (r - 22);
+    ctx.font = '800 11px "Segoe UI", system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = 'rgba(0,0,0,0.8)';
+    ctx.fillStyle = '#ffd0c8';
+    const text = dist >= 1000 ? `${(dist / 1000).toFixed(1)}km` : `${dist}m`;
+    ctx.strokeText(text, lx, lz);
+    ctx.fillText(text, lx, lz);
+    ctx.textBaseline = 'alphabetic';
   }
 }

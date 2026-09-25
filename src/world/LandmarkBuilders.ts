@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { Building } from './Building';
 import type { HitRegistry } from '../combat/HitRegistry';
+import type { AssetLibrary } from './AssetLibrary';
 import { heightAt, LAKE_LEVELS } from './Terrain';
 import {
   SITES,
@@ -20,7 +21,7 @@ import { WORLD_SEED } from '../core/config';
 
 const ASPHALT = 0x45484d;
 const LINE_WHITE = 0xf2f0e6;
-const CAR_COLORS = [0xd94141, 0x3f7fd9, 0xf2c230, 0xf0f0f0, 0x44b36a, 0xe07a2f, 0x9b59b6, 0x2c2c2c];
+const CAR_SCALE = 1.7; // Kenney Car Kit → roughly tank-length cars
 
 function canvasSign(text: string, bg: string, fg: string, w = 512, h = 128): THREE.MeshStandardMaterial {
   const c = document.createElement('canvas');
@@ -59,23 +60,6 @@ function flat(w: number, d: number, color: number, parent: THREE.Object3D, x: nu
   m.receiveShadow = true;
   parent.add(m);
   return m;
-}
-
-function toyCar(color: number): THREE.Group {
-  const g = new THREE.Group();
-  const body = plastic(color);
-  const dark = plastic(0x222222);
-  const glass = new THREE.MeshPhysicalMaterial({ color: 0x9fcde0, roughness: 0.1, clearcoat: 1 });
-  box(2, 0.8, 4.3, body, g, 0, 0.75, 0);
-  box(1.8, 0.7, 2.2, glass, g, 0, 1.45, -0.2);
-  box(1.84, 0.08, 2.24, body, g, 0, 1.83, -0.2);
-  const wheel = new THREE.CylinderGeometry(0.42, 0.42, 0.3, 14).rotateZ(Math.PI / 2);
-  for (const [x, z] of [[-1, -1.4], [1, -1.4], [-1, 1.4], [1, 1.4]]) {
-    const w = new THREE.Mesh(wheel, dark);
-    w.position.set(x, 0.42, z);
-    g.add(w);
-  }
-  return g;
 }
 
 function toyJet(color: number): THREE.Group {
@@ -118,12 +102,14 @@ export class LandmarkSet {
     private readonly world: RAPIER.World,
     private readonly scene: THREE.Scene,
     private readonly hitRegistry: HitRegistry,
+    private readonly assets: AssetLibrary,
   ) {
     const rng = mulberry32(WORLD_SEED + 1234);
     LAKES.forEach((lake, i) => this.buildLake(lake.cx, lake.cz, lake.radius, LAKE_LEVELS[i], rng));
     for (const site of SITES) {
       if (site.kind === 'mall') this.buildMall(site, rng);
-      else this.buildAirport(site, rng);
+      else if (site.kind === 'airport') this.buildAirport(site, rng);
+      // Enemy bases are built by EnemyBase.
     }
   }
 
@@ -260,7 +246,8 @@ export class LandmarkSet {
     const carCount = 22 + Math.floor(rng() * 8);
     for (let i = 0; i < carCount && bays.length; i++) {
       const bay = bays.splice(Math.floor(rng() * bays.length), 1)[0];
-      const car = toyCar(CAR_COLORS[Math.floor(rng() * CAR_COLORS.length)]);
+      const car = this.assets.clone('car', this.assets.random('car', rng));
+      car.scale.setScalar(CAR_SCALE);
       car.position.set(bay.x, 0.05, bay.z);
       car.rotation.y = bay.facing + (rng() - 0.5) * 0.15;
       g.add(car);

@@ -3,7 +3,7 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import type { HitRegistry } from './HitRegistry';
 import { isUnderwater } from '../world/Terrain';
 import type { Building } from '../world/Building';
-import type { Tank, ArmorZone } from '../entities/Tank';
+import type { Tank, ArmorZone, Faction } from '../entities/Tank';
 
 export interface ImpactResult {
   /** Set when this hit brought a building down. */
@@ -88,6 +88,7 @@ export class Projectile {
     private readonly excludeCollider: RAPIER.Collider | undefined,
     private readonly onImpact?: (point: THREE.Vector3, result: ImpactResult) => void,
     visualScale = 1,
+    private readonly faction: Faction = 'enemy',
   ) {
     this.velocity = direction.clone().normalize().multiplyScalar(speed);
     // Glowing tracer, stretched along its flight direction so it reads at long range.
@@ -133,8 +134,11 @@ export class Projectile {
     const water = target?.kind === 'water' || (target?.kind !== 'tank' && isUnderwater(point.x, point.y, point.z));
     const result: ImpactResult = { collapsedBuilding: null, tankHit: null, water };
     if (target?.kind === 'tank') {
-      const zone = target.tank.takeDamage(this.damage, point);
-      if (zone) result.tankHit = { tank: target.tank, zone };
+      // No friendly fire: shells just bounce off their own side's tanks.
+      if (target.tank.faction !== this.faction) {
+        const zone = target.tank.takeDamage(this.damage, point);
+        if (zone) result.tankHit = { tank: target.tank, zone };
+      }
     } else if (target?.kind === 'building') {
       target.building.takeDamage(this.damage);
       if (target.building.destroyed) result.collapsedBuilding = target.building;

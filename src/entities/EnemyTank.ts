@@ -1,7 +1,6 @@
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { Tank } from './Tank';
-import type { PlayerTank } from './PlayerTank';
 import { ENEMY_MAX_HEALTH, ENEMY_MAX_SPEED } from '../core/config';
 import { randRange } from '../utils/math';
 import { heightAt } from '../world/Terrain';
@@ -85,8 +84,19 @@ export class EnemyTank extends Tank {
   }
 
   /** Runs one frame of patrol/engage/flee AI. Returns a shot if this tank fired. */
-  ai(world: RAPIER.World, player: PlayerTank, dt: number): { origin: THREE.Vector3; direction: THREE.Vector3 } | null {
-    if (!this.alive) return null;
+  ai(world: RAPIER.World, targets: Tank[], dt: number): { origin: THREE.Vector3; direction: THREE.Vector3 } | null {
+    if (!this.alive || targets.length === 0) return null;
+
+    // Fight whichever green tank (player or buddy) is closest.
+    let player = targets[0];
+    let nearest = Infinity;
+    for (const t of targets) {
+      const d = t.position.distanceToSquared(this.position);
+      if (d < nearest) {
+        nearest = d;
+        player = t;
+      }
+    }
 
     const toPlayer = new THREE.Vector3().subVectors(player.position, this.position);
     const distToPlayer = toPlayer.length();

@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { TOWNS, type Town } from './TownPlan';
 import { SITES, LAKES, siteEntries, distanceToSite, type Site } from './Landmarks';
 import { surfaceHeightAt } from './Terrain';
-import { BASE_POSITION, BASE_RADIUS } from '../core/config';
+import { FRIENDLY_BASES, BASE_RADIUS } from '../core/config';
 
 export const HIGHWAY_WIDTH = 11;
 const SAMPLE_STEP = 5;
@@ -35,12 +35,12 @@ function townEntries(town: Town): Entry[] {
   });
 }
 
-function baseEntries(): Entry[] {
+function baseEntries(base: { x: number; z: number }): Entry[] {
   const out: Entry[] = [];
   for (let i = 0; i < 16; i++) {
     const a = (i / 16) * Math.PI * 2;
     const dir = new THREE.Vector2(Math.cos(a), Math.sin(a));
-    out.push({ point: new THREE.Vector2(BASE_POSITION.x, BASE_POSITION.z).addScaledVector(dir, BASE_RADIUS * 0.85), dir });
+    out.push({ point: new THREE.Vector2(base.x, base.z).addScaledVector(dir, BASE_RADIUS * 0.85), dir });
   }
   return out;
 }
@@ -130,7 +130,7 @@ function connect(a: Node, b: Node): Polyline | null {
 /** Plans highways linking every town and the home base (Kruskal MST + a couple of loops). */
 export function planHighways(): Polyline[] {
   const nodes: Node[] = [
-    { x: BASE_POSITION.x, z: BASE_POSITION.z, entries: baseEntries() },
+    ...FRIENDLY_BASES.map((b) => ({ x: b.x, z: b.z, entries: baseEntries(b) })),
     ...TOWNS.map((t) => ({ x: t.cx, z: t.cz, entries: townEntries(t) })),
     ...SITES.map((s) => ({ x: s.cx, z: s.cz, entries: siteRoadEntries(s) })),
   ];

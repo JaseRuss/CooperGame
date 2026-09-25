@@ -15,6 +15,7 @@ export interface InputState {
   resetPressed: boolean;
   mapTogglePressed: boolean;
   rocketPressed: boolean;
+  buddyPressed: boolean;
   usingGamepad: boolean;
   pointerLocked: boolean;
 }
@@ -44,6 +45,7 @@ export class InputManager {
   private mapKeyLatch = false;
   private gamepadMapLatch = false;
   private rocketLatch = false;
+  private buddyLatch = false;
   private rightMouseDown = false;
 
   constructor(canvas: HTMLCanvasElement) {
@@ -121,6 +123,7 @@ export class InputManager {
     let resetButtonHeld = false;
     let mapButtonHeld = false;
     let rocketHeld = this.keys.has('KeyF') || this.rightMouseDown;
+    let buddyHeld = this.keys.has('KeyX');
 
     const pads = navigator.getGamepads ? navigator.getGamepads() : [];
     for (const pad of pads) {
@@ -156,10 +159,13 @@ export class InputManager {
       resetButtonHeld ||= pad.buttons[8]?.pressed ?? false; // Back / View / Share
       mapButtonHeld ||= pad.buttons[9]?.pressed ?? false; // Start / Menu / Options
       rocketHeld ||= pad.buttons[4]?.pressed ?? false; // LB / L1
+      buddyHeld ||= pad.buttons[2]?.pressed ?? false; // X / Square
     }
 
     const rocketPressed = rocketHeld && !this.rocketLatch;
     this.rocketLatch = rocketHeld;
+    const buddyPressed = buddyHeld && !this.buddyLatch;
+    this.buddyLatch = buddyHeld;
 
     if (camButtonHeld && !this.gamepadCameraLatch) cameraTogglePressed = true;
     this.gamepadCameraLatch = camButtonHeld;
@@ -188,6 +194,7 @@ export class InputManager {
       resetPressed,
       mapTogglePressed,
       rocketPressed,
+      buddyPressed,
       usingGamepad,
       pointerLocked: this.pointerLocked,
     };

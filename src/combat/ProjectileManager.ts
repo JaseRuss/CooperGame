@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { Projectile, type ImpactResult } from './Projectile';
 import type { HitRegistry } from './HitRegistry';
+import type { Faction } from '../entities/Tank';
 
 export class ProjectileManager {
   private readonly projectiles: Projectile[] = [];
@@ -20,9 +21,10 @@ export class ProjectileManager {
     shooterCollider: RAPIER.Collider | undefined,
     onImpact?: (point: THREE.Vector3, result: ImpactResult) => void,
     visualScale = 1,
+    faction: Faction = 'enemy',
   ): void {
     this.projectiles.push(
-      new Projectile(this.scene, origin, direction, speed, damage, shooterCollider, onImpact, visualScale),
+      new Projectile(this.scene, origin, direction, speed, damage, shooterCollider, onImpact, visualScale, faction),
     );
   }
 

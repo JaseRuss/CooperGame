@@ -54,6 +54,11 @@ export class ImpactEffects {
     this.smokeSources.push({ position: position.clone(), radius, timeLeft: duration, duration, accumulator: 0 });
   }
 
+  /** One puff of dark smoke, e.g. from a factory chimney. */
+  chimneyPuff(point: THREE.Vector3, radius: number): void {
+    this.emitSmokePuff({ position: point, radius, timeLeft: 1, duration: 1, accumulator: 0 });
+  }
+
   private emitSmokePuff(source: SmokeSource): void {
     const strength = source.timeLeft / source.duration; // thins out as the fire dies down
     const offset = randomInSphere(source.radius);

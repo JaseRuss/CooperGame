@@ -43,11 +43,21 @@ export class TroopManager {
     }
   }
 
-  update(dt: number, world: RAPIER.World, playerPos: THREE.Vector3, onShot: (shot: Shot) => void): void {
+  /** `friendlies`: positions of the player and buddy tanks; each soldier shoots at the nearest. */
+  update(dt: number, world: RAPIER.World, friendlies: THREE.Vector3[], onShot: (shot: Shot) => void): void {
     for (const squad of this.squads) {
       for (let i = squad.soldiers.length - 1; i >= 0; i--) {
         const s = squad.soldiers[i];
-        const shot = s.update(dt, world, playerPos);
+        let target = friendlies[0];
+        let nearest = Infinity;
+        for (const f of friendlies) {
+          const d = f.distanceToSquared(s.position);
+          if (d < nearest) {
+            nearest = d;
+            target = f;
+          }
+        }
+        const shot = s.update(dt, world, target);
         if (shot) onShot(shot);
         if (s.expired) {
           this.scene.remove(s.mesh);

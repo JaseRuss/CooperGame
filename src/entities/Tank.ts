@@ -7,6 +7,7 @@ import { plastic, shade } from '../utils/plastic';
 export const HULL_HALF_EXTENTS = { x: 1.15, y: 0.5, z: 1.9 };
 const Y_AXIS = new THREE.Vector3(0, 1, 0);
 
+export type Faction = 'player' | 'enemy';
 export type ArmorZone = 'front' | 'side' | 'rear';
 /** Thick glacis up front, thin engine deck at the back. */
 export const ARMOR_MULTIPLIER: Record<ArmorZone, number> = { front: 0.5, side: 1, rear: 2 };
@@ -27,6 +28,8 @@ export class Tank {
   health: number;
   readonly maxHealth: number;
   alive = true;
+  /** Green (player + buddies) or tan (enemy). Shells never hurt their own side. */
+  readonly faction: Faction;
 
   fireCooldown = 0;
   readonly fireInterval: number = 1.6;
@@ -52,7 +55,9 @@ export class Tank {
     maxHealth: number,
     plasticColor: number,
     facingRadians = 0,
+    faction: Faction = 'enemy',
   ) {
+    this.faction = faction;
     this.maxHealth = maxHealth;
     this.health = maxHealth;
 

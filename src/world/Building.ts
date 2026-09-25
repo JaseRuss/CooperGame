@@ -17,6 +17,8 @@ export class Building {
   health: number;
   readonly maxHealth: number;
   destroyed = false;
+  /** Size of the explosion when it collapses (fuel tanks go up bigger). */
+  explosionSize = 2.2;
 
   private collapseT = 0;
   private startY = 0;

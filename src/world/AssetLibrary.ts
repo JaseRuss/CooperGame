@@ -1,10 +1,79 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
-const BUILDING_LETTERS = 'abcdefghijklmnopqrstu'.split('');
-const BUILDING_NAMES = BUILDING_LETTERS.map((l) => `building-type-${l}`);
-const TREE_NAMES = ['tree-large', 'tree-small'];
-const MODEL_BASE = '/models/buildings/';
+/** Kenney CC0 kits in public/models/<dir>; each kit keeps its own Textures/colormap.png. */
+export type AssetGroup = 'house' | 'tree' | 'commercial' | 'industrial' | 'prop' | 'car';
+
+const letters = (s: string) => s.split('');
+
+const MANIFEST: Record<AssetGroup, { dir: string; names: string[] }> = {
+  house: { dir: 'buildings', names: letters('abcdefghijklmnopqrstu').map((l) => `building-type-${l}`) },
+  tree: { dir: 'buildings', names: ['tree-large', 'tree-small'] },
+  commercial: {
+    dir: 'commercial',
+    names: [
+      ...letters('abcdefghijklmn').map((l) => `building-${l}`),
+      'building-skyscraper-a',
+      'building-skyscraper-b',
+      'building-skyscraper-c',
+      'detail-awning',
+      'detail-awning-wide',
+      'detail-parasol-a',
+      'detail-parasol-b',
+    ],
+  },
+  industrial: {
+    dir: 'industrial',
+    names: [
+      ...letters('abcdefghijklmnopqrst').map((l) => `building-${l}`),
+      'chimney-large',
+      'chimney-medium',
+      'detail-tank-large',
+      'detail-tank',
+      'shipping-container-a',
+      'shipping-container-b',
+      'shipping-container-c',
+      'water-tower',
+      'windmill',
+    ],
+  },
+  prop: {
+    dir: 'roads',
+    names: [
+      'light-square',
+      'light-square-double',
+      'light-curved',
+      'traffic-light',
+      'road-sign-stop',
+      'road-sign-warning',
+      'construction-barrier',
+      'construction-cone',
+      'construction-fence',
+      'construction-light',
+      'dumpster',
+      'electricity-pole',
+      'sign-highway',
+    ],
+  },
+  car: {
+    dir: 'cars',
+    names: [
+      'sedan',
+      'sedan-sports',
+      'hatchback-sports',
+      'suv',
+      'suv-luxury',
+      'taxi',
+      'police',
+      'ambulance',
+      'van',
+      'delivery',
+      'truck',
+      'firetruck',
+      'garbage-truck',
+    ],
+  },
+};
 
 function enableShadows(obj: THREE.Object3D): void {
   obj.traverse((child) => {
@@ -15,56 +84,55 @@ function enableShadows(obj: THREE.Object3D): void {
   });
 }
 
-/** Loads and caches the Kenney "City Kit (Suburban)" GLB models used to populate the world. */
+/** Loads and caches every Kenney GLB model used to populate the world. */
 export class AssetLibrary {
-  private readonly buildings = new Map<string, THREE.Object3D>();
-  private readonly trees = new Map<string, THREE.Object3D>();
+  private readonly models = new Map<string, THREE.Object3D>();
 
   async load(onProgress?: (loaded: number, total: number) => void): Promise<void> {
     const loader = new GLTFLoader();
-    const names = [...BUILDING_NAMES, ...TREE_NAMES];
+    const jobs = (Object.keys(MANIFEST) as AssetGroup[]).flatMap((group) =>
+      MANIFEST[group].names.map((name) => ({ group, name, url: `/models/${MANIFEST[group].dir}/${name}.glb` })),
+    );
     let loaded = 0;
 
-    const loadOne = (name: string) =>
-      new Promise<THREE.Object3D>((resolve, reject) => {
-        loader.load(
-          `${MODEL_BASE}${name}.glb`,
-          (gltf) => {
-            enableShadows(gltf.scene);
-            loaded += 1;
-            onProgress?.(loaded, names.length);
-            resolve(gltf.scene);
-          },
-          undefined,
-          reject,
-        );
-      });
-
-    const results = await Promise.all(names.map(loadOne));
-    results.forEach((obj, i) => {
-      const name = names[i];
-      if (BUILDING_NAMES.includes(name)) this.buildings.set(name, obj);
-      else this.trees.set(name, obj);
-    });
+    await Promise.all(
+      jobs.map(
+        (job) =>
+          new Promise<void>((resolve, reject) => {
+            loader.load(
+              job.url,
+              (gltf) => {
+                enableShadows(gltf.scene);
+                this.models.set(`${job.group}/${job.name}`, gltf.scene);
+                loaded += 1;
+                onProgress?.(loaded, jobs.length);
+                resolve();
+              },
+              undefined,
+              reject,
+            );
+          }),
+      ),
+    );
   }
 
-  get buildingNames(): string[] {
-    return [...this.buildings.keys()];
+  names(group: AssetGroup): string[] {
+    return MANIFEST[group].names;
   }
 
-  cloneBuilding(name: string): THREE.Object3D {
-    const src = this.buildings.get(name);
-    if (!src) throw new Error(`Unknown building asset: ${name}`);
-    return src.clone(true);
+  /** The shared source model (don't add it to the scene; use clone or instancing). */
+  template(group: AssetGroup, name: string): THREE.Object3D {
+    const src = this.models.get(`${group}/${name}`);
+    if (!src) throw new Error(`Unknown asset: ${group}/${name}`);
+    return src;
   }
 
-  cloneTree(name: string): THREE.Object3D {
-    const src = this.trees.get(name);
-    if (!src) throw new Error(`Unknown tree asset: ${name}`);
-    return src.clone(true);
+  clone(group: AssetGroup, name: string): THREE.Object3D {
+    return this.template(group, name).clone(true);
   }
 
-  get treeNames(): string[] {
-    return [...this.trees.keys()];
+  random(group: AssetGroup, rng: () => number, filter?: (name: string) => boolean): string {
+    const pool = filter ? this.names(group).filter(filter) : this.names(group);
+    return pool[Math.floor(rng() * pool.length)];
   }
 }

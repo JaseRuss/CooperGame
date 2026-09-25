@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
-import { BASE_POSITION, BASE_RADIUS } from '../core/config';
+import { BASE_RADIUS, distanceToFriendlyBase, type FriendlyBase } from '../core/config';
 import { heightAt } from './Terrain';
+import { buildKeepsake } from './Keepsakes';
 import { plastic, shade, ARMY_GREEN } from '../utils/plastic';
 import { createFigureMesh } from '../entities/Soldier';
 
@@ -32,9 +33,14 @@ function textTexture(text: string, bg: string, fg: string, w = 512, h = 128): TH
   ctx.fillStyle = bg;
   ctx.fillRect(0, 0, w, h);
   ctx.fillStyle = fg;
-  ctx.font = `900 ${Math.floor(h * 0.62)}px "Segoe UI", Impact, sans-serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
+  // Shrink the font until long names ("AUNTIE CLAIRE'S BASE") fit the board.
+  let size = Math.floor(h * 0.62);
+  do {
+    ctx.font = `900 ${size}px "Segoe UI", Impact, sans-serif`;
+    size -= 2;
+  } while (ctx.measureText(text).width > w * 0.92 && size > 10);
   ctx.fillText(text, w / 2, h / 2 + 4);
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
@@ -78,14 +84,18 @@ export class HomeBase {
   private readonly healRingMaterial: THREE.MeshStandardMaterial;
   private time = 0;
 
-  /** @param gateAngle direction (radians in the XZ plane, x = cos, z = sin) the highway leaves the base. */
+  /**
+   * @param center where the camp stands; `name` goes on the gate sign.
+   * @param gateAngle direction (radians in the XZ plane, x = cos, z = sin) the highway leaves the base.
+   */
   constructor(
     private readonly world: RAPIER.World,
     scene: THREE.Scene,
+    private readonly center: FriendlyBase,
     private readonly gateAngle: number,
   ) {
-    this.groundY = heightAt(BASE_POSITION.x, BASE_POSITION.z);
-    this.root.position.set(BASE_POSITION.x, this.groundY, BASE_POSITION.z);
+    this.groundY = heightAt(center.x, center.z);
+    this.root.position.set(center.x, this.groundY, center.z);
     scene.add(this.root);
 
     this.beaconMaterial = new THREE.MeshStandardMaterial({ color: 0xffa020, emissive: 0xff8800, emissiveIntensity: 0.2 });
@@ -102,6 +112,17 @@ export class HomeBase {
     this.flagGeometry = flag;
     this.flagRest = Float32Array.from(flag.attributes.position.array as ArrayLike<number>);
     this.buildGuards();
+    this.placeKeepsake();
+  }
+
+  /** The family member's keepsake stands on a plinth beside the road, just outside the gate. */
+  private placeKeepsake(): void {
+    const angle = this.gateAngle + 0.36;
+    const p = this.polar(angle, WALL_RADIUS + 16);
+    const yaw = this.facingCenter(p.x, p.y) + Math.PI; // face travellers arriving on the road
+    const spot = this.place(p.x, p.y, yaw);
+    spot.add(buildKeepsake(this.center.keepsake, this.center.name.replace(/'s Base$/, '')));
+    this.solid(p.x, this.gy(p.x, p.y) + 3, p.y, 3.6, 3, 3.6, yaw);
   }
 
   // ---------- helpers ----------
@@ -112,7 +133,7 @@ export class HomeBase {
 
   /** Local ground height (the base area is nearly, but not perfectly, flat). */
   private gy(lx: number, lz: number): number {
-    return heightAt(BASE_POSITION.x + lx, BASE_POSITION.z + lz) - this.groundY;
+    return heightAt(this.center.x + lx, this.center.z + lz) - this.groundY;
   }
 
   private mesh(geo: THREE.BufferGeometry, mat: THREE.Material, parent: THREE.Object3D, x: number, y: number, z: number): THREE.Mesh {
@@ -137,7 +158,7 @@ export class HomeBase {
     const q = new THREE.Quaternion().setFromAxisAngle(UP, yaw);
     const body = this.world.createRigidBody(
       RAPIER.RigidBodyDesc.fixed()
-        .setTranslation(BASE_POSITION.x + lx, this.groundY + ly, BASE_POSITION.z + lz)
+        .setTranslation(this.center.x + lx, this.groundY + ly, this.center.z + lz)
         .setRotation({ x: q.x, y: q.y, z: q.z, w: q.w }),
     );
     this.world.createCollider(RAPIER.ColliderDesc.cuboid(hx, hy, hz), body);
@@ -216,7 +237,7 @@ export class HomeBase {
     const beamMat = new THREE.MeshBasicMaterial({
       color: 0xfff6c8,
       transparent: true,
-      opacity: 0.13,
+      opacity: 0.05, // subtle in daylight; it's a toy searchlight, not a floodlight
       blending: THREE.AdditiveBlending,
       depthWrite: false,
       side: THREE.DoubleSide,
@@ -271,7 +292,7 @@ export class HomeBase {
     const width = GATE_HALF_WIDTH * 2 + 4;
     this.mesh(new THREE.BoxGeometry(width, 0.5, 0.4), plastic(ARMY_GREEN), gate, 0, 8.6, 0);
     // Two single-sided boards back to back, so the text reads correctly from both sides.
-    const signMat = new THREE.MeshStandardMaterial({ map: textTexture('HOME BASE', '#2f4f1c', '#f4f1e4') });
+    const signMat = new THREE.MeshStandardMaterial({ map: textTexture(this.center.name.toUpperCase(), '#2f4f1c', '#f4f1e4') });
     this.mesh(new THREE.BoxGeometry(9.3, 1.8, 0.2), plastic(shade(ARMY_GREEN, 0.7)), gate, 0, 9.9, 0);
     for (const side of [1, -1]) {
       const sign = new THREE.Mesh(new THREE.PlaneGeometry(9, 1.6), signMat);
@@ -494,8 +515,7 @@ export class HomeBase {
   }
 }
 
+/** True inside the repair zone of any friendly base. */
 export function isInsideBase(position: THREE.Vector3): boolean {
-  const dx = position.x - BASE_POSITION.x;
-  const dz = position.z - BASE_POSITION.z;
-  return Math.sqrt(dx * dx + dz * dz) < BASE_RADIUS;
+  return distanceToFriendlyBase(position.x, position.z) < BASE_RADIUS;
 }
