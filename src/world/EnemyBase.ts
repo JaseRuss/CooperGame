@@ -288,7 +288,12 @@ export class EnemyBase {
    * Where the green garrison sets up once the base is taken: bunkers covering every side
    * (facing = world yaw with the gun slit outward) and squad rally points.
    */
-  garrisonLayout(): { bunkers: { x: number; z: number; facing: number }[]; squads: THREE.Vector2[] } {
+  garrisonLayout(): {
+    bunkers: { x: number; z: number; facing: number }[];
+    squads: THREE.Vector2[];
+    /** A clear lane beside the entry road for a jeep changing station, parallel to the road. */
+    jeepStation: { x: number; z: number; yaw: number };
+  } {
     const yaw = siteYaw(this.site);
     const bunker = (lx: number, lz: number, facing: number) => ({ ...siteToWorld(this.site, lx, lz), facing: yaw + facing });
     const spot = (lx: number, lz: number) => {
@@ -299,6 +304,8 @@ export class EnemyBase {
       // Gun slits sit on a bunker's local -Z: facing 0 looks toward local -Z, pi toward the gate.
       bunkers: [bunker(-26, 60, Math.PI), bunker(56, -18, -Math.PI / 2), bunker(-56, -18, Math.PI / 2), bunker(10, -62, 0)],
       squads: [spot(-20, 5), spot(22, 24), spot(0, 50)],
+      // Between the radar mast (34, 8) and the containers (20-30, 54-64).
+      jeepStation: { ...siteToWorld(this.site, 22, 33), yaw },
     };
   }
 

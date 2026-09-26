@@ -1,11 +1,12 @@
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
-import { Tank, type ArmorZone } from './Tank';
+import { Tank, HULL_HALF_EXTENTS, type ArmorZone } from './Tank';
 import type { InputState } from '../input/InputManager';
 import { PLAYER_MAX_HEALTH, PLAYER_MAX_SPEED } from '../core/config';
 import { ARMY_GREEN, plastic, shade } from '../utils/plastic';
 import { PartBuilder, tubeZ } from '../utils/modelKit';
 import { buildRocketModel } from '../combat/HomingRocket';
+import { buildJeepParts, type JeepParts } from '../world/Vehicles';
 import type { DriveStyle } from '../core/Settings';
 import { clamp } from '../utils/math';
 
@@ -24,6 +25,20 @@ const ALIGN_DEADBAND = 0.04;
 const ALIGN_TURN_RATE = 0.8;
 /** The AA pod's six tube mouths (x, y on its front face): two rows of three. */
 const AA_TUBES = [-0.15, 0, 0.15].flatMap((x) => [0.07, -0.08].map((y) => [x, y] as const));
+
+// The jeep from a changing station: same body and collider, much quicker and nimbler.
+export type Vehicle = 'tank' | 'jeep';
+const JEEP_MAX_SPEED = 36; // m/s (the tank does 22)
+const JEEP_TURN_RATE = 1.3; // × the tank's
+/** The toy jeep is ~3.9 m long; scaled to about the tank's footprint so it fills the same collider. */
+const JEEP_SCALE = 1.15;
+/** The model's wheel radius (before JEEP_SCALE), for rolling the wheels at the right speed. */
+const JEEP_WHEEL_RADIUS = 0.42;
+/** Rapid-fire jam gun: globs per second and a little spray. */
+const JEEP_JAM_INTERVAL = 0.11;
+const JEEP_JAM_SPREAD = 0.035;
+/** The jeep's twin missile pod: tube mouths (x, y) on its front face. */
+const JEEP_MISSILE_TUBES = [-0.13, 0.13].map((x) => [x, 0] as const);
 
 function wrap(a: number): number {
   return Math.atan2(Math.sin(a), Math.cos(a));
@@ -47,6 +62,22 @@ export class PlayerTank extends Tank {
   private readonly aaPod = new THREE.Group();
   private readonly aaMuzzle = new THREE.Object3D();
   private readonly aaNoses: THREE.Mesh[] = [];
+
+  private vehicleMode: Vehicle = 'tank';
+  /** Everything that makes up the tank's look (hull and turret), hidden while it's a jeep. */
+  private readonly tankParts: THREE.Object3D[];
+  private readonly jeepRig = new THREE.Group();
+  /** The jeep's gun mount: turns with the aim (yaw), with the gun and missile pod pitching on it. */
+  private readonly jeepMount = new THREE.Group();
+  private readonly jeepTilt = new THREE.Group();
+  private readonly jeepMuzzle = new THREE.Object3D();
+  private readonly jeepPodMuzzle = new THREE.Object3D();
+  private readonly jeepMissileNoses: THREE.Mesh[] = [];
+  private jeepJamCooldown = 0;
+  /** The jeep's wheels (roll and steer) and steering wheel, animated as it drives. */
+  private jeepParts!: JeepParts;
+  private jeepSteer = 0;
+  private readonly lastJeepPosition = new THREE.Vector3();
 
   constructor(world: RAPIER.World, spawnX: number, spawnZ: number, facingRadians = 0) {
     super(world, spawnX, spawnZ, PLAYER_MAX_HEALTH, ARMY_GREEN, facingRadians, 'player');
@@ -72,6 +103,144 @@ export class PlayerTank extends Tank {
     this.setRocketReady(false);
     this.buildJamCannon();
     this.buildAAPod();
+    this.tankParts = [...this.root.children];
+    this.buildJeepRig();
+  }
+
+  // ---------- the jeep ----------
+
+  /**
+   * The toy jeep, with a rapid-fire jam gun and a twin missile pod on a post in the back and the
+   * commander standing behind them. Built once and hidden until a changing station swaps it in.
+   */
+  private buildJeepRig(): void {
+    this.jeepParts = buildJeepParts(ARMY_GREEN, { mountedGun: false, movingParts: true, driver: true });
+    const model = this.jeepParts.group;
+    model.scale.setScalar(JEEP_SCALE);
+    model.position.y = -HULL_HALF_EXTENTS.y; // wheels on the ground under the collider
+    this.jeepRig.add(model);
+
+    const dark = plastic(shade(ARMY_GREEN, 0.6));
+    const deep = plastic(shade(ARMY_GREEN, 0.35));
+    const jam = new THREE.MeshPhysicalMaterial({ color: 0xe0294f, emissive: 0x5a0616, roughness: 0.1, clearcoat: 1 });
+    const glass = new THREE.MeshPhysicalMaterial({ color: 0xdff4ff, roughness: 0.05, clearcoat: 1, transparent: true, opacity: 0.35 });
+
+    // Post up from the back seat, in the rig's (root) space.
+    const deckY = -HULL_HALF_EXTENTS.y + 1.0 * JEEP_SCALE;
+    const post = new PartBuilder();
+    post.add(new THREE.CylinderGeometry(0.09, 0.12, 0.7, 10), deep, 0, deckY + 0.3, 1.0);
+    post.add(new THREE.CylinderGeometry(0.28, 0.28, 0.08, 16), dark, 0, deckY + 0.66, 1.0); // turntable
+    post.buildInto(this.jeepRig);
+
+    this.jeepMount.position.set(0, deckY + 0.72, 1.0);
+    this.jeepRig.add(this.jeepMount);
+    this.jeepMount.add(this.jeepTilt);
+
+    // Jam gun: a big jar feeding a long barrel, and a twin missile pod on its left.
+    const gun = new PartBuilder();
+    gun.add(new THREE.BoxGeometry(0.2, 0.28, 0.5), dark, 0, 0.12, 0.05); // cradle
+    gun.add(new THREE.CylinderGeometry(0.22, 0.22, 0.44, 16), glass, 0, 0.5, 0.2);
+    gun.add(new THREE.CylinderGeometry(0.19, 0.19, 0.34, 16), jam, 0, 0.45, 0.2);
+    gun.add(new THREE.CylinderGeometry(0.25, 0.25, 0.07, 16), plastic(0xe8e0d0), 0, 0.74, 0.2); // lid
+    gun.add(tubeZ(0.08, 0.1, 1.3, 12), dark, 0, 0.2, -0.6); // barrel
+    gun.add(tubeZ(0.12, 0.09, 0.16, 12), jam, 0, 0.2, -1.28); // jammy muzzle
+    for (const z of [-0.2, -0.6]) gun.add(tubeZ(0.11, 0.11, 0.06, 12), deep, 0, 0.2, z); // barrel bands
+    gun.add(new THREE.BoxGeometry(0.46, 0.34, 1.0), plastic(shade(ARMY_GREEN, 0.85)), -0.46, 0.22, -0.1); // missile pod
+    gun.add(new THREE.BoxGeometry(0.5, 0.05, 1.04), dark, -0.46, 0.41, -0.1); // pod lid
+    gun.add(new THREE.BoxGeometry(0.16, 0.12, 0.2), dark, -0.2, 0.18, -0.1); // pod bracket
+    for (const [x, y] of JEEP_MISSILE_TUBES) gun.add(tubeZ(0.1, 0.1, 0.04, 12), deep, -0.46 + x, 0.22 + y, -0.6);
+    gun.buildInto(this.jeepTilt);
+    const red = plastic(0xd0463a);
+    const nose = new THREE.ConeGeometry(0.085, 0.22, 12).rotateX(-Math.PI / 2);
+    for (const [x, y] of JEEP_MISSILE_TUBES) {
+      const m = new THREE.Mesh(nose, red);
+      m.position.set(-0.46 + x, 0.22 + y, -0.68);
+      m.castShadow = true;
+      this.jeepTilt.add(m);
+      this.jeepMissileNoses.push(m);
+    }
+    this.jeepMuzzle.position.set(0, 0.2, -1.4);
+    this.jeepTilt.add(this.jeepMuzzle);
+    this.jeepPodMuzzle.position.set(-0.46, 0.22, -0.9);
+    this.jeepTilt.add(this.jeepPodMuzzle);
+
+    // The commander rides along, standing behind the gun and turning with it.
+    const gunner = Tank.createCommander(ARMY_GREEN);
+    gunner.position.set(0, deckY - this.jeepMount.position.y, 0.55);
+    this.jeepMount.add(gunner);
+
+    this.jeepRig.visible = false;
+    this.root.add(this.jeepRig);
+  }
+
+  get vehicle(): Vehicle {
+    return this.vehicleMode;
+  }
+
+  get isJeep(): boolean {
+    return this.vehicleMode === 'jeep';
+  }
+
+  /** Swaps the look, speed and guns (the body, collider, health and aim carry straight over). */
+  setVehicle(vehicle: Vehicle): void {
+    this.vehicleMode = vehicle;
+    const jeep = vehicle === 'jeep';
+    for (const part of this.tankParts) part.visible = !jeep;
+    this.jeepRig.visible = jeep;
+    this.turnRateScale = jeep ? JEEP_TURN_RATE : 1;
+    this.lastJeepPosition.copy(this.position);
+  }
+
+  /** Rolls the jeep's wheels by how far it moved, and steers the front wheels (and the driver's wheel) into turns. */
+  private animateJeep(dt: number, hullDelta: number): void {
+    const moved = this.position.clone().sub(this.lastJeepPosition);
+    this.lastJeepPosition.copy(this.position);
+    if (moved.lengthSq() > 25) return; // a teleport home, not a drive
+    const along = moved.dot(this.forward);
+    for (const w of this.jeepParts.wheels) w.rotation.x -= along / (JEEP_WHEEL_RADIUS * JEEP_SCALE);
+    // Positive yaw turns left; reversing steers the other way.
+    const turn = dt > 0 ? clamp((hullDelta / dt) * 0.3, -0.45, 0.45) * (along < -0.01 ? -1 : 1) : 0;
+    this.jeepSteer += (turn - this.jeepSteer) * Math.min(1, dt * 8);
+    for (const pivot of this.jeepParts.steerPivots) pivot.rotation.y = this.jeepSteer;
+    if (this.jeepParts.steeringWheel) this.jeepParts.steeringWheel.rotation.z = this.jeepSteer * 2.5;
+  }
+
+  private get maxSpeed(): number {
+    return this.isJeep ? JEEP_MAX_SPEED : PLAYER_MAX_SPEED;
+  }
+
+  /** The jeep's missile pod shows red noses while a missile is ready. */
+  setJeepMissilesReady(ready: boolean): void {
+    for (const m of this.jeepMissileNoses) m.visible = ready;
+  }
+
+  /** Where a jeep missile leaves the pod, and which way (along the aim, lofted up a little). */
+  get jeepMissileLaunch(): { origin: THREE.Vector3; direction: THREE.Vector3 } {
+    const origin = this.jeepPodMuzzle.getWorldPosition(new THREE.Vector3());
+    const direction = this.muzzleWorldDirection.add(new THREE.Vector3(0, 0.45, 0)).normalize();
+    return { origin, direction };
+  }
+
+  /** Where the jeep's jam gun muzzle is (for the aim guide). */
+  get jeepMuzzlePosition(): THREE.Vector3 {
+    return this.jeepMuzzle.getWorldPosition(new THREE.Vector3());
+  }
+
+  /** The jeep's main gun: a stream of fast jam rounds along the aim while the trigger's held. */
+  tryJeepJam(): { origin: THREE.Vector3; direction: THREE.Vector3 } | null {
+    if (!this.isJeep || this.jeepJamCooldown > 0 || this.isGunJammed) return null;
+    this.jeepJamCooldown = JEEP_JAM_INTERVAL;
+    const direction = this.muzzleWorldDirection;
+    direction.x += (Math.random() - 0.5) * JEEP_JAM_SPREAD;
+    direction.y += (Math.random() - 0.5) * JEEP_JAM_SPREAD * 0.5;
+    direction.z += (Math.random() - 0.5) * JEEP_JAM_SPREAD;
+    return { origin: this.jeepMuzzlePosition, direction: direction.normalize() };
+  }
+
+  /** First person: hide the jeep's gun mount too, so the camera isn't inside the jam jar. */
+  override setTurretHidden(hidden: boolean): void {
+    super.setTurretHidden(hidden);
+    this.jeepMount.visible = !hidden;
   }
 
   /** A six-tube anti-aircraft pod on the turret bustle, angled up; loaded tubes show red noses. */
@@ -104,8 +273,15 @@ export class PlayerTank extends Tank {
     this.aaNoses.forEach((m, i) => (m.visible = i < count));
   }
 
-  /** Where the next AA missile leaves the pod, and which way (up and out along the turret). */
+  /**
+   * Where the next AA missile leaves the pod, and which way (up and out along the turret). The
+   * jeep fires them from its missile pod.
+   */
   get aaLaunch(): { origin: THREE.Vector3; direction: THREE.Vector3 } {
+    if (this.isJeep) {
+      const { origin, direction } = this.jeepMissileLaunch;
+      return { origin, direction: direction.add(new THREE.Vector3(0, 0.5, 0)).normalize() };
+    }
     const origin = this.aaMuzzle.getWorldPosition(new THREE.Vector3());
     const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(this.aaPod.getWorldQuaternion(new THREE.Quaternion()));
     return { origin, direction };
@@ -159,7 +335,8 @@ export class PlayerTank extends Tank {
     const direction = this.muzzleWorldDirection;
     direction.x += (Math.random() - 0.5) * 0.03;
     direction.z += (Math.random() - 0.5) * 0.03;
-    return { origin: this.jamMuzzle.getWorldPosition(new THREE.Vector3()), direction: direction.normalize(), speedScale: 0.62 + 0.45 * t };
+    const muzzle = this.isJeep ? this.jeepMuzzle : this.jamMuzzle;
+    return { origin: muzzle.getWorldPosition(new THREE.Vector3()), direction: direction.normalize(), speedScale: 0.62 + 0.45 * t };
   }
 
   /** Shows the rocket on its rail (and blinks the lamp) when it's charged. */
@@ -196,7 +373,7 @@ export class PlayerTank extends Tank {
     if (this.driveStyle === 'classic') {
       const stickLen = Math.hypot(input.moveX, input.moveY);
       if (stickLen > 0) this.driveClassic(input.moveX, input.moveY, Math.min(1, stickLen), dt);
-      else this.drive(input.throttle, input.steer, dt, PLAYER_MAX_SPEED);
+      else this.drive(input.throttle, input.steer, dt, this.maxSpeed);
     } else if (len > 0) {
       this.idleTime = 0;
       this.driveCameraRelative(sx, sy, len, dt);
@@ -214,9 +391,14 @@ export class PlayerTank extends Tank {
     const hullDelta = wrap(this.yaw - hullYawBefore);
     // Positive yaw input (stick/mouse right) must turn the turret clockwise, i.e. negative rotation.y.
     this.aim(-hullDelta - input.aimYawDelta, -input.aimPitchDelta);
+    this.jeepMount.rotation.y = this.barrelYaw;
+    this.jeepTilt.rotation.x = this.barrelPitch;
+    this.jeepJamCooldown = Math.max(0, this.jeepJamCooldown - dt);
+    if (this.isJeep) this.animateJeep(dt, hullDelta);
     this.update(dt);
 
-    return input.firing ? this.tryFire() : null;
+    // The jeep has no cannon: its trigger fires the jam gun instead (see tryJeepJam).
+    return input.firing && !this.isJeep ? this.tryFire() : null;
   }
 
   private driveCameraRelative(sx: number, sy: number, len: number, dt: number): void {
@@ -231,7 +413,7 @@ export class PlayerTank extends Tank {
     const steer = clamp(-err * 2.5, -1, 1);
     // Turn first, then pick up speed as the hull lines up.
     const throttle = this.driveDir * len * Math.max(0, Math.cos(err));
-    this.drive(throttle, steer, dt, PLAYER_MAX_SPEED);
+    this.drive(throttle, steer, dt, this.maxSpeed);
   }
 
   /** Classic: the stick (relative to the camera) is a direction the hull turns to face and drives. */
@@ -244,7 +426,7 @@ export class PlayerTank extends Tank {
     const steer = clamp(-err * 2.5, -1, 1);
     // Turn first, then pick up speed as the hull lines up with the stick.
     const throttle = this.driveDir * len * Math.max(0, Math.cos(err));
-    this.drive(throttle, steer, dt, PLAYER_MAX_SPEED);
+    this.drive(throttle, steer, dt, this.maxSpeed);
   }
 
   /** Once the stick has been left alone for a moment, turn the nose to face the camera. */
@@ -252,7 +434,7 @@ export class PlayerTank extends Tank {
     const err = wrap(this.turretWorldYaw - this.yaw);
     const aligning = this.idleTime > ALIGN_DELAY && Math.abs(err) > ALIGN_DEADBAND;
     const steer = aligning ? clamp(-err * 2, -1, 1) * ALIGN_TURN_RATE : 0;
-    this.drive(0, steer, dt, PLAYER_MAX_SPEED);
+    this.drive(0, steer, dt, this.maxSpeed);
     if (!aligning) this.driveDir = 1;
   }
 }

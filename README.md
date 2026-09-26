@@ -75,10 +75,10 @@ plug one in and press a button so the browser detects it.
 | --- | --- | --- |
 | Drive | Left stick | W A S D or arrow keys |
 | Aim turret | Right stick | Mouse |
-| Fire | RT or A | Left click or Space |
+| Fire (the jeep fires jam rounds) | RT or A | Left click or Space |
 | Jam cannon (hold, short range) | LT | E |
 | Mega jam: jam all round the tank (when charged) | X | X |
-| Homing rocket (when charged) | LB | F or right click |
+| Homing rocket (when charged; the jeep fires missiles) | LB | F or right click |
 | AA missiles (with a helicopter locked) | RB | Q |
 | Switch first / third person | Y | C |
 | Pause, full map and options | Start | M |
@@ -88,9 +88,10 @@ Driving works like the Warthog in Halo by default: push the stick the way you
 want to go relative to the camera. Pull back to reverse. Let go and the tank
 turns to face where you're aiming. Prefer the old way? Pause, open **Options**
 (X or O) and switch **Tank controls** to **Classic**. Options also has aim speed,
-buddy name tags and the **buddy names**: pick a buddy and press A or Enter, then
-type a new name, or on a controller use up and down to pick each letter, left
-and right to move, and X to delete. Your choices are remembered.
+buddy name tags, how long the **jeep** lasts, and the **buddy names**: pick a
+buddy and press A or Enter, then type a new name, or on a controller use up and
+down to pick each letter, left and right to move, and X to delete. Your choices
+are remembered.
 
 ## Playing
 
@@ -142,6 +143,24 @@ and right to move, and X to delete. Your choices are remembered.
   fills (it starts full and refills over five minutes), up to all four at once.
 - Hit a building and a health bar pops up over it for a few seconds.
 - The pause map shows where the enemy is gathered as a red glow.
+
+## Jeep stations
+
+Every other family base (Cooper's, Mum's, Dad's and Inness's) has a **jeep
+station** just outside the gate, like a drive-through car wash. Drive the tank
+through it and, in a puff of smoke, it turns into a jeep. Some enemy bases get
+a station too once you've captured them. They show as a blue **J** on the maps.
+
+- The jeep is much faster than the tank. A driver steers and the commander rides
+  in the back on the guns.
+- It has no cannon. **Fire** shoots a stream of jam rounds that fly straight
+  like bullets and stick soldiers and tanks where they land.
+- **LB / F** fires a homing missile. It's smaller than the tank's rocket, with no
+  rocket cam, and reloads in 8 seconds.
+- AA missiles and the mega jam still work.
+- After **3 minutes** (change it under **Jeep time** in **Options**) it turns
+  back into the tank in another puff of smoke. Drive through a station while
+  you're in the jeep to top the time back up.
 
 ## Mission 2: Night Raid
 

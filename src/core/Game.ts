@@ -6,7 +6,8 @@ import { buildTerrain, surfaceHeightAt, waterDepthAt } from '../world/Terrain';
 import { AssetLibrary } from '../world/AssetLibrary';
 import { generateWorld, type EnemySpawnPoint } from '../world/WorldGenerator';
 import { HomeBase, isInsideBase } from '../world/Base';
-import type { Polyline } from '../world/RoadNetwork';
+import { distanceToPolyline, HIGHWAY_WIDTH, type Polyline } from '../world/RoadNetwork';
+import { JeepStation } from '../world/JeepStation';
 import type { Building } from '../world/Building';
 import { Bunker } from '../world/Bunker';
 import type { EnemyBase } from '../world/EnemyBase';
@@ -15,7 +16,7 @@ import { ENEMY_BASE_HALF } from '../world/Landmarks';
 import type { Tree } from '../world/Tree';
 import type { LandmarkSet } from '../world/LandmarkBuilders';
 import { TOWNS } from '../world/TownPlan';
-import { PlayerTank } from '../entities/PlayerTank';
+import { PlayerTank, type Vehicle } from '../entities/PlayerTank';
 import type { Tank, Faction } from '../entities/Tank';
 import { EnemyTank } from '../entities/EnemyTank';
 import { HelicopterEnemy } from '../entities/HelicopterEnemy';
@@ -87,6 +88,21 @@ const ROCKET_BLAST_RADIUS = 16;
 const ROCKET_DAMAGE = 140;
 const ROCKET_LINGER_TIME = 3.2;
 
+// Jeep changing stations: drive through one and the tank becomes a fast jeep for a while (the
+// time is in the options). The jeep's trigger fires jam rounds; LB / F fires quick-reloading missiles.
+const JEEP_JAM_SPEED = 130; // m/s: flat and fast, like bullets
+const JEEP_MISSILE_RECHARGE = 8; // seconds (the tank's rocket takes 75)
+const JEEP_MISSILE_DAMAGE = 95;
+const JEEP_MISSILE_RADIUS = 12;
+const JEEP_MISSILE_BLAST = 2.3;
+const JEEP_MISSILE_SCALE = 0.6;
+/** The model swap happens this long into the smoke puff, once the cloud has thickened. */
+const CHANGE_SWAP_DELAY = 0.18;
+/** Where a station stands outside a home base's wall, and how far either side of the road. */
+const STATION_RADIUS = 80;
+const STATION_ANGLES = [-0.36, -0.55, 0.62, -0.8, 0.85]; // off the gate; the keepsake sits at +0.36
+const STATION_ROAD_CLEARANCE = HIGHWAY_WIDTH / 2 + 11;
+
 // Buddy tanks: a long recharge, starting full. Each slot has its own crew.
 const BUDDY_RECHARGE_TIME = 300;
 // Crews come from the options (Keston, Max, Innes and Jason unless renamed).
@@ -132,6 +148,8 @@ interface RedSlot {
 interface FamilyBase {
   info: FriendlyBase;
   camp: HomeBase;
+  /** Direction (x = cos, z = sin) from the centre to the gate. */
+  gate: number;
   /** Hull yaw that faces out of the gate, for spawning/resetting here. */
   spawnYaw: number;
 }
@@ -223,6 +241,17 @@ export class Game {
   private assets!: AssetLibrary;
   /** Stars, moon and distant firefights on the night mission. */
   private nightSky: NightSky | null = null;
+  /** Drive-through stations that turn the tank into a jeep. */
+  private jeepStations: JeepStation[] = [];
+  /** The station the player is in right now, so driving through one only counts once. */
+  private inStation: JeepStation | null = null;
+  /** Seconds of jeep left (0 while it's the tank), out of `jeepTimeTotal`. */
+  private jeepTime = 0;
+  private jeepTimeTotal = 0;
+  private jeepMissileCharge = 1;
+  private jeepMissiles: HomingRocket[] = [];
+  /** The vehicle to swap to once the smoke puff has thickened, and how long until then. */
+  private pendingSwap: { to: Vehicle; delay: number } | null = null;
 
   constructor(container: HTMLElement) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -307,10 +336,15 @@ export class Game {
       return {
         info,
         camp: new HomeBase(this.world, this.scene, info, gate),
+        gate,
         // Face the gate: hull forward (-sin, -cos) should equal (cos gate, sin gate).
         spawnYaw: Math.atan2(-Math.cos(gate), -Math.sin(gate)),
       };
     });
+    // Every other home base round the map (the four in the middle of an edge) has a jeep station.
+    for (const fb of this.familyBases) {
+      if (fb.info.x === 0 || fb.info.z === 0) this.addHomeStation(fb, content.highways);
+    }
     this.bunkers = content.bunkers;
     this.enemyBases = content.enemyBases;
     this.fortress = content.fortress;
@@ -831,15 +865,15 @@ export class Game {
     }
   }
 
-  /** Big blast: wrecks tanks, buildings and troops around the impact. */
-  private rocketBlast(point: THREE.Vector3): void {
-    this.explode(point, 3.4, 'player');
-    this.impacts.addSmokeSource(point.clone(), 3, 25);
+  /** Big blast: wrecks tanks, buildings and troops around the impact (the rocket; smaller for jeep missiles). */
+  private rocketBlast(point: THREE.Vector3, damage = ROCKET_DAMAGE, radius = ROCKET_BLAST_RADIUS, size = 3.4): void {
+    this.explode(point, size, 'player');
+    this.impacts.addSmokeSource(point.clone(), size * 0.9, 25);
 
     for (const slot of this.enemySlots) {
       if (!slot.tank) continue;
       const d = slot.tank.position.distanceTo(point);
-      if (d < ROCKET_BLAST_RADIUS) slot.tank.takeDamage(ROCKET_DAMAGE * (1 - (d / ROCKET_BLAST_RADIUS) ** 2));
+      if (d < radius) slot.tank.takeDamage(damage * (1 - (d / radius) ** 2));
     }
 
     const closest = new THREE.Vector3();
@@ -847,8 +881,8 @@ export class Game {
       if (building.destroyed || building.faction === 'player') continue;
       const box = new THREE.Box3().setFromCenterAndSize(building.center, building.halfExtents.clone().multiplyScalar(2));
       const d = box.clampPoint(point, closest).distanceTo(point);
-      if (d >= ROCKET_BLAST_RADIUS) continue;
-      building.takeDamage(ROCKET_DAMAGE * 1.6 * (1 - (d / ROCKET_BLAST_RADIUS) ** 2));
+      if (d >= radius) continue;
+      building.takeDamage(damage * 1.6 * (1 - (d / radius) ** 2));
       if (building.destroyed) this.collapseBuilding(building, 'player');
     }
   }
@@ -891,6 +925,116 @@ export class Game {
     return true;
   }
 
+  // ---------- jeep changing stations ----------
+
+  /**
+   * A station just outside a home base's wall, beside the road out of the gate. The bay runs
+   * across the radius, so you pull off the road and drive straight through it.
+   */
+  private addHomeStation(fb: FamilyBase, highways: Polyline[]): void {
+    for (const off of STATION_ANGLES) {
+      const a = fb.gate + off;
+      const x = fb.info.x + Math.cos(a) * STATION_RADIUS;
+      const z = fb.info.z + Math.sin(a) * STATION_RADIUS;
+      if (highways.some((h) => distanceToPolyline(x, z, h) < STATION_ROAD_CLEARANCE)) continue;
+      // The bay's local Z becomes (sin yaw, cos yaw): along the wall, (-sin a, cos a).
+      this.jeepStations.push(new JeepStation(this.world, this.scene, x, z, -a));
+      return;
+    }
+  }
+
+  /** Drive through a station to become a jeep (or top the jeep back up); run the jeep's timer and missiles. */
+  private updateJeep(dt: number): void {
+    for (const station of this.jeepStations) station.update(dt);
+    const station = this.jeepStations.find((s) => s.contains(this.player.position)) ?? null;
+    if (station && station !== this.inStation && !this.pendingSwap) {
+      station.celebrate();
+      if (this.player.isJeep) {
+        this.jeepTime = this.jeepTimeTotal = this.settings.jeepMinutes * 60;
+        this.jeepMissileCharge = 1;
+        this.hud.showCallout('JEEP TIME TOPPED UP!', '#8fe0ff');
+      } else {
+        this.changeVehicle('jeep');
+      }
+    }
+    this.inStation = station;
+
+    if (this.pendingSwap) {
+      this.pendingSwap.delay -= dt;
+      if (this.pendingSwap.delay <= 0) {
+        this.player.setVehicle(this.pendingSwap.to);
+        this.pendingSwap = null;
+      }
+    } else if (this.player.isJeep) {
+      this.jeepTime -= dt;
+      if (this.jeepTime <= 0) this.changeVehicle('tank');
+    }
+
+    this.jeepMissileCharge = Math.min(1, this.jeepMissileCharge + dt / JEEP_MISSILE_RECHARGE);
+    this.player.setJeepMissilesReady(this.jeepMissileCharge >= 1);
+    for (let i = this.jeepMissiles.length - 1; i >= 0; i--) {
+      const hit = this.jeepMissiles[i].update(dt, this.world, (p) => this.impacts.trailPuff(p));
+      if (!hit) continue;
+      this.rocketBlast(hit, JEEP_MISSILE_DAMAGE, JEEP_MISSILE_RADIUS, JEEP_MISSILE_BLAST);
+      this.jeepMissiles.splice(i, 1);
+    }
+  }
+
+  /** A puff of smoke, and the vehicle swaps once it's thick enough to hide the change. */
+  private changeVehicle(to: Vehicle): void {
+    this.impacts.changePuff(this.player.position.clone());
+    this.cameraRig.addShake(0.3);
+    this.pendingSwap = { to, delay: CHANGE_SWAP_DELAY };
+    if (to === 'jeep') {
+      const minutes = this.settings.jeepMinutes;
+      this.jeepTime = this.jeepTimeTotal = minutes * 60;
+      this.jeepMissileCharge = 1;
+      this.hud.showBanner('JEEP TIME!', `Zoom about for ${minutes} minute${minutes > 1 ? 's' : ''}. Fire shoots jam, the rocket button fires missiles`);
+    } else {
+      this.jeepTime = 0;
+      this.hud.showBanner('BACK IN THE TANK!', 'Drive through a jeep station for another go');
+    }
+  }
+
+  /** The jeep's missiles: like the rocket (same lock), smaller, no rocket cam and a quick reload. */
+  private tryJeepMissile(): void {
+    if (this.jeepMissileCharge < 1) {
+      this.hud.showCallout(`MISSILES ${Math.floor(this.jeepMissileCharge * 100)}%`, '#ff9a5a');
+      return;
+    }
+    const lock = this.findLockTarget();
+    const fallback = predictTrajectory(
+      this.world,
+      this.player.muzzleWorldPosition,
+      this.player.muzzleWorldDirection,
+      this.player.muzzleSpeed,
+      this.player.physicsCollider,
+    ).impact;
+    const { origin, direction } = this.player.jeepMissileLaunch;
+    const missile = new HomingRocket(
+      this.scene,
+      origin,
+      direction,
+      lock ? lock.track : () => null,
+      lock ? lock.position.clone() : fallback,
+      this.player.physicsCollider,
+    );
+    missile.mesh.scale.setScalar(JEEP_MISSILE_SCALE);
+    this.jeepMissiles.push(missile);
+    this.impacts.muzzleFlash(origin, direction);
+    this.jeepMissileCharge = 0;
+  }
+
+  /** A captured base that gets a station (every other one) has it put up as the garrison moves in. */
+  private addBaseStation(base: EnemyBase): boolean {
+    if (this.enemyBases.indexOf(base) % 2 !== 0) return false;
+    const spot = base.garrisonLayout().jeepStation;
+    const station = new JeepStation(this.world, this.scene, spot.x, spot.z, spot.yaw);
+    this.jeepStations.push(station);
+    this.impacts.splash(station.center.clone(), 1.4); // dust as it drops into place
+    return true;
+  }
+
   // ---------- enemy base objectives ----------
 
   /** Announces bases as they fall, and the victory when the last one goes. */
@@ -901,13 +1045,14 @@ export class Game {
       this.announcedBases.add(base);
       this.addRocketCharge(CHARGE_PER_ENEMY_BASE);
       this.garrison(base);
+      const station = this.addBaseStation(base);
       const left = this.enemyBases.length - this.announcedBases.size;
       if (left === 0) {
         this.startFinalAssault();
       } else {
         this.hud.showBanner(
           `${base.title.toUpperCase()} DESTROYED!`,
-          `Green troops are moving in · ${left} enemy base${left > 1 ? 's' : ''} to go`,
+          `Green troops are moving in${station ? ' · Jeep station set up!' : ''} · ${left} enemy base${left > 1 ? 's' : ''} to go`,
         );
       }
     }
@@ -1022,18 +1167,19 @@ export class Game {
 
   // ---------- aiming / HUD helpers ----------
 
-  /** Where the player's next shell would fly and land, and what it would hit. */
+  /** Where the player's next shell (or the jeep's next jam round) would fly and land, and what it would hit. */
   private updateAim(): { screen: { x: number; y: number } | null; range: number | null; target: AimTarget } {
+    const jeep = this.player.isJeep;
     const traj = predictTrajectory(
       this.world,
-      this.player.muzzleWorldPosition,
+      jeep ? this.player.jeepMuzzlePosition : this.player.muzzleWorldPosition,
       this.player.muzzleWorldDirection,
-      this.player.muzzleSpeed,
+      jeep ? JEEP_JAM_SPEED : this.player.muzzleSpeed,
       this.player.physicsCollider,
     );
     const pts = traj.points;
     const travel = pts.length > 1 ? pts[pts.length - 1].clone().sub(pts[pts.length - 2]) : this.player.muzzleWorldDirection;
-    const target = this.classifyTarget(traj.hitCollider, traj.impact, travel);
+    const target = this.classifyTarget(traj.hitCollider, traj.impact, travel, jeep);
     this.aimGuide.update(traj, target, this.camera);
     return { screen: this.toScreen(traj.impact), range: traj.normal ? traj.range : null, target };
   }
@@ -1044,13 +1190,17 @@ export class Game {
     return { x: ((ndc.x + 1) / 2) * window.innerWidth, y: ((1 - ndc.y) / 2) * window.innerHeight };
   }
 
-  private classifyTarget(collider: RAPIER.Collider | null, impact: THREE.Vector3, travel: THREE.Vector3): AimTarget {
+  /** `jam`: a jam round, whose only weak point is a pillbox gun slit (it gums the gun up for good). */
+  private classifyTarget(collider: RAPIER.Collider | null, impact: THREE.Vector3, travel: THREE.Vector3, jam = false): AimTarget {
     if (!collider) return 'none';
     const hit = this.hitRegistry.lookup(collider);
     if (!hit || hit.kind === 'terrain' || hit.kind === 'water' || hit.kind === 'tree') return 'ground';
     if (hit.kind === 'tank') return hit.tank.faction === 'player' || hit.tank.shielded ? 'ground' : 'enemy';
     if (hit.building.faction === 'player' || hit.building.locked) return 'ground';
-    if (hit.building.critAt(impact, travel)) return 'critical';
+    const crit = jam
+      ? (this.targetableBunkers.find((b) => b.building === hit.building)?.jamCritAt(impact, travel) ?? false)
+      : hit.building.critAt(impact, travel) !== null;
+    if (crit) return 'critical';
     return hit.building.faction === 'enemy' ? 'enemy' : 'building';
   }
 
@@ -1094,6 +1244,7 @@ export class Game {
       markers: this.collectMarkers(),
       objective,
       fortress: { x: f.center.x, z: f.center.z, name: f.name, title: f.title, locked: f.locked, destroyed: f.isDestroyed },
+      jeepStations: this.jeepStations.map((s) => ({ x: s.center.x, z: s.center.z })),
     };
   }
 
@@ -1127,7 +1278,8 @@ export class Game {
     return {
       health: this.player.health,
       maxHealth: this.player.maxHealth,
-      reloadFraction: this.player.fireCooldown / this.player.fireInterval,
+      reloadFraction: this.player.isJeep ? 0 : this.player.fireCooldown / this.player.fireInterval,
+      jeep: this.player.isJeep ? { timeLeft: Math.max(0, this.jeepTime), total: this.jeepTimeTotal, missileCharge: this.jeepMissileCharge } : null,
       cameraMode: this.cameraRig.mode,
       usingGamepad: input.usingGamepad,
       insideBase: inside ? nearestFriendlyBase(this.player.position.x, this.player.position.z).name : null,
@@ -1195,7 +1347,10 @@ export class Game {
         if (base) this.player.teleport(base.info.x, base.info.z, base.spawnYaw);
       }
       if (input.mapTogglePressed) this.hud.toggleBigMap();
-      if (input.rocketPressed && this.rocketCharge >= 1) this.launchRocket();
+      if (input.rocketPressed) {
+        if (this.player.isJeep) this.tryJeepMissile();
+        else if (this.rocketCharge >= 1) this.launchRocket();
+      }
       if (input.aaPressed) this.tryFireAA();
       if (input.megaJamPressed) this.tryMegaJam();
       this.megaJamCharge = Math.min(1, this.megaJamCharge + dt / MEGA_JAM_RECHARGE);
@@ -1237,6 +1392,12 @@ export class Game {
 
     const playerShot = this.player.step(input, dt);
     if (playerShot) this.fire(this.player, playerShot);
+    // The jeep has no cannon: its trigger fires a stream of jam rounds.
+    if (input.firing && this.player.isJeep) {
+      const round = this.player.tryJeepJam();
+      if (round) this.jam.shoot(round.origin, round.direction, JEEP_JAM_SPEED);
+    }
+    this.updateJeep(dt);
     if (input.jamFiring) {
       const glob = this.player.tryJam();
       if (glob) this.jam.fire(glob.origin, glob.direction, JAM_SPEED * glob.speedScale);
@@ -1372,7 +1533,7 @@ export class Game {
     } else {
       this.cameraRig.update(this.player, dt);
       aim = this.updateAim();
-      if (this.rocketCharge >= 1) {
+      if (this.player.isJeep ? this.jeepMissileCharge >= 1 : this.rocketCharge >= 1) {
         const lock = this.findLockTarget();
         if (lock) lockScreen = this.toScreen(lock.position.clone().add(new THREE.Vector3(0, 1.5, 0)));
       }

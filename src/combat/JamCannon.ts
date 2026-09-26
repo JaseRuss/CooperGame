@@ -3,6 +3,8 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import { surfaceHeightAt } from '../world/Terrain';
 
 const GRAVITY = -12;
+/** The jeep's jam rounds drop like a tank shell, so the aim guide's arc fits them too. */
+const ROUND_GRAVITY = -9;
 const MAX_LIFETIME = 4;
 const SPLAT_LIFETIME = 14;
 const SPLAT_FADE = 3;
@@ -33,6 +35,9 @@ const chunkMaterial = new THREE.MeshPhysicalMaterial({ color: 0xff5a78, roughnes
 const chunkGeometry = new THREE.SphereGeometry(0.16, 8, 6).scale(1, 0.55, 1);
 const blobGeometry = new THREE.SphereGeometry(0.24, 12, 8);
 const dropletGeometry = new THREE.SphereGeometry(0.12, 8, 6);
+const roundGeometry = new THREE.SphereGeometry(0.13, 8, 6);
+/** Bright pink so a burst of jam rounds reads as a tracer stream. */
+const roundMaterial = new THREE.MeshBasicMaterial({ color: 0xff4f78 });
 
 /** A glob of jam stuck over a gun's muzzle (friendly fire from the jam cannon). */
 export function createMuzzleGlob(size = 1): THREE.Mesh {
@@ -92,6 +97,8 @@ interface Blob {
   drips: boolean;
   /** Metres of flight left before the next drip falls. */
   toNextDrip: number;
+  /** A jam round from the jeep's gun: flies flat and fast like a bullet and leaves a small spot. */
+  round: boolean;
 }
 
 interface Droplet {
@@ -126,7 +133,8 @@ const dripSplatMaterial = new THREE.MeshPhysicalMaterial({
 /**
  * The jam cannon's blobs: lobbed, wobbling globs of strawberry jam. Where one lands it bursts
  * into droplets and leaves a glossy puddle; on the way it drips, so jam rains down on everything
- * under its path. The game decides who gets stuck in it.
+ * under its path. The jeep's jam gun fires rounds through here too: they fly like bullets but land
+ * like jam. The game decides who gets stuck in it.
  */
 export class JamCannon {
   private readonly blobs: Blob[] = [];
@@ -149,7 +157,17 @@ export class JamCannon {
       age: 0,
       drips: this.fired++ % DRIP_EVERY === 0,
       toNextDrip: DRIP_SPACING * (0.3 + Math.random() * 0.7),
+      round: false,
     });
+  }
+
+  /** A jam round from the jeep's rapid-fire gun: a fast, flat pink tracer rather than a lobbed glob. */
+  shoot(origin: THREE.Vector3, direction: THREE.Vector3, speed: number): void {
+    const mesh = new THREE.Mesh(roundGeometry, roundMaterial);
+    mesh.position.copy(origin);
+    mesh.scale.set(1, 1, 3.5);
+    this.scene.add(mesh);
+    this.blobs.push({ mesh, velocity: direction.clone().normalize().multiplyScalar(speed), age: 0, drips: false, toNextDrip: 0, round: true });
   }
 
   /**
@@ -166,7 +184,7 @@ export class JamCannon {
     for (let i = this.blobs.length - 1; i >= 0; i--) {
       const b = this.blobs[i];
       b.age += dt;
-      b.velocity.y += GRAVITY * dt;
+      b.velocity.y += (b.round ? ROUND_GRAVITY : GRAVITY) * dt;
       const step = b.velocity.clone().multiplyScalar(dt);
       const len = step.length();
       const dir = step.clone().divideScalar(len || 1);
@@ -186,15 +204,19 @@ export class JamCannon {
           }
         }
       }
-      // Stretched along its flight so a spray of globs reads as one stream, with a jelly wobble.
-      const w = Math.sin(b.age * 28 + i) * 0.15;
+      // Stretched along its flight so a spray of globs reads as one stream, with a jelly wobble
+      // (rounds keep their fixed tracer stretch).
       b.mesh.lookAt(b.mesh.position.clone().add(b.velocity));
-      b.mesh.scale.set(1 + w, 1 - w, 2.2);
+      if (!b.round) {
+        const w = Math.sin(b.age * 28 + i) * 0.15;
+        b.mesh.scale.set(1 + w, 1 - w, 2.2);
+      }
       if (landed || b.age > MAX_LIFETIME) {
         this.scene.remove(b.mesh);
         this.blobs.splice(i, 1);
         if (landed) {
-          this.burst(landed);
+          if (b.round) this.roundSplat(landed);
+          else this.burst(landed);
           onSplat(landed, hit?.collider ?? null, b.velocity);
         }
       }
@@ -278,6 +300,19 @@ export class JamCannon {
     this.scene.add(mesh);
     this.dripSplats.push({ mesh, age: 0 });
     while (this.dripSplats.length > MAX_DRIP_SPLATS) this.scene.remove((this.dripSplats.shift() as DripSplat).mesh);
+  }
+
+  /** A jam round landing: a couple of droplets, and a small spot if it hit the ground. */
+  private roundSplat(point: THREE.Vector3): void {
+    for (let i = 0; i < 2; i++) {
+      const mesh = new THREE.Mesh(dropletGeometry, blobMaterial);
+      mesh.position.copy(point);
+      const a = Math.random() * Math.PI * 2;
+      this.scene.add(mesh);
+      this.droplets.push({ mesh, velocity: new THREE.Vector3(Math.cos(a) * 2.5, 2 + Math.random() * 3, Math.sin(a) * 2.5), age: 0 });
+    }
+    const ground = surfaceHeightAt(point.x, point.z);
+    if (point.y - ground < 0.6) this.dripSplat(point.clone().setY(ground));
   }
 
   /** Droplets flying out, and a glossy puddle left on the ground. */

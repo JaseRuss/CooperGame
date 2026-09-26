@@ -50,6 +50,8 @@ export interface MapView {
   /** Nearest enemy base still standing (or the Fortress once they're all down); the minimap points at it. */
   objective: MapBase | null;
   fortress: MapBase & { title: string; locked: boolean; destroyed: boolean };
+  /** Drive-through stations that turn the tank into a jeep. */
+  jeepStations: { x: number; z: number }[];
 }
 
 export interface MapDrawOptions {
@@ -232,6 +234,21 @@ export class WorldMap {
       ctx.beginPath();
       ctx.arc(b.x, b.z, Math.max(40, 7 / s), 0, Math.PI * 2);
       ctx.stroke();
+    }
+
+    // Jeep stations: a blue tile with a J.
+    for (const st of view.jeepStations) {
+      const r = Math.max(14, 6 / s);
+      ctx.fillStyle = '#2fb8ff';
+      ctx.fillRect(st.x - r, st.z - r, r * 2, r * 2);
+      ctx.strokeStyle = '#0b2533';
+      ctx.lineWidth = 2 / s;
+      ctx.strokeRect(st.x - r, st.z - r, r * 2, r * 2);
+      ctx.fillStyle = '#ffffff';
+      ctx.font = `900 ${r * 1.6}px "Segoe UI", sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('J', st.x, st.z + r * 0.1);
     }
 
     // Enemy bases: red squares (green tick once destroyed).

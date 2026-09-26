@@ -11,12 +11,23 @@ export interface Settings {
   nameTags: boolean;
   /** The four buddy tank crews, in the order they're called in. */
   buddyNames: string[];
+  /** How long a jeep from a changing station lasts before it turns back into the tank. */
+  jeepMinutes: JeepMinutes;
 }
+
+export type JeepMinutes = 1 | 2 | 3 | 5;
+const JEEP_MINUTES: JeepMinutes[] = [1, 2, 3, 5];
 
 export const DEFAULT_BUDDY_NAMES = ['Keston', 'Max', 'Innes', 'Jason'];
 export const BUDDY_NAME_MAX = 10;
 
-export const DEFAULT_SETTINGS: Settings = { driveStyle: 'warthog', aimSpeed: 'normal', nameTags: true, buddyNames: [...DEFAULT_BUDDY_NAMES] };
+export const DEFAULT_SETTINGS: Settings = {
+  driveStyle: 'warthog',
+  aimSpeed: 'normal',
+  nameTags: true,
+  buddyNames: [...DEFAULT_BUDDY_NAMES],
+  jeepMinutes: 3,
+};
 
 /** Tidies a typed name: allowed characters only, trimmed, capped; blank falls back to `fallback`. */
 export function cleanBuddyName(name: string, fallback: string): string {
@@ -36,7 +47,8 @@ export function loadSettings(): Settings {
       // Older saves have no names; a damaged list falls back name by name.
       const names = Array.isArray(saved.buddyNames) ? saved.buddyNames : [];
       const buddyNames = DEFAULT_BUDDY_NAMES.map((d, i) => (typeof names[i] === 'string' ? cleanBuddyName(names[i], d) : d));
-      return { ...DEFAULT_SETTINGS, ...saved, buddyNames };
+      const jeepMinutes = JEEP_MINUTES.includes(saved.jeepMinutes as JeepMinutes) ? (saved.jeepMinutes as JeepMinutes) : DEFAULT_SETTINGS.jeepMinutes;
+      return { ...DEFAULT_SETTINGS, ...saved, buddyNames, jeepMinutes };
     }
   } catch {
     // Storage can be blocked (private windows, embedded previews); defaults are fine.
@@ -84,5 +96,14 @@ export const OPTION_ROWS: OptionRow[] = [
       { value: true, label: 'On', hint: "Show each buddy's name above their tank." },
       { value: false, label: 'Off', hint: 'Hide the floating names.' },
     ],
+  },
+  {
+    key: 'jeepMinutes',
+    label: 'Jeep time',
+    values: JEEP_MINUTES.map((m) => ({
+      value: m,
+      label: `${m} min`,
+      hint: `Drive through a jeep station for a fast jeep that lasts ${m} minute${m > 1 ? 's' : ''}, then turns back into your tank.`,
+    })),
   },
 ] as OptionRow[];

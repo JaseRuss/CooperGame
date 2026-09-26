@@ -45,6 +45,8 @@ export class Tank {
   shielded = false;
   /** Drives a bit faster on roads (the player and buddies). */
   protected fasterOnRoads = false;
+  /** Multiplies how fast the hull can turn (the jeep is nimbler than a tank). */
+  protected turnRateScale = 1;
   private roadBoost = 1;
 
   fireCooldown = 0;
@@ -318,6 +320,13 @@ export class Tank {
    * pair of binoculars held up to his eyes. Only the player's side gets one.
    */
   addCommander(color: number): void {
+    const figure = Tank.createCommander(color);
+    figure.position.set(0.3, 0.62 - 0.86 * figure.scale.y, 0.2); // down in the hatch to mid-chest, in turret space
+    this.turretPivot.add(figure);
+  }
+
+  /** The commander figure (belt at y 0.9 × its scale, facing -Z), in the given army's colours. */
+  protected static createCommander(color: number): THREE.Group {
     Tank.commanderShapes ??= Tank.buildCommander().buildGeometries();
     // Much lighter plastic than the tank so he reads at chase-cam distance; kit in a darker shade.
     const shades = new Map<THREE.Material, THREE.Material>([
@@ -330,10 +339,8 @@ export class Tank {
       mesh.castShadow = true;
       figure.add(mesh);
     }
-    const scale = 1.1;
-    figure.scale.setScalar(scale);
-    figure.position.set(0.3, 0.62 - 0.86 * scale, 0.2); // down in the hatch to mid-chest, in turret space
-    this.turretPivot.add(figure);
+    figure.scale.setScalar(1.1);
+    return figure;
   }
 
   /**
@@ -544,7 +551,7 @@ export class Tank {
       steer = 0;
     }
     const turnAuthority = 0.75 + 0.25 * Math.abs(throttle);
-    this.hullYaw -= steer * MAX_YAW_RATE * dt * turnAuthority;
+    this.hullYaw -= steer * MAX_YAW_RATE * this.turnRateScale * dt * turnAuthority;
     this.hullYaw = Math.atan2(Math.sin(this.hullYaw), Math.cos(this.hullYaw));
     this.root.quaternion.setFromAxisAngle(Y_AXIS, this.hullYaw);
 

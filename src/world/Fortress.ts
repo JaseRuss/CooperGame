@@ -267,7 +267,7 @@ export class Fortress {
       for (const [model, lx, lz, turn] of [
         [buildTruck(color), s * 44, -24, 0],
         [buildTruck(color), s * 50, -24, 0],
-        [buildJeep(color), s * 40, 30, Math.PI / 2],
+        [buildJeep(color, { stars: false }), s * 40, 30, Math.PI / 2],
       ] as [THREE.Group, number, number, number][]) {
         const p = at(lx, lz);
         model.position.set(p.x, heightAt(p.x, p.z), p.z);

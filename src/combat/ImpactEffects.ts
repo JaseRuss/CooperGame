@@ -278,6 +278,63 @@ export class ImpactEffects {
     }
   }
 
+  /**
+   * A magic-trick cloud: thick white smoke billows round a vehicle so it can be swapped for
+   * another unseen (tank to jeep and back), with a pop of sparkles. `size` 1 covers a tank.
+   */
+  changePuff(point: THREE.Vector3, size = 1): void {
+    this.flash(point, 900, 0.25);
+    for (let i = 0; i < 26; i++) {
+      const offset = randomInSphere(2.6 * size);
+      offset.y = Math.abs(offset.y) * 0.8 + 0.4;
+      const white = 0.86 + Math.random() * 0.12;
+      this.add({
+        geometry: SMOKE_SPHERE,
+        position: point.clone().add(offset),
+        velocity: new THREE.Vector3(offset.x * 1.6, 1.2 + Math.random() * 1.5, offset.z * 1.6),
+        life: 1.5 + Math.random() * 0.8,
+        startScale: (1.5 + Math.random() * 0.6) * size,
+        endScale: (3.6 + Math.random() * 1.6) * size,
+        startOpacity: 0.95,
+        additive: false,
+        colorFrom: new THREE.Color(white, white, white),
+        colorTo: new THREE.Color(white - 0.12, white - 0.1, white - 0.08),
+        drag: 2.2,
+      });
+    }
+    for (let i = 0; i < 16; i++) {
+      const dir = randomInSphere(1).normalize();
+      dir.y = Math.abs(dir.y) + 0.3;
+      this.add({
+        geometry: SPARK,
+        position: point.clone().add(new THREE.Vector3(0, 1.5, 0)),
+        velocity: dir.multiplyScalar(12 + Math.random() * 6),
+        life: 0.5 + Math.random() * 0.3,
+        startScale: 1.6,
+        endScale: 0.3,
+        startOpacity: 1,
+        additive: true,
+        colorFrom: new THREE.Color(0xffffff),
+        colorTo: new THREE.Color(0x8fe0ff),
+        gravity: -10,
+        drag: 1.2,
+        orientToVelocity: true,
+      });
+    }
+    this.add({
+      geometry: RING,
+      position: point.clone().add(new THREE.Vector3(0, 0.3, 0)),
+      velocity: new THREE.Vector3(),
+      life: 0.5,
+      startScale: 1 * size,
+      endScale: 9 * size,
+      startOpacity: 0.8,
+      additive: false,
+      colorFrom: new THREE.Color(0xffffff),
+      colorTo: new THREE.Color(0xd8e8f0),
+    });
+  }
+
   /** A thin, short-lived smoke wisp: the trail of the little AA missiles. */
   wispPuff(point: THREE.Vector3): void {
     const shade = 0.75 + Math.random() * 0.15;
