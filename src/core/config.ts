@@ -8,7 +8,22 @@ export const TERRAIN_SEGMENTS = 256;
 /** Max terrain height variation in meters. */
 export const TERRAIN_HEIGHT = 18;
 
-export const WORLD_SEED = 1337;
+/**
+ * Which mission is playing, from the page's `?mission=` parameter. Mission 1 is the daytime
+ * battle; mission 2 is the night raid, on a fresh battlefield (its own seed) under flares.
+ */
+export type Mission = 1 | 2;
+export const MISSION: Mission = new URLSearchParams(window.location.search).get('mission') === '2' ? 2 : 1;
+export const NIGHT = MISSION === 2;
+
+export const WORLD_SEED = MISSION === 2 ? 2468 : 1337;
+
+/** Reloads the page into another mission (a fresh world, from the start). */
+export function startMission(mission: Mission): void {
+  const url = new URL(window.location.href);
+  url.searchParams.set('mission', String(mission));
+  window.location.href = url.toString();
+}
 
 const EDGE = WORLD_HALF - 220;
 const CORNER = WORLD_HALF - 300;

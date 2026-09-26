@@ -34,7 +34,8 @@ import { CameraRig } from '../camera/CameraRig';
 import { HUD, type HUDState } from '../ui/HUD';
 import { WorldMap, type MapMarker, type MapView } from '../ui/WorldMap';
 import { AimGuide, type AimTarget } from '../ui/AimGuide';
-import { FRIENDLY_BASES, nearestFriendlyBase, BASE_RADIUS, type FriendlyBase } from '../core/config';
+import { FRIENDLY_BASES, nearestFriendlyBase, BASE_RADIUS, MISSION, NIGHT, startMission, type FriendlyBase } from '../core/config';
+import { NightSky, MOON_DIRECTION } from '../world/NightSky';
 import { ARMY_GREEN, ARMY_RED, shade } from '../utils/plastic';
 import { loadSettings, saveSettings, AIM_SPEED_SCALE, DEFAULT_BUDDY_NAMES, type Settings } from './Settings';
 
@@ -50,6 +51,12 @@ const JAM_SPEED = 36;
 const JAM_RADIUS = 3; // per splat; a held spray lays a whole line of them
 const JAM_STUCK_TIME = 5;
 const GUN_JAM_TIME = 4; // friendly fire: a teammate's gun is gummed up this long
+const JAM_DRIP_RADIUS = 2.2; // jam dripping off the globs in flight catches whatever is under their path
+const TANK_STUCK_TIME = 4; // an enemy tank caught in jam can't drive for this long (topped up by more jam)
+// Mega jam (X): rings of jam lobbed out all round the tank, then a wait while it refills.
+const MEGA_JAM_RECHARGE = 20;
+const MEGA_JAM_RINGS = [7, 12.5, 18]; // landing distance of each ring, metres
+const MEGA_JAM_PER_RING = 16;
 // Drunken AA missiles: six-dart salvos at a locked helicopter; rearm at a home base.
 const AA_REARM_TIME = 0.4; // seconds per dart while parked at a home base
 const AA_RANGE = 450;
@@ -63,6 +70,9 @@ const FORTRESS_CHECKLIST_RANGE = 480;
 const ESCORT_TANKS = 8; // form up behind the player
 const GATE_TANKS = 4; // waiting at each gate
 const ASSAULT_GREEN = shade(ARMY_GREEN, 1.18);
+// A fuel tank going up: a fireball that hurts enemy tanks and buildings nearby (other fuel tanks too).
+const FUEL_BLAST_RADIUS = 24;
+const FUEL_BLAST_DAMAGE = 120;
 
 // Homing rocket: fills on a timer, faster when the player wrecks things.
 const ROCKET_RECHARGE_TIME = 75;
@@ -85,6 +95,7 @@ const MAX_BUDDIES = DEFAULT_BUDDY_NAMES.length;
 // Enemy base objectives.
 const CHECKLIST_RANGE = 350; // show the target list when this close to an enemy base
 const VICTORY_SCREEN_TIME = 9;
+const NEXT_MISSION_DELAY = 12; // after winning mission 1, the night raid starts this long after the victory screen
 
 interface RocketSequence {
   rocket: HomingRocket;
@@ -197,6 +208,7 @@ export class Game {
   private nextBuddy = 0;
   private rocketCharge = 0;
   private buddyCharge = 1;
+  private megaJamCharge = 1;
   private rocketSeq: RocketSequence | null = null;
   /** Delayed secondary explosions (missiles cooking off after a critical hit). */
   private aftershocks: { at: THREE.Vector3; delay: number; size: number }[] = [];
@@ -205,6 +217,8 @@ export class Game {
   private wakeTimer = 0;
   private ready = false;
   private assets!: AssetLibrary;
+  /** Stars, moon and distant firefights on the night mission. */
+  private nightSky: NightSky | null = null;
 
   constructor(container: HTMLElement) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -226,11 +240,13 @@ export class Game {
     this.loadingLabel.textContent = 'Loading world…';
     container.appendChild(this.loadingLabel);
 
-    this.scene.background = new THREE.Color(0x9fd3f0);
-    this.scene.fog = new THREE.Fog(0x9fd3f0, 500, 1700);
+    // Daylight, or moonlight on the night raid (dark enough for the flares to show, light enough to play).
+    const sky = NIGHT ? 0x0d1733 : 0x9fd3f0;
+    this.scene.background = new THREE.Color(sky);
+    this.scene.fog = NIGHT ? new THREE.Fog(sky, 280, 1250) : new THREE.Fog(sky, 500, 1700);
 
-    this.scene.add(new THREE.HemisphereLight(0xbfd9ff, 0x3a3226, 0.9));
-    this.sun = new THREE.DirectionalLight(0xfff2d9, 1.7);
+    this.scene.add(NIGHT ? new THREE.HemisphereLight(0x7088c4, 0x1d1b26, 0.5) : new THREE.HemisphereLight(0xbfd9ff, 0x3a3226, 0.9));
+    this.sun = NIGHT ? new THREE.DirectionalLight(0xaec4ff, 0.55) : new THREE.DirectionalLight(0xfff2d9, 1.7);
     this.sun.castShadow = true;
     this.sun.shadow.mapSize.set(2048, 2048);
     this.sun.shadow.camera.left = -180;
@@ -323,13 +339,39 @@ export class Game {
       this.applySettings();
     });
     this.applySettings();
+    this.hud.setMissionStart((m) => startMission(m));
+    if (NIGHT) {
+      this.nightSky = new NightSky(this.scene, {
+        // Tracer marks every standing enemy base (and the Fortress); flares go up over the troops.
+        bases: () => [
+          ...this.enemyBases.filter((b) => !b.isDestroyed).map((b) => ({ position: b.center, gun: b.aaGun })),
+          ...(this.fortress.isDestroyed ? [] : [{ position: this.fortress.center, gun: null }]),
+        ],
+        troops: () => [
+          ...this.troops.activeSoldiers('enemy').map((s) => ({ position: s.position, friendly: false })),
+          ...this.troops.activeSoldiers('player').map((s) => ({ position: s.position, friendly: true })),
+          ...this.targetableEnemies.map((t) => ({ position: t.position, friendly: false })),
+          ...this.redTanks.map((t) => ({ position: t.position, friendly: true })),
+        ],
+      });
+      this.fitHeadlights();
+    }
 
     this.loadingLabel.remove();
     this.ready = true;
-    this.hud.showBanner('GREEN & RED ARE FRIENDS', 'Tan and blue are the enemy. Knock out their bases!');
+    if (MISSION === 2) this.hud.showBanner('MISSION 2: NIGHT RAID', 'The enemy has dug in on new ground. Knock out their bases under the flares!');
+    else this.hud.showBanner('GREEN & RED ARE FRIENDS', 'Tan and blue are the enemy. Knock out their bases!');
     if (import.meta.env.DEV) (window as unknown as { game: Game }).game = this;
     this.clock.start();
     requestAnimationFrame(this.animate);
+  }
+
+  /** Night driving: a headlight beam from the front of the hull, lighting the ground ahead. */
+  private fitHeadlights(): void {
+    const lamp = new THREE.SpotLight(0xfff0c8, 45, 120, 0.6, 0.7, 1);
+    lamp.position.set(0, 0.8, -2.1);
+    lamp.target.position.set(0, -3, -30);
+    this.player.root.add(lamp, lamp.target);
   }
 
   // ---------- spawning ----------
@@ -425,7 +467,7 @@ export class Game {
 
   private removeBuddy(buddy: BuddyTank): void {
     this.explode(buddy.position.clone(), 2.5, null);
-    this.hud.showBanner(`${buddy.name.toUpperCase()}'S TANK IS KNOCKED OUT!`, 'Call them back in when the buddy meter is full');
+    this.hud.showBanner(`${buddy.name.toUpperCase()}'S TANK IS KNOCKED OUT!`, 'A new buddy rolls in when the buddy meter is full');
     this.hitRegistry.unregister(buddy.physicsCollider);
     this.scene.remove(buddy.root);
     buddy.dispose();
@@ -457,6 +499,33 @@ export class Game {
     const footprint = Math.max(building.halfExtents.x, building.halfExtents.z);
     this.impacts.addSmokeSource(building.groundCenter, footprint * 0.6);
     if (attacker === 'player') this.addRocketCharge(this.isBunker(building) ? CHARGE_PER_BUNKER : CHARGE_PER_BUILDING);
+    if (building.fuel) this.fuelBlast(building, attacker);
+  }
+
+  /** A fuel tank goes up: a ring of fireballs and a blast that can set its neighbours off too. */
+  private fuelBlast(tank: Building, attacker: Faction | null): void {
+    const point = tank.center.clone();
+    this.impacts.addSmokeSource(tank.groundCenter, 6, 45);
+    for (let i = 1; i <= 6; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const r = 4 + Math.random() * 9;
+      const off = new THREE.Vector3(Math.cos(a) * r, 1 + Math.random() * 6, Math.sin(a) * r);
+      this.aftershocks.push({ at: point.clone().add(off), delay: i * 0.18 + Math.random() * 0.12, size: 2 + Math.random() * 1.5 });
+    }
+    // Only the enemy's things get hurt: fuel is always on their side.
+    for (const enemy of this.targetableEnemies) {
+      const d = enemy.position.distanceTo(point);
+      if (d < FUEL_BLAST_RADIUS) enemy.takeDamage(FUEL_BLAST_DAMAGE * (1 - (d / FUEL_BLAST_RADIUS) ** 2));
+    }
+    const closest = new THREE.Vector3();
+    for (const b of this.buildings) {
+      if (b === tank || b.destroyed || b.faction === 'player') continue;
+      const box = new THREE.Box3().setFromCenterAndSize(b.center, b.halfExtents.clone().multiplyScalar(2));
+      const d = box.clampPoint(point, closest).distanceTo(point);
+      if (d >= FUEL_BLAST_RADIUS) continue;
+      b.takeDamage(FUEL_BLAST_DAMAGE * (1 - (d / FUEL_BLAST_RADIUS) ** 2));
+      if (b.destroyed) this.collapseBuilding(b, attacker);
+    }
   }
 
   private fire(tank: Tank, shot: Shot): void {
@@ -490,6 +559,50 @@ export class Game {
         this.aftershocks.push({ at: point.clone().add(off), delay: i * 0.22 + Math.random() * 0.15, size: 1.4 + Math.random() });
       }
     }
+  }
+
+  /** X: lob rings of jam out all round the tank, if the mega jam has refilled. */
+  private tryMegaJam(): void {
+    if (this.megaJamCharge < 1) {
+      this.hud.showCallout(`MEGA JAM ${Math.floor(this.megaJamCharge * 100)}%`, '#ff8aa8');
+      return;
+    }
+    this.megaJamCharge = 0;
+    const origin = this.player.position.clone().add(new THREE.Vector3(0, 2.8, 0));
+    const pitch = 0.7; // lobbed, so it clears anything standing round the tank
+    MEGA_JAM_RINGS.forEach((range, ring) => {
+      // Speed for that range on a flat lob (jam globs fall at 12 m/s²).
+      const speed = Math.sqrt((range * 12) / Math.sin(2 * pitch));
+      for (let i = 0; i < MEGA_JAM_PER_RING; i++) {
+        const a = ((i + ring * 0.5) / MEGA_JAM_PER_RING) * Math.PI * 2;
+        const dir = new THREE.Vector3(Math.cos(a) * Math.cos(pitch), Math.sin(pitch), Math.sin(a) * Math.cos(pitch));
+        this.jam.fire(origin, dir, speed * (0.93 + Math.random() * 0.14));
+      }
+    });
+    this.cameraRig.addShake(0.5);
+    this.hud.showCallout('MEGA JAM!', '#ff8aa8');
+  }
+
+  /** Jam landing at `point`: enemy soldiers within `radius` are stuck fast, and enemy tanks can't drive. */
+  private jamEnemies(point: THREE.Vector3, radius: number): void {
+    const caught = this.troops.jam(point, radius, 'player', JAM_STUCK_TIME);
+    this.addRocketCharge(caught * CHARGE_PER_TROOP);
+    for (const tank of this.targetableEnemies) {
+      // Helicopters fly over it; a tank's hull reaches about 2 m either side of its middle.
+      if (tank instanceof HelicopterEnemy || tank.position.distanceTo(point) > radius + 2.2) continue;
+      if (tank.stickInJam(TANK_STUCK_TIME)) this.hud.showCallout('ENEMY TANK STUCK IN JAM!', '#ff8aa8');
+    }
+  }
+
+  /** A jam glob into the front of an enemy bunker gums up its gun for good: a critical hit. */
+  private jamBunkerSlit(collider: RAPIER.Collider, point: THREE.Vector3, velocity: THREE.Vector3): void {
+    const target = this.hitRegistry.lookup(collider);
+    if (target?.kind !== 'building') return;
+    const bunker = this.targetableBunkers.find((b) => b.building === target.building);
+    if (!bunker?.jamCritAt(point, velocity)) return;
+    bunker.building.destroyByCritical();
+    this.collapseBuilding(bunker.building, 'player');
+    this.onCriticalHit('Jam in the gun slit', point, true);
   }
 
   /** Small-arms fire from troops and bunker machine guns; a round landing by a soldier drops him. */
@@ -781,12 +894,21 @@ export class Game {
     if (!this.fortressAnnounced && this.fortress.isDestroyed) {
       this.fortressAnnounced = true;
       this.troops.blast(this.fortress.center, 150, 'player'); // the last defenders scatter
-      this.hud.showVictory();
-      this.victoryTimer = VICTORY_SCREEN_TIME;
+      if (MISSION === 1) {
+        this.hud.showVictory('The Fortress has fallen and every enemy base is yours. The toy box is saved!', '');
+        this.victoryTimer = NEXT_MISSION_DELAY;
+      } else {
+        this.hud.showVictory('Night raid complete! The flares are out and every enemy base is yours.', 'Keep driving around and enjoy it!');
+        this.victoryTimer = VICTORY_SCREEN_TIME;
+      }
     }
     if (this.victoryTimer > 0) {
       this.victoryTimer -= dt;
-      if (this.victoryTimer <= 0) this.hud.hideVictory();
+      if (MISSION === 1) this.hud.setVictoryFooter(`Get ready for Mission 2: the Night Raid! Starting in ${Math.max(1, Math.ceil(this.victoryTimer))}…`);
+      if (this.victoryTimer <= 0) {
+        if (MISSION === 1) startMission(2);
+        else this.hud.hideVictory();
+      }
     }
   }
 
@@ -996,6 +1118,7 @@ export class Game {
       aaRearming: this.aaLoaded < AA_CAPACITY && inside,
       aaLockScreen,
       buddyCharge: this.buddyCharge,
+      megaJamCharge: this.megaJamCharge,
       buddyRoster: this.settings.buddyNames,
       buddyOut: this.settings.buddyNames.map((_, i) => this.buddies.some((b) => b.crew === i)),
       driveStyle: this.settings.driveStyle,
@@ -1049,7 +1172,10 @@ export class Game {
       if (input.mapTogglePressed) this.hud.toggleBigMap();
       if (input.rocketPressed && this.rocketCharge >= 1) this.launchRocket();
       if (input.aaPressed) this.tryFireAA();
-      if (input.buddyPressed && this.buddyCharge >= 1 && this.buddies.length < MAX_BUDDIES) this.spawnBuddy();
+      if (input.megaJamPressed) this.tryMegaJam();
+      this.megaJamCharge = Math.min(1, this.megaJamCharge + dt / MEGA_JAM_RECHARGE);
+      // A buddy rolls in by themselves as soon as the meter's full.
+      if (this.buddyCharge >= 1 && this.buddies.length < MAX_BUDDIES) this.spawnBuddy();
       this.addRocketCharge(dt / ROCKET_RECHARGE_TIME);
       this.buddyCharge = Math.min(1, this.buddyCharge + dt / BUDDY_RECHARGE_TIME);
     }
@@ -1090,9 +1216,9 @@ export class Game {
       const glob = this.player.tryJam();
       if (glob) this.jam.fire(glob.origin, glob.direction, JAM_SPEED * glob.speedScale);
     }
-    this.jam.update(dt, this.world, this.player.physicsCollider, (point) => {
-      const caught = this.troops.jam(point, JAM_RADIUS, 'player', JAM_STUCK_TIME);
-      this.addRocketCharge(caught * CHARGE_PER_TROOP);
+    this.jam.update(dt, this.world, this.player.physicsCollider, (point, hit, velocity) => {
+      if (hit) this.jamBunkerSlit(hit, point, velocity);
+      this.jamEnemies(point, JAM_RADIUS);
       // Jam on your own side doesn't hurt, but it gums up their guns for a bit.
       const fumbled = this.troops.jamGuns(point, JAM_RADIUS, 'player', GUN_JAM_TIME);
       let jammedTank: string | null = null;
@@ -1103,7 +1229,7 @@ export class Game {
       }
       if (jammedTank) this.hud.showCallout(`OOPS! ${jammedTank} GUN IS JAMMED`, '#ff8aa8');
       else if (fumbled > 0) this.hud.showCallout(fumbled > 1 ? `OOPS! ${fumbled} FRIENDLY GUNS JAMMED` : 'OOPS! FRIENDLY GUN JAMMED', '#ff8aa8');
-    });
+    }, (point) => this.jamEnemies(point, JAM_DRIP_RADIUS));
 
     // Who's shooting at whom this frame.
     const enemyTargets = this.enemyTargets();
@@ -1231,8 +1357,10 @@ export class Game {
       }
     }
 
-    const sunOffset = new THREE.Vector3(120, 220, 90);
+    // The shadow-casting light: the sun by day, the moon by night.
+    const sunOffset = NIGHT ? MOON_DIRECTION.clone().multiplyScalar(266) : new THREE.Vector3(120, 220, 90);
     this.sun.position.copy(this.player.position).add(sunOffset);
+    this.nightSky?.update(dt, this.camera, this.player.position);
     this.sun.target.position.copy(this.player.position);
     this.sun.target.updateMatrixWorld();
 

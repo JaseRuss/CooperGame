@@ -19,7 +19,8 @@ export interface InputState {
   rocketPressed: boolean;
   /** A salvo of drunken AA missiles (Q / right bumper). */
   aaPressed: boolean;
-  buddyPressed: boolean;
+  /** Mega jam: a ring of jam all round the tank (X / X button). */
+  megaJamPressed: boolean;
   usingGamepad: boolean;
   pointerLocked: boolean;
   /** False once the browser has refused pointer lock; the mouse aims unlocked instead. */
@@ -74,7 +75,7 @@ export class InputManager {
   private gamepadMapLatch = false;
   private rocketLatch = false;
   private aaLatch = false;
-  private buddyLatch = false;
+  private megaJamLatch = false;
   private rightMouseDown = false;
   /** Set while the options screen is taking typed text (a buddy's name). */
   textEntry = false;
@@ -192,8 +193,8 @@ export class InputManager {
     let resetButtonHeld = false;
     let mapButtonHeld = false;
     let rocketHeld = this.keys.has('KeyF') || this.rightMouseDown;
-    let buddyHeld = this.keys.has('KeyX');
     let aaHeld = this.keys.has('KeyQ');
+    let megaJamHeld = this.keys.has('KeyX');
     const k = (...codes: string[]) => codes.some((c) => this.keys.has(c));
     // While a name is being typed, letters, Space and Backspace are text, not menu moves.
     const typing = this.textEntry;
@@ -246,7 +247,7 @@ export class InputManager {
       mapButtonHeld ||= pad.buttons[9]?.pressed ?? false; // Start / Menu / Options
       rocketHeld ||= pad.buttons[4]?.pressed ?? false; // LB / L1
       aaHeld ||= pad.buttons[5]?.pressed ?? false; // RB / R1
-      buddyHeld ||= pad.buttons[2]?.pressed ?? false; // X / Square
+      megaJamHeld ||= pad.buttons[2]?.pressed ?? false; // X / Square
 
       const btn = (i: number) => pad.buttons[i]?.pressed ?? false;
       menuHeld.up ||= btn(12) || rawY < -MENU_STICK;
@@ -262,8 +263,8 @@ export class InputManager {
     this.rocketLatch = rocketHeld;
     const aaPressed = aaHeld && !this.aaLatch;
     this.aaLatch = aaHeld;
-    const buddyPressed = buddyHeld && !this.buddyLatch;
-    this.buddyLatch = buddyHeld;
+    const megaJamPressed = megaJamHeld && !this.megaJamLatch;
+    this.megaJamLatch = megaJamHeld;
 
     if (camButtonHeld && !this.gamepadCameraLatch) cameraTogglePressed = true;
     this.gamepadCameraLatch = camButtonHeld;
@@ -294,7 +295,7 @@ export class InputManager {
       mapTogglePressed,
       rocketPressed,
       aaPressed,
-      buddyPressed,
+      megaJamPressed,
       usingGamepad,
       pointerLocked: this.pointerLocked,
       pointerLockAvailable: !this.pointerLockRefused,

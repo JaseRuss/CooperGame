@@ -245,8 +245,8 @@ export class Fortress {
       objective(`${name} Factory`, place('building-l', s * 64, -62, 11, 320));
       objective(`${name} Warehouse`, place('building-r', s * 66, 0, 10, 260, Math.PI / 2));
       for (const lz of [44, 62]) {
-        const tank = place('detail-tank-large', s * 80, lz, 8, 90);
-        tank.explosionSize = 4;
+        const tank = place('detail-tank-large', s * 80, lz, 8, 20);
+        tank.fuel = true;
         objective(`${name} Fuel Tank`, tank);
       }
       const gp = at(s * 34, 66);

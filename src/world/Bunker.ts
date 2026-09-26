@@ -155,6 +155,7 @@ export class Bunker {
   private cooldown = Math.random() * BURST_COOLDOWN;
   private losTimer = Math.random() * LOS_INTERVAL;
   private seesTarget = false;
+  private readonly root: THREE.Group;
 
   constructor(
     world: RAPIER.World,
@@ -169,6 +170,7 @@ export class Bunker {
   ) {
     const { root, gunPivot } = buildBunkerMesh(trim);
     this.gunPivot = gunPivot;
+    this.root = root;
     this.facing = facing;
     root.rotation.y = facing;
     root.position.set(x, heightAt(x, z) - 0.4, z); // sunk a little so slopes don't leave it floating
@@ -199,6 +201,26 @@ export class Bunker {
       },
     });
     this.building.critExplosionScale = 1.4;
+  }
+
+  /**
+   * True when a jam glob that hit the bunker at `point`, flying along `velocity`, splats onto its
+   * front wall round the gun slit. Jam gums up the gun for good, so it counts as a critical hit.
+   * Much more forgiving than a shell's weak point: anywhere on the front face, from the front.
+   */
+  jamCritAt(point: THREE.Vector3, velocity: THREE.Vector3): boolean {
+    if (!this.alive || this.building.locked) return false;
+    const inverse = this.root.quaternion.clone().invert();
+    const inward = velocity.clone().normalize().applyQuaternion(inverse);
+    if (inward.z < 0.2) return false; // has to be heading into the front, not across or out of it
+    const dir = velocity.clone().normalize();
+    const local = new THREE.Vector3();
+    // The collider is a box round everything (sandbags too), so follow the glob on in.
+    for (let k = 0; k <= 18; k++) {
+      this.root.worldToLocal(local.copy(point).addScaledVector(dir, k * 0.25));
+      if (Math.abs(local.x) < 3.7 && local.y > 0.9 && local.y < 3.1 && local.z < -2.2 && local.z > -3.8) return true;
+    }
+    return false;
   }
 
   get alive(): boolean {

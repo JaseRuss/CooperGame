@@ -3,7 +3,13 @@ import type { AimTarget } from './AimGuide';
 import type { ArmorZone } from '../entities/Tank';
 import type { MenuInput } from '../input/InputManager';
 import { OPTION_ROWS, DEFAULT_BUDDY_NAMES, BUDDY_NAME_MAX, cleanBuddyName, type Settings } from '../core/Settings';
-import { WORLD_SIZE } from '../core/config';
+import { WORLD_SIZE, MISSION, type Mission } from '../core/config';
+
+/** The missions, as the options screen lists them. */
+const MISSIONS: { mission: Mission; label: string }[] = [
+  { mission: 1, label: '1 · Day battle' },
+  { mission: 2, label: '2 · Night raid' },
+];
 
 export interface ObjectiveLine {
   label: string;
@@ -35,8 +41,10 @@ export interface HUDState {
   aaRearming: boolean;
   /** Screen position of the helicopter the AA salvo would chase, when loaded. */
   aaLockScreen: { x: number; y: number } | null;
-  /** 0..1; a buddy tank can be called in at 1. */
+  /** 0..1; a buddy tank rolls in by itself at 1. */
   buddyCharge: number;
+  /** 0..1; the mega jam (X) is ready at 1. */
+  megaJamCharge: number;
   /** Every buddy's name, and which of them are out right now. */
   buddyRoster: string[];
   buddyOut: boolean[];
@@ -175,7 +183,7 @@ const STYLE = `
 .hud .opt .val b { font-family:"Black Ops One", Impact, sans-serif; font-weight:400; letter-spacing:1px; color:#ffd24a; min-width:92px; text-align:center; }
 .hud .opt .arrow { opacity:0.5; font-size:13px; }
 .hud .opt.sel .arrow { opacity:1; }
-.hud .opt.first-name { margin-top:8px; border-top-color:rgba(214,196,138,0.25); }
+.hud .opt.first-name, .hud .opt.mission { margin-top:8px; border-top-color:rgba(214,196,138,0.25); }
 .hud .opt .val b.pen { color:#9be27a; }
 .hud .letters { display:flex; gap:3px; }
 .hud .letters span { width:17px; height:26px; display:flex; align-items:center; justify-content:center; font-family:"Black Ops One", Impact, sans-serif;
@@ -273,6 +281,11 @@ export class HUD {
   private readonly checklist: HTMLDivElement;
   private readonly banner: HTMLDivElement;
   private readonly victory: HTMLDivElement;
+  private readonly victoryText: HTMLDivElement;
+  private readonly victoryFooter: HTMLDivElement;
+  /** The mission chosen on the options screen; it starts when confirmed. */
+  private missionPick: Mission = MISSION;
+  private onMissionStart: ((m: Mission) => void) | null = null;
   private readonly hudBits: HTMLElement[];
   private readonly html = new Map<HTMLElement, string>();
   private worldMap: WorldMap | null = null;
@@ -338,7 +351,7 @@ export class HUD {
     el('span', '', jamLabel, 'JAM CANNON');
     this.jamText = el('span', '', jamLabel);
     this.jamText.style.color = '#ff8aa0';
-    el('div', 'subtle', jamBody, 'Short range · sticks soldiers in jam');
+    el('div', 'subtle', jamBody, 'Sticks soldiers and tanks · X: jam all round');
 
     const buddySlot = el('div', 'slot', card);
     el('div', 'icon', buddySlot).innerHTML = TANK_ICON;
@@ -428,8 +441,10 @@ export class HUD {
     // --- victory screen ---
     this.victory = el('div', 'victory', root);
     el('div', 'stencil big', this.victory, 'WELL DONE COOPER!');
-    el('div', 'shadow', this.victory, 'The Fortress has fallen and every enemy base is yours. The toy box is saved!').style.cssText = 'font-size:22px; font-weight:700;';
-    el('div', 'shadow', this.victory, 'Keep driving around and enjoy it!').style.cssText = 'font-size:14px; opacity:0.85;';
+    this.victoryText = el('div', 'shadow', this.victory);
+    this.victoryText.style.cssText = 'font-size:22px; font-weight:700;';
+    this.victoryFooter = el('div', 'shadow', this.victory);
+    this.victoryFooter.style.cssText = 'font-size:14px; opacity:0.85;';
 
     this.hudBits = [card, this.keys, minimapWrap, this.promptLabel, this.baseCounter, this.checklist];
     this.showPage('map');
@@ -444,6 +459,11 @@ export class HUD {
     this.settings = settings;
     this.onSettingsChange = onChange;
     this.renderOptions();
+  }
+
+  /** Called when a different mission is picked and confirmed on the options screen. */
+  setMissionStart(onStart: (m: Mission) => void): void {
+    this.onMissionStart = onStart;
   }
 
   get paused(): boolean {
@@ -484,11 +504,16 @@ export class HUD {
       this.showPage('map');
       return;
     }
-    const rows = OPTION_ROWS.length + DEFAULT_BUDDY_NAMES.length;
+    const rows = OPTION_ROWS.length + DEFAULT_BUDDY_NAMES.length + 1;
     if (menu.up) this.optionIndex = (this.optionIndex + rows - 1) % rows;
     if (menu.down) this.optionIndex = (this.optionIndex + 1) % rows;
     const crew = this.optionIndex - OPTION_ROWS.length;
-    if (crew >= 0) {
+    if (crew >= DEFAULT_BUDDY_NAMES.length) {
+      // The mission row: left/right picks, A / Enter starts it.
+      if (menu.left) this.cycleMission(-1);
+      if (menu.right) this.cycleMission(1);
+      if (menu.confirm) this.confirmMission();
+    } else if (crew >= 0) {
       if (menu.confirm || menu.right) this.startNameEdit(crew);
     } else {
       if (menu.left) this.cycleOption(this.optionIndex, -1);
@@ -599,6 +624,15 @@ export class HUD {
     this.renderOptions();
   }
 
+  private cycleMission(dir: 1 | -1): void {
+    const i = MISSIONS.findIndex((m) => m.mission === this.missionPick);
+    this.missionPick = MISSIONS[(i + dir + MISSIONS.length) % MISSIONS.length].mission;
+  }
+
+  private confirmMission(): void {
+    if (this.missionPick !== MISSION) this.onMissionStart?.(this.missionPick);
+  }
+
   private renderOptions(): void {
     if (!this.settings) return;
     const settings = this.settings;
@@ -662,6 +696,37 @@ export class HUD {
           : `Press A / Enter to rename. ${name === DEFAULT_BUDDY_NAMES[crew] ? '' : `(Was ${DEFAULT_BUDDY_NAMES[crew]}.)`}`;
       }
     });
+
+    // Last row: jump to another mission (it starts from the beginning).
+    const mi = OPTION_ROWS.length + settings.buddyNames.length;
+    const pick = MISSIONS.find((m) => m.mission === this.missionPick) ?? MISSIONS[0];
+    const line = el('div', `opt mission${mi === this.optionIndex ? ' sel' : ''}`, this.optionList);
+    el('div', 'name', line, 'Mission');
+    const val = el('div', 'val', line);
+    const left = el('span', 'arrow', val, '◀');
+    const label = el('b', '', val, pick.label);
+    label.style.minWidth = '150px';
+    const right = el('span', 'arrow', val, '▶');
+    if (pick.mission !== MISSION) el('b', 'pen', val, 'START');
+    line.addEventListener('mouseenter', () => {
+      if (this.optionIndex === mi || this.nameEdit) return;
+      this.optionIndex = mi;
+      this.renderOptions();
+    });
+    for (const [arrow, dir] of [[left, -1], [right, 1]] as const) {
+      arrow.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.cycleMission(dir);
+        this.renderOptions();
+      });
+    }
+    line.addEventListener('click', () => this.confirmMission());
+    if (mi === this.optionIndex) {
+      this.optionHint.textContent =
+        pick.mission === MISSION
+          ? "The mission you're playing now. Pick another with ◀ ▶."
+          : 'Press A / Enter to start this mission from the beginning (this one starts over next time).';
+    }
   }
 
   showHitMarker(zone: ArmorZone): void {
@@ -685,9 +750,15 @@ export class HUD {
     this.bannerAge = 0;
   }
 
-  showVictory(): void {
+  showVictory(message: string, footer: string): void {
+    this.victoryText.textContent = message;
+    this.victoryFooter.textContent = footer;
     this.victory.style.display = 'flex';
     this.bannerAge = BANNER_TIME; // the victory screen replaces any "base destroyed" banner
+  }
+
+  setVictoryFooter(text: string): void {
+    this.victoryFooter.textContent = text;
   }
 
   hideVictory(): void {
@@ -751,17 +822,14 @@ export class HUD {
       this.aaLockMarker.style.display = 'none';
     }
 
-    this.jamText.textContent = state.usingGamepad ? 'HOLD LT' : 'HOLD E';
+    const hold = state.usingGamepad ? 'HOLD LT' : 'HOLD E';
+    this.jamText.textContent = state.megaJamCharge >= 1 ? `${hold} · X MEGA` : `${hold} · MEGA ${Math.floor(state.megaJamCharge * 100)}%`;
 
+    // Buddies roll in by themselves when the meter fills.
     const allOut = state.buddyOut.filter(Boolean).length >= state.buddyMax;
-    const buddyReady = state.buddyCharge >= 1 && !allOut;
     this.buddyFill.style.width = `${Math.floor(state.buddyCharge * 100)}%`;
-    this.buddyText.textContent = allOut
-      ? 'ALL OUT'
-      : buddyReady
-        ? `READY · ${state.usingGamepad ? 'X' : 'X key'}`
-        : `${Math.floor(state.buddyCharge * 100)}%`;
-    this.buddyText.style.color = buddyReady ? '#9be27a' : '#eef3f8';
+    this.buddyText.textContent = allOut ? 'ALL OUT' : `NEXT ${Math.floor(state.buddyCharge * 100)}%`;
+    this.buddyText.style.color = allOut ? '#9be27a' : '#eef3f8';
     this.setHTML(
       this.buddyChips,
       // Names only ever hold letters, digits, spaces, hyphens and apostrophes, so they're safe as HTML.
@@ -772,8 +840,8 @@ export class HUD {
     this.setHTML(
       this.keys,
       state.usingGamepad
-        ? `${k('LS', 'drive')}${k('RS', 'aim')}${k('RT', 'fire')}${k('LT', 'jam')}${k('LB', 'rocket')}${k('RB', 'AA')}<br>${k('X', 'buddy')}${k('Y', 'camera')}${k('Start', 'pause · options')}${k('Back', 'home')}`
-        : `${k('WASD', 'drive')}${k('Mouse', 'aim')}${k('Click', 'fire')}${k('E', 'jam')}${k('F', 'rocket')}${k('Q', 'AA')}<br>${k('X', 'buddy')}${k('C', 'camera')}${k('M', 'pause · options')}${k('R', 'home')}` +
+        ? `${k('LS', 'drive')}${k('RS', 'aim')}${k('RT', 'fire')}${k('LT', 'jam')}${k('LB', 'rocket')}${k('RB', 'AA')}<br>${k('X', 'mega jam')}${k('Y', 'camera')}${k('Start', 'pause · options')}${k('Back', 'home')}`
+        : `${k('WASD', 'drive')}${k('Mouse', 'aim')}${k('Click', 'fire')}${k('E', 'jam')}${k('F', 'rocket')}${k('Q', 'AA')}<br>${k('X', 'mega jam')}${k('C', 'camera')}${k('M', 'pause · options')}${k('R', 'home')}` +
             (state.mouseCaptureHint ? '<br><span style="color:#ffd24a">Click the game to capture the mouse for aiming</span>' : ''),
     );
 

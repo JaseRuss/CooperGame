@@ -51,6 +51,9 @@ export class Tank {
   /** Seconds left with jam gumming up the barrel (friendly fire from the jam cannon). */
   private gunJamTime = 0;
   private gunJamVisuals: THREE.Object3D[] = [];
+  /** Seconds left stuck fast in a jam puddle (enemy tanks hit by the jam cannon): the tracks can't move. */
+  private stuckTime = 0;
+  private stuckVisuals: THREE.Object3D[] = [];
   readonly fireInterval: number = 1.6;
   readonly muzzleSpeed: number = 160;
   readonly shellDamage: number = 26;
@@ -536,6 +539,10 @@ export class Tank {
 
   /** Drive the hull for this frame using skid-steer kinematics; handles terrain + obstacle collision. */
   protected drive(throttle: number, steer: number, dt: number, maxSpeed: number): void {
+    if (this.stuckTime > 0) {
+      throttle = 0;
+      steer = 0;
+    }
     const turnAuthority = 0.75 + 0.25 * Math.abs(throttle);
     this.hullYaw -= steer * MAX_YAW_RATE * dt * turnAuthority;
     this.hullYaw = Math.atan2(Math.sin(this.hullYaw), Math.cos(this.hullYaw));
@@ -593,6 +600,36 @@ export class Tank {
     return true;
   }
 
+  /**
+   * Stuck in jam: the tracks are gummed up for `duration` seconds (the turret still turns), with
+   * jam over the running gear and a tag overhead. More jam tops it back up. Returns true if the
+   * tank wasn't already stuck.
+   */
+  stickInJam(duration: number): boolean {
+    if (!this.alive || this.isDestroyed) return false;
+    const fresh = this.stuckTime <= 0;
+    this.stuckTime = Math.max(this.stuckTime, duration);
+    if (!fresh) return false;
+    for (const s of [-1, 1]) {
+      for (const z of [-1.3, 0, 1.3]) {
+        const glob = createMuzzleGlob(1.5 + Math.random() * 0.6);
+        glob.position.set(s * (HULL_HALF_EXTENTS.x + 0.2), -0.2, z + (Math.random() - 0.5) * 0.4);
+        glob.scale.y *= 0.7;
+        this.root.add(glob);
+        this.stuckVisuals.push(glob);
+      }
+    }
+    const tag = createJammedTag(3.8, 'STUCK IN JAM!');
+    tag.position.y = 3.4;
+    this.root.add(tag);
+    this.stuckVisuals.push(tag);
+    return true;
+  }
+
+  get isStuck(): boolean {
+    return this.stuckTime > 0;
+  }
+
   get isGunJammed(): boolean {
     return this.gunJamTime > 0;
   }
@@ -612,6 +649,14 @@ export class Tank {
         this.gunJamTime = 0;
         for (const v of this.gunJamVisuals) v.removeFromParent();
         this.gunJamVisuals = [];
+      }
+    }
+    if (this.stuckTime > 0) {
+      this.stuckTime -= dt;
+      if (this.stuckTime <= 0) {
+        this.stuckTime = 0;
+        for (const v of this.stuckVisuals) v.removeFromParent();
+        this.stuckVisuals = [];
       }
     }
   }

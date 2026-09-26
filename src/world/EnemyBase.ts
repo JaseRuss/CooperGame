@@ -3,6 +3,8 @@ import type RAPIER from '@dimforge/rapier3d-compat';
 import type { AssetLibrary } from './AssetLibrary';
 import type { Building } from './Building';
 import { Bunker } from './Bunker';
+import { AAGun } from './AAGun';
+import { NIGHT } from '../core/config';
 import type { HitRegistry } from '../combat/HitRegistry';
 import { heightAt } from './Terrain';
 import { siteToWorld, siteYaw, enemyArmyOfSite, ENEMY_BASE_HALF, type Site } from './Landmarks';
@@ -33,9 +35,10 @@ const TARGETS: ModelTarget[] = [
   { label: 'Factory', model: 'building-l', lx: -38, lz: -40, scale: 11, hp: 320 },
   { label: 'Warehouse', model: 'building-r', lx: 36, lz: -44, scale: 10, hp: 260 },
   { label: 'Smokestack', model: 'chimney-large', lx: -8, lz: -52, scale: 10, hp: 140, smoke: true },
-  { label: 'Fuel Tank', model: 'detail-tank-large', lx: -48, lz: 22, scale: 8, hp: 90, fuel: true },
-  { label: 'Fuel Tank', model: 'detail-tank-large', lx: -48, lz: 46, scale: 8, hp: 90, fuel: true },
-  { label: 'Water Tower', model: 'water-tower', lx: 48, lz: 42, scale: 10, hp: 120 },
+  // Fuel tanks go up from one shell; the water tower takes two.
+  { label: 'Fuel Tank', model: 'detail-tank-large', lx: -48, lz: 22, scale: 8, hp: 20, fuel: true },
+  { label: 'Fuel Tank', model: 'detail-tank-large', lx: -48, lz: 46, scale: 8, hp: 20, fuel: true },
+  { label: 'Water Tower', model: 'water-tower', lx: 48, lz: 42, scale: 10, hp: 45 },
 ];
 const CONTAINERS: [string, number, number, number][] = [
   ['shipping-container-a', 20, 54, 0],
@@ -87,6 +90,8 @@ export class EnemyBase {
   readonly objectives: Objective[] = [];
   readonly buildings: Building[] = [];
   readonly bunker: Bunker;
+  /** The flak gun that lights up the night sky with tracer (night mission only). */
+  readonly aaGun: AAGun | null = null;
   private readonly smokestacks: { building: Building; top: THREE.Vector3; timer: number }[] = [];
   private readonly radarDish: THREE.Object3D;
   private readonly flagMaterial: THREE.MeshStandardMaterial;
@@ -114,7 +119,7 @@ export class EnemyBase {
     for (const t of TARGETS) {
       const p = at(t.lx, t.lz);
       const b = plantBuilding(world, scene, hitRegistry, assets.clone('industrial', t.model), p.x, p.z, yaw, t.scale, t.hp, t.fuel ? 0x6a6a6a : 0x9c9478);
-      if (t.fuel) b.explosionSize = 4;
+      if (t.fuel) b.fuel = true;
       this.buildings.push(b);
       this.objectives.push({ label: t.label, position: b.center, isDestroyed: () => b.destroyed });
       if (t.smoke) {
@@ -185,7 +190,7 @@ export class EnemyBase {
     dishParts.add(new THREE.BoxGeometry(0.8, 0.8, 0.6), dark, 0, 0.6, -1.3); // counterweight
     dishParts.buildInto(this.radarDish);
     const rp = at(34, 8);
-    const radarBuilding = plantBuilding(world, scene, hitRegistry, radar, rp.x, rp.z, yaw, 1, 80, armyColor);
+    const radarBuilding = plantBuilding(world, scene, hitRegistry, radar, rp.x, rp.z, yaw, 1, 25, armyColor); // one shell
     this.buildings.push(radarBuilding);
     this.objectives.push({ label: 'Radar', position: radarBuilding.center, isDestroyed: () => radarBuilding.destroyed });
 
@@ -193,6 +198,14 @@ export class EnemyBase {
     const bp = at(0, -2);
     this.bunker = new Bunker(world, scene, hitRegistry, bp.x, bp.z, yaw + Math.PI, 'enemy', armyColor);
     this.objectives.push({ label: 'Command Bunker', position: this.bunker.position, isDestroyed: () => !this.bunker.alive });
+
+    if (NIGHT) {
+      const ap = at(-22, 30);
+      const gun = new AAGun(world, scene, hitRegistry, ap.x, ap.z, armyColor);
+      this.aaGun = gun;
+      this.buildings.push(gun.building);
+      this.objectives.push({ label: 'AA Gun', position: gun.position, isDestroyed: () => !gun.alive });
+    }
 
     // The army's own shells never hurt its compound.
     for (const b of this.buildings) b.faction = 'enemy';
@@ -299,6 +312,7 @@ export class EnemyBase {
 
   update(dt: number, emitSmoke: (point: THREE.Vector3, radius: number) => void): void {
     this.radarDish.rotation.y += dt * 1.1;
+    this.aaGun?.update(dt);
     for (const s of this.smokestacks) {
       if (s.building.destroyed) continue;
       s.timer -= dt;

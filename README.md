@@ -77,9 +77,9 @@ plug one in and press a button so the browser detects it.
 | Aim turret | Right stick | Mouse |
 | Fire | RT or A | Left click or Space |
 | Jam cannon (hold, short range) | LT | E |
+| Mega jam: jam all round the tank (when charged) | X | X |
 | Homing rocket (when charged) | LB | F or right click |
 | AA missiles (with a helicopter locked) | RB | Q |
-| Call a buddy tank (when charged) | X | X |
 | Switch first / third person | Y | C |
 | Pause, full map and options | Start | M |
 | Return to the nearest family base | Back | R |
@@ -116,10 +116,15 @@ and right to move, and X to delete. Your choices are remembered.
 - **Family bases** sit around the edge of the map. Drive inside one to repair
   and restock your AA missiles.
 - The **jam cannon** sprays a stream of strawberry jam that lands in a line along
-  your aim; sweep the turret to hose down a whole squad. Enemy soldiers caught in
-  it get stuck, can't shoot, and slip over a few seconds later. Careful with
-  your own side: jam doesn't hurt them, but it gums up their guns for a few
-  seconds.
+  your aim; sweep the turret to hose down a whole squad. The jam drips as it
+  flies, so anything under its path gets it too, even if you shoot over their
+  heads. Enemy soldiers caught in it get stuck, can't shoot, and slip over a few
+  seconds later. Enemy tanks get their tracks stuck and can't drive for a few
+  seconds. Get jam into the front of an enemy bunker and it's a critical hit.
+  Careful with your own side: jam doesn't hurt them, but it gums up their guns
+  for a few seconds.
+- **Mega jam** (X): lobs rings of jam all round the tank. It takes 20 seconds to
+  refill.
 - Your tank (and your buddies) go a bit faster on **roads**.
 - Drive into trees and lamp posts to knock them flat.
 - **Rear hits** do double damage to enemy tanks. Front armour takes half damage.
@@ -128,10 +133,22 @@ and right to move, and X to delete. Your choices are remembered.
   waves a white flag and shouts, or the whole thing rockets into the sky and
   bursts into confetti.
 - **Critical hits:** put a shell through a pillbox's gun slit, or into a parked
-  jet's wing-tip missiles or fuel tanks, and it goes up in one shot. The
+  jet's wing-tip missiles or fuel tanks, and it goes up in one shot.
+- **Fuel tanks** in the enemy bases go up from one shell in a huge fireball that
+  can set off the tank next door. Radars fall to one shell, water towers to two. The
   crosshair turns gold and says CRITICAL when you're lined up on one.
 - **Buddy tanks** (Keston, Max, Innes and Jason, unless you rename them) follow
-  you and join the fight. You can have all four out at once. The meter starts
-  full and refills over five minutes.
+  you and join the fight. One rolls in by themselves whenever the buddy meter
+  fills (it starts full and refills over five minutes), up to all four at once.
 - Hit a building and a health bar pops up over it for a few seconds.
 - The pause map shows where the enemy is gathered as a red glow.
+
+## Mission 2: Night Raid
+
+Win the first mission and the night raid starts on its own: a new battlefield
+under the stars. Every enemy base has a flak gun hosing tracer into the sky, so
+you can see where the bases are from across the map. Knocking out the flak gun
+is one of the base's targets. Flares go up over troops in the distance: red over
+the enemy, green over your side. Your tank has a headlight. To jump between
+missions at any time, pause and change **Mission** at the bottom of **Options**
+(it starts that mission from the beginning), or open the game with `?mission=2`.

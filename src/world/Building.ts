@@ -35,6 +35,18 @@ export class Building {
   faction: Faction | null = null;
   /** Indestructible while set (the Fortress, until its gates open). */
   locked = false;
+  /**
+   * A fuel tank: fragile, and it goes up in a huge fireball that sets off anything close by.
+   * Setting it also sizes the blast.
+   */
+  get fuel(): boolean {
+    return this.isFuel;
+  }
+  set fuel(on: boolean) {
+    this.isFuel = on;
+    if (on) this.explosionSize = 6.5;
+  }
+  private isFuel = false;
   /** Weak points (a pillbox's gun slit, a jet's missiles). */
   readonly critSpots: CritSpot[] = [];
   /** How much bigger the blast is when it goes up from a critical hit. */
@@ -98,12 +110,18 @@ export class Building {
   strike(amount: number, point: THREE.Vector3, dir: THREE.Vector3): CritSpot | null {
     const crit = this.critAt(point, dir);
     if (crit) {
-      this.explosionSize *= this.critExplosionScale;
-      this.takeDamage(this.health + 1);
+      this.destroyByCritical();
       return crit;
     }
     this.takeDamage(amount);
     return null;
+  }
+
+  /** Goes up at once, with the bigger weak-point blast. */
+  destroyByCritical(): void {
+    if (this.destroyed || this.locked) return;
+    this.explosionSize *= this.critExplosionScale;
+    this.takeDamage(this.health + 1);
   }
 
   takeDamage(amount: number): void {
