@@ -8,6 +8,7 @@ import { generateWorld, type EnemySpawnPoint } from '../world/WorldGenerator';
 import { HomeBase, isInsideBase } from '../world/Base';
 import { distanceToPolyline, HIGHWAY_WIDTH, type Polyline } from '../world/RoadNetwork';
 import { JeepStation } from '../world/JeepStation';
+import { ChopperStation } from '../world/ChopperStation';
 import type { Building } from '../world/Building';
 import { Bunker } from '../world/Bunker';
 import type { EnemyBase } from '../world/EnemyBase';
@@ -26,7 +27,7 @@ import type { Shot } from '../entities/Soldier';
 import { HitRegistry } from '../combat/HitRegistry';
 import { ProjectileManager } from '../combat/ProjectileManager';
 import { ImpactEffects } from '../combat/ImpactEffects';
-import { predictTrajectory } from '../combat/Projectile';
+import { predictTrajectory, type Trajectory } from '../combat/Projectile';
 import { HomingRocket, type RocketTarget } from '../combat/HomingRocket';
 import { JamCannon } from '../combat/JamCannon';
 import { AAMissiles, AA_SALVO, AA_CAPACITY, type AirTrack } from '../combat/AAMissiles';
@@ -89,20 +90,29 @@ const ROCKET_BLAST_RADIUS = 16;
 const ROCKET_DAMAGE = 140;
 const ROCKET_LINGER_TIME = 3.2;
 
-// Jeep changing stations: drive through one and the tank becomes a fast jeep for a while (the
-// time is in the options). The jeep's trigger fires jam rounds; LB / F fires quick-reloading missiles.
+// Changing stations: drive through a jeep station and the tank becomes a fast jeep for a while,
+// or onto a chopper station's pad and it takes off as a chopper (the times are in the options).
+// The jeep's trigger fires jam rounds, the chopper's its chin gun; LB / F fires quick-reloading
+// missiles from either.
 const JEEP_JAM_SPEED = 130; // m/s: flat and fast, like bullets
-const JEEP_MISSILE_RECHARGE = 8; // seconds (the tank's rocket takes 75)
-const JEEP_MISSILE_DAMAGE = 95;
-const JEEP_MISSILE_RADIUS = 12;
-const JEEP_MISSILE_BLAST = 2.3;
-const JEEP_MISSILE_SCALE = 0.6;
+const CHOPPER_GUN_SPEED = 190;
+const CHOPPER_GUN_DAMAGE = 4; // a tank shell does 26; the chin gun fires ten a second
+const CHOPPER_GUN_BLAST = 0.4;
+const MISSILE_RECHARGE = 8; // seconds (the tank's rocket takes 75)
+const MISSILE_DAMAGE = 95;
+const MISSILE_RADIUS = 12;
+const MISSILE_BLAST = 2.3;
+const MISSILE_SCALE = 0.6;
 /** The model swap happens this long into the smoke puff, once the cloud has thickened. */
 const CHANGE_SWAP_DELAY = 0.18;
 /** Where a station stands outside a home base's wall, and how far either side of the road. */
 const STATION_RADIUS = 80;
 const STATION_ANGLES = [-0.36, -0.55, 0.62, -0.8, 0.85]; // off the gate; the keepsake sits at +0.36
 const STATION_ROAD_CLEARANCE = HIGHWAY_WIDTH / 2 + 11;
+/** A chopper tops up its time anywhere this much wider than the pad (it's hard to see straight down). */
+const CHOPPER_TOP_UP_REACH = 8;
+/** Below this height the chopper counts as on the ground: it knocks trees over and splashes through lakes. */
+const CHOPPER_LOW = 4;
 
 // Buddy tanks: a long recharge, starting full. Each slot has its own crew.
 const BUDDY_RECHARGE_TIME = 300;
@@ -145,6 +155,8 @@ interface RedSlot {
   /** Replacements keep coming only while this holds (null = always). */
   holdWhile: (() => boolean) | null;
 }
+
+type Station = JeepStation | ChopperStation;
 
 interface FamilyBase {
   info: FriendlyBase;
@@ -245,15 +257,20 @@ export class Game {
   private assets!: AssetLibrary;
   /** Stars, moon and distant firefights on the night mission. */
   private nightSky: NightSky | null = null;
-  /** Drive-through stations that turn the tank into a jeep. */
-  private jeepStations: JeepStation[] = [];
-  /** The station the player is in right now, so driving through one only counts once. */
-  private inStation: JeepStation | null = null;
-  /** Seconds of jeep left (0 while it's the tank), out of `jeepTimeTotal`. */
-  private jeepTime = 0;
-  private jeepTimeTotal = 0;
-  private jeepMissileCharge = 1;
-  private jeepMissiles: HomingRocket[] = [];
+  /** Changing stations that turn the tank into a jeep or a chopper. */
+  private stations: Station[] = [];
+  /** The station the player is in (or over) right now, so passing through one only counts once. */
+  private inStation: Station | null = null;
+  /** Seconds of jeep or chopper left (0 while it's the tank), out of `rideTimeTotal`. */
+  private rideTime = 0;
+  private rideTimeTotal = 0;
+  /** The jeep's and chopper's missiles: reload (0..1) and the ones in flight. */
+  private missileCharge = 1;
+  private missiles: HomingRocket[] = [];
+  /** The night mission's headlight, which the chopper points down at the ground. */
+  private headlight: THREE.SpotLight | null = null;
+  /** Seconds until the "Fortress is locked" callout can show again. */
+  private fortressWarning = 0;
   /** The vehicle to swap to once the smoke puff has thickened, and how long until then. */
   private pendingSwap: { to: Vehicle; delay: number } | null = null;
 
@@ -347,9 +364,10 @@ export class Game {
         spawnYaw: Math.atan2(-Math.cos(gate), -Math.sin(gate)),
       };
     });
-    // Every other home base round the map (the four in the middle of an edge) has a jeep station.
+    // Every home base has a station, alternating round the map: a jeep station at the four in the
+    // middle of an edge, a chopper station at the four corners.
     for (const fb of this.familyBases) {
-      if (fb.info.x === 0 || fb.info.z === 0) this.addHomeStation(fb, content.highways);
+      this.addHomeStation(fb, content.highways, fb.info.x === 0 || fb.info.z === 0 ? 'jeep' : 'chopper');
     }
     this.bunkers = content.bunkers;
     this.enemyBases = content.enemyBases;
@@ -428,9 +446,20 @@ export class Game {
   /** Night driving: a headlight beam from the front of the hull, lighting the ground ahead. */
   private fitHeadlights(): void {
     const lamp = new THREE.SpotLight(0xfff0c8, 45, 120, 0.6, 0.7, 1);
-    lamp.position.set(0, 0.8, -2.1);
-    lamp.target.position.set(0, -3, -30);
     this.player.root.add(lamp, lamp.target);
+    this.headlight = lamp;
+    this.aimHeadlight();
+  }
+
+  /** The headlight lights the road ahead, or from the chopper's nose the ground well below. */
+  private aimHeadlight(): void {
+    const lamp = this.headlight;
+    if (!lamp) return;
+    const chopper = this.player.isChopper;
+    lamp.position.set(0, chopper ? 0.3 : 0.8, chopper ? -2.8 : -2.1);
+    lamp.target.position.set(0, chopper ? -60 : -3, chopper ? -45 : -30);
+    lamp.distance = chopper ? 170 : 120;
+    lamp.intensity = chopper ? 120 : 45;
   }
 
   // ---------- spawning ----------
@@ -492,6 +521,7 @@ export class Game {
     const row = Math.floor(slot / 2) + 1;
     const offset = new THREE.Vector3(side * 9, 0, row * 12).applyAxisAngle(new THREE.Vector3(0, 1, 0), this.player.yaw);
     const spot = this.player.position.clone().add(offset);
+    spot.y = surfaceHeightAt(spot.x, spot.z); // on the ground, even with the player up in the chopper
 
     // Take the next crew in the rota that isn't already out.
     const out = new Set(this.buddies.map((b) => b.crew));
@@ -642,10 +672,12 @@ export class Game {
     }
     this.megaJamCharge = 0;
     const origin = this.player.position.clone().add(new THREE.Vector3(0, 2.8, 0));
-    const pitch = 0.7; // lobbed, so it clears anything standing round the tank
+    // From the chopper it's flung out level and falls into the same rings on the ground below.
+    const drop = this.player.heightAboveGround > CHOPPER_LOW ? origin.y - surfaceHeightAt(origin.x, origin.z) : 0;
+    const pitch = drop > 0 ? 0 : 0.7; // lobbed, so it clears anything standing round the tank
     MEGA_JAM_RINGS.forEach((range, ring) => {
-      // Speed for that range on a flat lob (jam globs fall at 12 m/s²).
-      const speed = Math.sqrt((range * 12) / Math.sin(2 * pitch));
+      // Speed for that range on a flat lob, or thrown level from a height (jam globs fall at 12 m/s²).
+      const speed = drop > 0 ? range * Math.sqrt(12 / (2 * drop)) : Math.sqrt((range * 12) / Math.sin(2 * pitch));
       for (let i = 0; i < MEGA_JAM_PER_RING; i++) {
         const a = ((i + ring * 0.5) / MEGA_JAM_PER_RING) * Math.PI * 2;
         const dir = new THREE.Vector3(Math.cos(a) * Math.cos(pitch), Math.sin(pitch), Math.sin(a) * Math.cos(pitch));
@@ -676,6 +708,30 @@ export class Game {
     bunker.building.destroyByCritical();
     this.collapseBuilding(bunker.building, 'player');
     this.onCriticalHit('Jam in the gun slit', point, true);
+  }
+
+  /** A round from the chopper's chin gun: a small bang where it lands, for tanks, buildings and troops alike. */
+  private fireChinGun(shot: Shot): void {
+    this.impacts.muzzleFlash(shot.origin, shot.direction);
+    this.sound.play('crack', { volume: 0.3, rate: 2.2, minGap: 0.06 });
+    this.projectiles.spawn(
+      shot.origin,
+      shot.direction,
+      CHOPPER_GUN_SPEED,
+      CHOPPER_GUN_DAMAGE,
+      this.player.physicsCollider,
+      (point, result) => {
+        if (result.collapsedBuilding) this.collapseBuilding(result.collapsedBuilding, 'player');
+        else if (result.water) this.impacts.splash(point, 0.3);
+        else if (result.tree) {
+          result.tree.knockDown(shot.direction);
+          this.impacts.dustPuff(point);
+        } else this.explode(point, CHOPPER_GUN_BLAST, 'player');
+        if (result.critical) this.onCriticalHit(result.critical, point, true);
+      },
+      0.55,
+      'player',
+    );
   }
 
   /** Small-arms fire from troops and bunker machine guns; a round landing by a soldier drops him. */
@@ -884,7 +940,7 @@ export class Game {
     }
   }
 
-  /** Big blast: wrecks tanks, buildings and troops around the impact (the rocket; smaller for jeep missiles). */
+  /** Big blast: wrecks tanks, buildings and troops around the impact (the rocket; smaller for the jeep's and chopper's missiles). */
   private rocketBlast(point: THREE.Vector3, damage = ROCKET_DAMAGE, radius = ROCKET_BLAST_RADIUS, size = 3.4): void {
     this.explode(point, size, 'player');
     this.impacts.addSmokeSource(point.clone(), size * 0.9, 25);
@@ -944,36 +1000,52 @@ export class Game {
     return true;
   }
 
-  // ---------- jeep changing stations ----------
+  // ---------- changing stations: jeeps and choppers ----------
 
   /**
-   * A station just outside a home base's wall, beside the road out of the gate. The bay runs
-   * across the radius, so you pull off the road and drive straight through it.
+   * A station just outside a home base's wall, beside the road out of the gate. A jeep station's
+   * bay runs across the radius, so you pull off the road and drive straight through it.
    */
-  private addHomeStation(fb: FamilyBase, highways: Polyline[]): void {
+  private addHomeStation(fb: FamilyBase, highways: Polyline[], kind: Station['kind']): void {
     for (const off of STATION_ANGLES) {
       const a = fb.gate + off;
       const x = fb.info.x + Math.cos(a) * STATION_RADIUS;
       const z = fb.info.z + Math.sin(a) * STATION_RADIUS;
       if (highways.some((h) => distanceToPolyline(x, z, h) < STATION_ROAD_CLEARANCE)) continue;
-      // The bay's local Z becomes (sin yaw, cos yaw): along the wall, (-sin a, cos a).
-      this.jeepStations.push(new JeepStation(this.world, this.scene, x, z, -a));
+      // The station's local Z becomes (sin yaw, cos yaw): along the wall, (-sin a, cos a).
+      this.stations.push(this.buildStation(kind, x, z, -a));
       return;
     }
   }
 
-  /** Drive through a station to become a jeep (or top the jeep back up); run the jeep's timer and missiles. */
-  private updateJeep(dt: number): void {
-    for (const station of this.jeepStations) station.update(dt);
-    const station = this.jeepStations.find((s) => s.contains(this.player.position)) ?? null;
+  private buildStation(kind: Station['kind'], x: number, z: number, yaw: number): Station {
+    return kind === 'jeep' ? new JeepStation(this.world, this.scene, x, z, yaw) : new ChopperStation(this.world, this.scene, x, z, yaw);
+  }
+
+  private rideMinutes(kind: Station['kind']): number {
+    return kind === 'jeep' ? this.settings.jeepMinutes : this.settings.chopperMinutes;
+  }
+
+  /**
+   * Drive through a station to change (or top the time back up); run the jeep's or chopper's
+   * timer and the missiles. When the chopper's time is up it lands first, then changes back.
+   */
+  private updateRide(dt: number): void {
+    for (const station of this.stations) station.update(dt);
+    const p = this.player.position;
+    const flying = this.player.isChopper;
+    // The chopper flies straight over jeep stations, and tops up anywhere over its own pad.
+    const station =
+      this.stations.find((s) => (s.kind === 'chopper' ? s.contains(p, flying ? CHOPPER_TOP_UP_REACH : 0) : !flying && s.contains(p))) ?? null;
     if (station && station !== this.inStation && !this.pendingSwap) {
       station.celebrate();
-      if (this.player.isJeep) {
-        this.jeepTime = this.jeepTimeTotal = this.settings.jeepMinutes * 60;
-        this.jeepMissileCharge = 1;
-        this.hud.showCallout('JEEP TIME TOPPED UP!', '#8fe0ff');
+      if (this.player.vehicle === station.kind) {
+        this.rideTime = this.rideTimeTotal = this.rideMinutes(station.kind) * 60;
+        this.missileCharge = 1;
+        this.player.cancelLanding();
+        this.hud.showCallout(`${station.kind.toUpperCase()} TIME TOPPED UP!`, '#8fe0ff');
       } else {
-        this.changeVehicle('jeep');
+        this.changeVehicle(station.kind);
       }
     }
     this.inStation = station;
@@ -982,79 +1054,85 @@ export class Game {
       this.pendingSwap.delay -= dt;
       if (this.pendingSwap.delay <= 0) {
         this.player.setVehicle(this.pendingSwap.to);
+        this.aimHeadlight();
         this.pendingSwap = null;
       }
-    } else if (this.player.isJeep) {
-      this.jeepTime -= dt;
-      if (this.jeepTime <= 0) this.changeVehicle('tank');
+    } else if (this.player.vehicle !== 'tank') {
+      this.rideTime = Math.max(0, this.rideTime - dt);
+      if (this.rideTime > 0) {
+        // Still time left.
+      } else if (!this.player.isChopper || this.player.landed) {
+        this.changeVehicle('tank');
+      } else if (!this.player.landing) {
+        this.player.beginLanding();
+        this.hud.showBanner('TIME TO LAND!', 'The chopper is coming down. Steer it somewhere clear');
+      }
     }
 
-    this.jeepMissileCharge = Math.min(1, this.jeepMissileCharge + dt / JEEP_MISSILE_RECHARGE);
-    this.player.setJeepMissilesReady(this.jeepMissileCharge >= 1);
-    for (let i = this.jeepMissiles.length - 1; i >= 0; i--) {
-      const hit = this.jeepMissiles[i].update(dt, this.world, (p) => this.impacts.trailPuff(p));
+    this.missileCharge = Math.min(1, this.missileCharge + dt / MISSILE_RECHARGE);
+    this.player.setMissilesReady(this.missileCharge >= 1);
+    for (let i = this.missiles.length - 1; i >= 0; i--) {
+      const hit = this.missiles[i].update(dt, this.world, (p) => this.impacts.trailPuff(p));
       if (!hit) continue;
-      this.rocketBlast(hit, JEEP_MISSILE_DAMAGE, JEEP_MISSILE_RADIUS, JEEP_MISSILE_BLAST);
-      this.jeepMissiles.splice(i, 1);
+      this.rocketBlast(hit, MISSILE_DAMAGE, MISSILE_RADIUS, MISSILE_BLAST);
+      this.missiles.splice(i, 1);
     }
   }
 
   /** A puff of smoke, and the vehicle swaps once it's thick enough to hide the change. */
   private changeVehicle(to: Vehicle): void {
-    this.impacts.changePuff(this.player.position.clone());
+    const chopper = to === 'chopper' || this.player.isChopper;
+    this.impacts.changePuff(this.player.position.clone(), chopper ? 1.8 : 1);
     this.sound.play('poof', { volume: 0.6 });
     this.sound.play('thud', { volume: 0.7 });
     this.cameraRig.addShake(0.3);
     this.pendingSwap = { to, delay: CHANGE_SWAP_DELAY };
-    if (to === 'jeep') {
-      const minutes = this.settings.jeepMinutes;
-      this.jeepTime = this.jeepTimeTotal = minutes * 60;
-      this.jeepMissileCharge = 1;
-      this.hud.showBanner('JEEP TIME!', `Zoom about for ${minutes} minute${minutes > 1 ? 's' : ''}. Fire shoots jam, the rocket button fires missiles`);
-    } else {
-      this.jeepTime = 0;
-      this.hud.showBanner('BACK IN THE TANK!', 'Drive through a jeep station for another go');
+    if (to === 'tank') {
+      this.rideTime = 0;
+      this.hud.showBanner('BACK IN THE TANK!', 'Drive through a jeep station or onto a chopper pad for another go');
+      return;
     }
+    const minutes = this.rideMinutes(to);
+    this.rideTime = this.rideTimeTotal = minutes * 60;
+    this.missileCharge = 1;
+    const time = `${minutes} minute${minutes > 1 ? 's' : ''}`;
+    if (to === 'jeep') this.hud.showBanner('JEEP TIME!', `Zoom about for ${time}. Fire shoots jam, the rocket button fires missiles`);
+    else this.hud.showBanner('CHOPPER TIME!', `Fly about for ${time}. Fire shoots the chin gun, the rocket button fires two missiles`);
   }
 
-  /** The jeep's missiles: like the rocket (same lock), smaller, no rocket cam and a quick reload. */
-  private tryJeepMissile(): void {
-    if (this.jeepMissileCharge < 1) {
-      this.hud.showCallout(`MISSILES ${Math.floor(this.jeepMissileCharge * 100)}%`, '#ff9a5a');
+  /** The jeep's and chopper's missiles: like the rocket (same lock), smaller, no rocket cam and a quick reload. */
+  private tryMissiles(): void {
+    if (this.missileCharge < 1) {
+      this.hud.showCallout(`MISSILES ${Math.floor(this.missileCharge * 100)}%`, '#ff9a5a');
       return;
     }
     const lock = this.findLockTarget();
-    const fallback = predictTrajectory(
-      this.world,
-      this.player.muzzleWorldPosition,
-      this.player.muzzleWorldDirection,
-      this.player.muzzleSpeed,
-      this.player.physicsCollider,
-    ).impact;
-    const { origin, direction } = this.player.jeepMissileLaunch;
-    const missile = new HomingRocket(
-      this.scene,
-      origin,
-      direction,
-      lock ? lock.track : () => null,
-      lock ? lock.position.clone() : fallback,
-      this.player.physicsCollider,
-    );
-    missile.mesh.scale.setScalar(JEEP_MISSILE_SCALE);
-    this.jeepMissiles.push(missile);
-    this.impacts.muzzleFlash(origin, direction);
+    const fallback = this.aimTrajectory().impact;
+    for (const { origin, direction } of this.player.missileLaunches) {
+      const missile = new HomingRocket(
+        this.scene,
+        origin,
+        direction,
+        lock ? lock.track : () => null,
+        lock ? lock.position.clone() : fallback,
+        this.player.physicsCollider,
+      );
+      missile.mesh.scale.setScalar(MISSILE_SCALE);
+      this.missiles.push(missile);
+      this.impacts.muzzleFlash(origin, direction);
+    }
     this.sound.play('launch', { volume: 0.55, rate: 1.25, fadeAfter: 0.9 });
-    this.jeepMissileCharge = 0;
+    this.missileCharge = 0;
   }
 
-  /** A captured base that gets a station (every other one) has it put up as the garrison moves in. */
-  private addBaseStation(base: EnemyBase): boolean {
-    if (this.enemyBases.indexOf(base) % 2 !== 0) return false;
-    const spot = base.garrisonLayout().jeepStation;
-    const station = new JeepStation(this.world, this.scene, spot.x, spot.z, spot.yaw);
-    this.jeepStations.push(station);
+  /** A captured base gets a station as the garrison moves in: a jeep station at every other one, a chopper station at the rest. */
+  private addBaseStation(base: EnemyBase): Station['kind'] {
+    const kind = this.enemyBases.indexOf(base) % 2 === 0 ? 'jeep' : 'chopper';
+    const spot = base.garrisonLayout().station;
+    const station = this.buildStation(kind, spot.x, spot.z, spot.yaw);
+    this.stations.push(station);
     this.impacts.splash(station.center.clone(), 1.4); // dust as it drops into place
-    return true;
+    return kind;
   }
 
   // ---------- enemy base objectives ----------
@@ -1075,7 +1153,7 @@ export class Game {
       } else {
         this.hud.showBanner(
           `${base.title.toUpperCase()} DESTROYED!`,
-          `Green troops are moving in${station ? ' · Jeep station set up!' : ''} · ${left} enemy base${left > 1 ? 's' : ''} to go`,
+          `Green troops are moving in · ${station === 'jeep' ? 'Jeep' : 'Chopper'} station set up! · ${left} enemy base${left > 1 ? 's' : ''} to go`,
         );
       }
     }
@@ -1128,6 +1206,7 @@ export class Game {
       const side = i % 2 === 0 ? -1 : 1;
       const offset = new THREE.Vector3(side * 14, 0, 26 + Math.floor(i / 2) * 13).applyAxisAngle(up, this.player.yaw);
       const start = p.clone().add(offset);
+      start.y = surfaceHeightAt(start.x, start.z);
       this.addAssaultTank([start, gate, ...sweep], i % 2 === 0 ? ASSAULT_GREEN : ARMY_RED, 2, 1, holdWhile);
     }
     // More tanks and infantry already waiting outside each gate.
@@ -1191,19 +1270,24 @@ export class Game {
 
   // ---------- aiming / HUD helpers ----------
 
-  /** Where the player's next shell (or the jeep's next jam round) would fly and land, and what it would hit. */
-  private updateAim(): { screen: { x: number; y: number } | null; range: number | null; target: AimTarget } {
-    const jeep = this.player.isJeep;
-    const traj = predictTrajectory(
+  /** The flight of the player's next shell (or the jeep's jam round, or the chopper's chin gun round). */
+  private aimTrajectory(): Trajectory {
+    const vehicle = this.player.vehicle;
+    return predictTrajectory(
       this.world,
-      jeep ? this.player.jeepMuzzlePosition : this.player.muzzleWorldPosition,
+      this.player.gunMuzzlePosition,
       this.player.muzzleWorldDirection,
-      jeep ? JEEP_JAM_SPEED : this.player.muzzleSpeed,
+      vehicle === 'jeep' ? JEEP_JAM_SPEED : vehicle === 'chopper' ? CHOPPER_GUN_SPEED : this.player.muzzleSpeed,
       this.player.physicsCollider,
     );
+  }
+
+  /** Where the player's next shot would fly and land, and what it would hit. */
+  private updateAim(): { screen: { x: number; y: number } | null; range: number | null; target: AimTarget } {
+    const traj = this.aimTrajectory();
     const pts = traj.points;
     const travel = pts.length > 1 ? pts[pts.length - 1].clone().sub(pts[pts.length - 2]) : this.player.muzzleWorldDirection;
-    const target = this.classifyTarget(traj.hitCollider, traj.impact, travel, jeep);
+    const target = this.classifyTarget(traj.hitCollider, traj.impact, travel, this.player.isJeep);
     this.aimGuide.update(traj, target, this.camera);
     return { screen: this.toScreen(traj.impact), range: traj.normal ? traj.range : null, target };
   }
@@ -1268,7 +1352,7 @@ export class Game {
       markers: this.collectMarkers(),
       objective,
       fortress: { x: f.center.x, z: f.center.z, name: f.name, title: f.title, locked: f.locked, destroyed: f.isDestroyed },
-      jeepStations: this.jeepStations.map((s) => ({ x: s.center.x, z: s.center.z })),
+      stations: this.stations.map((s) => ({ x: s.center.x, z: s.center.z, kind: s.kind })),
     };
   }
 
@@ -1299,11 +1383,15 @@ export class Game {
               objectives: near.base.objectives.map((o) => ({ label: o.label, done: o.isDestroyed() })),
             }
           : null;
+    const vehicle = this.player.vehicle;
     return {
       health: this.player.health,
       maxHealth: this.player.maxHealth,
-      reloadFraction: this.player.isJeep ? 0 : this.player.fireCooldown / this.player.fireInterval,
-      jeep: this.player.isJeep ? { timeLeft: Math.max(0, this.jeepTime), total: this.jeepTimeTotal, missileCharge: this.jeepMissileCharge } : null,
+      reloadFraction: vehicle !== 'tank' ? 0 : this.player.fireCooldown / this.player.fireInterval,
+      ride:
+        vehicle !== 'tank'
+          ? { vehicle, timeLeft: this.rideTime, total: this.rideTimeTotal, missileCharge: this.missileCharge, landing: this.player.landing }
+          : null,
       cameraMode: this.cameraRig.mode,
       usingGamepad: input.usingGamepad,
       insideBase: inside ? nearestFriendlyBase(this.player.position.x, this.player.position.z).name : null,
@@ -1354,7 +1442,7 @@ export class Game {
     if (this.hud.paused) {
       this.hud.handleMenu(rawInput.menu);
       if (rawInput.mapTogglePressed && this.hud.paused) this.hud.toggleBigMap();
-      this.sound.updateEngine(0, this.player.isJeep, false);
+      this.sound.updateEngine(0, this.player.vehicle, false);
       this.hud.update(this.hudState(rawInput, false, { screen: null, range: null, target: 'none' }, null));
       this.renderer.render(this.scene, this.camera);
       return;
@@ -1374,7 +1462,7 @@ export class Game {
       }
       if (input.mapTogglePressed) this.hud.toggleBigMap();
       if (input.rocketPressed) {
-        if (this.player.isJeep) this.tryJeepMissile();
+        if (this.player.vehicle !== 'tank') this.tryMissiles();
         else if (this.rocketCharge >= 1) this.launchRocket();
       }
       if (input.aaPressed) this.tryFireAA();
@@ -1417,17 +1505,30 @@ export class Game {
       if (slot.tank && !(slot.tank instanceof HelicopterEnemy)) slot.tank.shielded = this.sealedInFortress(slot.tank.position);
     }
 
+    const before = this.player.position.clone();
     const playerShot = this.player.step(input, dt);
     if (playerShot) this.fire(this.player, playerShot);
-    // The jeep has no cannon: its trigger fires a stream of jam rounds.
-    if (input.firing && this.player.isJeep) {
-      const round = this.player.tryJeepJam();
-      if (round) {
+    // The chopper can't fly in over the Fortress while it's locked: it would land inside and be stuck.
+    const p = this.player.position;
+    this.fortressWarning -= dt;
+    if (this.player.isChopper && this.fortress.locked && this.fortress.contains(p.x, p.z) && !this.fortress.contains(before.x, before.z)) {
+      this.player.holdAt(before.x, before.z);
+      if (this.fortressWarning <= 0) {
+        this.hud.showCallout('THE FORTRESS IS LOCKED!', '#ffd24a');
+        this.fortressWarning = 2;
+      }
+    }
+    // The jeep and chopper have no cannon: the trigger fires a stream of jam rounds or chin gun rounds.
+    if (input.firing && this.player.vehicle !== 'tank') {
+      const round = this.player.tryRapidFire();
+      if (round && this.player.isChopper) {
+        this.fireChinGun(round);
+      } else if (round) {
         this.jam.shoot(round.origin, round.direction, JEEP_JAM_SPEED);
         this.sound.play('jamShot', { volume: 0.35, rate: 0.85, minGap: 0.07 });
       }
     }
-    this.updateJeep(dt);
+    this.updateRide(dt);
     if (input.jamFiring) {
       const glob = this.player.tryJam();
       if (glob) {
@@ -1511,7 +1612,9 @@ export class Game {
     );
     this.addRocketCharge(this.troops.runOver(this.player.position, RUN_OVER_RADIUS, 'player') * CHARGE_PER_TROOP);
 
-    const tankPositions = [this.player, ...this.buddies, ...this.enemySlots.flatMap((slot) => slot.tank ? [slot.tank] : []), ...this.redSlots.flatMap((slot) => slot.tank ? [slot.tank] : [])]
+    // Trees go over when a tank reaches them (or the chopper comes down low over them).
+    const playerLow = this.player.heightAboveGround < CHOPPER_LOW;
+    const tankPositions = [...(playerLow ? [this.player] : []), ...this.buddies, ...this.enemySlots.flatMap((slot) => slot.tank ? [slot.tank] : []), ...this.redSlots.flatMap((slot) => slot.tank ? [slot.tank] : [])]
       .filter((tank) => !tank.isDestroyed)
       .map((tank) => tank.position);
     for (const tree of this.trees) tree.update(dt, tankPositions);
@@ -1550,7 +1653,7 @@ export class Game {
     // Bow wave while the tank wades through a lake.
     this.wakeTimer -= dt;
     const moving = Math.abs(input.throttle) + Math.hypot(input.moveX, input.moveY) > 0.1;
-    if (moving && this.wakeTimer <= 0 && waterDepthAt(this.player.position.x, this.player.position.z) > 0.3) {
+    if (moving && playerLow && this.wakeTimer <= 0 && waterDepthAt(this.player.position.x, this.player.position.z) > 0.3) {
       this.wakeTimer = 0.12;
       const bow = this.player.position.clone().addScaledVector(this.player.forward, 2.2);
       bow.y = this.player.position.y;
@@ -1565,9 +1668,10 @@ export class Game {
       this.player.setTurretHidden(false);
       this.aimGuide.setVisible(false);
     } else {
+      this.cameraRig.setAerial(this.player.isChopper);
       this.cameraRig.update(this.player, dt);
       aim = this.updateAim();
-      if (this.player.isJeep ? this.jeepMissileCharge >= 1 : this.rocketCharge >= 1) {
+      if (this.player.vehicle !== 'tank' ? this.missileCharge >= 1 : this.rocketCharge >= 1) {
         const lock = this.findLockTarget();
         if (lock) lockScreen = this.toScreen(lock.position.clone().add(new THREE.Vector3(0, 1.5, 0)));
       }
@@ -1587,7 +1691,7 @@ export class Game {
     // The engine note follows how fast the player is really going.
     const speed = dt > 0 ? this.player.position.distanceTo(this.lastPlayerPosition) / dt : 0;
     this.lastPlayerPosition.copy(this.player.position);
-    this.sound.updateEngine(speed < 80 ? speed : 0, this.player.isJeep, !cinematic);
+    this.sound.updateEngine(speed < 80 ? speed : 0, this.player.vehicle, !cinematic);
     this.sound.setListener(this.camera);
 
     this.hud.update(this.hudState(input, cinematic, aim, lockScreen, aaLockScreen));

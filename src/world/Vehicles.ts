@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { plastic, shade } from '../utils/plastic';
-import { PartBuilder, tubeX, tubeZ } from '../utils/modelKit';
+import { PartBuilder, loftGeometry, tubeX, tubeZ } from '../utils/modelKit';
 
 const TYRE = 0x2e2f2c;
 
@@ -359,4 +359,267 @@ export function buildTruck(color: number): THREE.Group {
   wheels(w, [[-1.0, y, -2.35], [1.0, y, -2.35], [-1.0, y, 0.6], [1.0, y, 0.6], [-1.0, y, 1.85], [1.0, y, 1.85]], 0.55, 0.36, color);
   w.buildInto(g);
   return g;
+}
+
+// ---------- the player's chopper ----------
+
+/** How far the skids hang below the chopper model's origin (the middle of the cabin). */
+export const CHOPPER_SKID_DEPTH = 1.26;
+
+export interface ChopperParts {
+  /** The whole chopper, nose toward -Z, origin in the middle of the cabin. */
+  group: THREE.Group;
+  /** Main rotor (spins about Y) with a faint blur disc, and the tail rotor (spins about X). */
+  mainRotor: THREE.Object3D;
+  rotorDisc: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>;
+  tailRotor: THREE.Object3D;
+  /** Chin turret: turns about Y, with the twin gun pitching about X on it, and its muzzle. */
+  chinTurret: THREE.Object3D;
+  chinGun: THREE.Object3D;
+  chinMuzzle: THREE.Object3D;
+  /** The front (gunner's) seat at belt height, facing -Z. */
+  frontSeat: THREE.Object3D;
+  /** Missile rails under the stub wings (left, right): a missile hangs on each, nose -Z. */
+  rails: THREE.Object3D[];
+  /** The fronts of the two rocket pods (left, right). */
+  podMuzzles: THREE.Object3D[];
+}
+
+/** The pilot in the back seat: flight suit, white helmet with a dark visor, hands on the controls. */
+function chopperPilot(p: PartBuilder, color: number, z: number, hip: number): void {
+  const suit = plastic(shade(color, 1.55)); // light plastic, like the commander, so he reads
+  const kit = plastic(shade(color, 0.8));
+  const helmet = plastic(0xe8e4d8);
+  const visor = plastic(0x243038);
+  const v = (x: number, y: number, dz: number) => new THREE.Vector3(x, y, z + dz);
+  for (const s of [-1, 1]) {
+    p.beam(v(s * 0.1, hip, 0.05), v(s * 0.1, hip + 0.03, -0.38), 0.15, suit); // thighs
+    p.beam(v(s * 0.1, hip + 0.03, -0.38), v(s * 0.1, hip - 0.34, -0.5), 0.13, suit); // shins
+    p.add(new THREE.BoxGeometry(0.13, 0.08, 0.2), kit, s * 0.1, hip - 0.37, z - 0.56); // boots
+  }
+  p.add(new THREE.BoxGeometry(0.36, 0.44, 0.22), suit, 0, hip + 0.26, z + 0.08, 0.1);
+  p.add(new THREE.BoxGeometry(0.37, 0.06, 0.23), kit, 0, hip + 0.06, z + 0.07, 0.1); // belt
+  for (const s of [-1, 1]) p.beam(v(s * 0.16, hip + 0.46, 0.02), v(-s * 0.12, hip + 0.08, -0.02), 0.04, kit); // harness
+  p.add(new THREE.CylinderGeometry(0.05, 0.06, 0.1, 8), suit, 0, hip + 0.52, z + 0.08);
+  p.add(new THREE.SphereGeometry(0.11, 14, 10), suit, 0, hip + 0.62, z + 0.06);
+  p.add(new THREE.SphereGeometry(0.14, 16, 10, 0, Math.PI * 2, 0, Math.PI * 0.6), helmet, 0, hip + 0.64, z + 0.07);
+  p.add(new THREE.BoxGeometry(0.21, 0.08, 0.05), visor, 0, hip + 0.66, z - 0.06);
+  p.beam(v(0.12, hip + 0.58, 0.04), v(0.05, hip + 0.55, -0.08), 0.02, kit); // microphone
+  // Right hand on the stick between his knees, left on the lever at his side.
+  const stickTop = v(0.02, hip + 0.16, -0.3);
+  p.beam(v(0.02, hip - 0.25, -0.34), stickTop, 0.04, kit, true);
+  const hands = [v(-0.26, hip + 0.06, -0.12), stickTop];
+  p.beam(v(-0.26, hip - 0.1, 0.05), v(-0.26, hip + 0.04, -0.14), 0.035, kit, true); // collective
+  for (const [i, s] of [-1, 1].entries()) {
+    const shoulder = v(s * 0.2, hip + 0.44, 0.08);
+    const elbow = v(s * 0.24, hip + 0.18, -0.02);
+    p.beam(shoulder, elbow, 0.1, suit, true);
+    p.beam(elbow, hands[i], 0.09, suit, true);
+    p.add(new THREE.SphereGeometry(0.05, 8, 6), suit, hands[i].x, hands[i].y, hands[i].z);
+  }
+}
+
+/**
+ * A toy attack helicopter in moulded plastic, about 10 m nose to tail: a slim fuselage with a
+ * tandem bubble canopy (pilot behind, gunner in front), stub wings with rocket pods and missile
+ * rails, a twin chin gun, skids, and a four-bladed main rotor. The rotors and the gun are
+ * separate parts so they can spin and aim.
+ */
+export function buildChopperParts(color: number): ChopperParts {
+  const g = new THREE.Group();
+  const b = new PartBuilder();
+  const body = plastic(color);
+  const dark = plastic(shade(color, 0.7));
+  const deep = plastic(shade(color, 0.45));
+  const steel = plastic(0x5b5f58);
+  const black = plastic(0x2e2f2c);
+  const white = plastic(0xf4f1e4);
+  const yellow = plastic(0xffcc33);
+  const glass = new THREE.MeshPhysicalMaterial({ color: 0xbfe4f0, roughness: 0.05, clearcoat: 1, transparent: true, opacity: 0.3 });
+  const box = (w: number, h: number, d: number) => new THREE.BoxGeometry(w, h, d);
+  const v = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
+
+  // Fuselage: pointed nose, slim cabin, then the boom tapering back to the tail.
+  b.add(
+    loftGeometry([
+      { z: -4.35, w: 0.3, h: 0.3, y: -0.05 },
+      { z: -4.1, w: 0.8, h: 0.75, y: -0.05 },
+      { z: -3.5, w: 1.15, h: 1.15, y: -0.02 },
+      { z: -2.2, w: 1.38, h: 1.42, y: 0.02 },
+      { z: 0.5, w: 1.45, h: 1.52, y: 0.08 },
+      { z: 1.4, w: 1.12, h: 1.18, y: 0.24 },
+      { z: 2.3, w: 0.62, h: 0.64, y: 0.42 },
+      { z: 5.3, w: 0.34, h: 0.38, y: 0.62 },
+      { z: 5.7, w: 0.2, h: 0.22, y: 0.64 },
+    ], 28, 3),
+    body,
+  );
+  // Engine deck behind the canopy, with intakes, angled exhausts, the rotor mast and a beacon.
+  b.add(
+    loftGeometry([
+      { z: -0.5, w: 0.5, h: 0.2, y: 0.78 },
+      { z: -0.05, w: 1.12, h: 0.8, y: 0.98 },
+      { z: 1.3, w: 1.02, h: 0.72, y: 0.98 },
+      { z: 2.0, w: 0.5, h: 0.3, y: 0.86 },
+    ], 20, 3),
+    body,
+  );
+  for (const s of [-1, 1]) {
+    b.add(tubeZ(0.2, 0.2, 0.12, 14), deep, s * 0.55, 1.0, -0.1);
+    b.add(tubeZ(0.14, 0.14, 0.13, 12), black, s * 0.55, 1.0, -0.12);
+    b.add(tubeZ(0.14, 0.18, 0.5, 12), deep, s * 0.4, 1.0, 2.0, 0, s * 0.35, 0);
+    b.add(box(0.02, 0.26, 0.5), dark, s * 0.555, 0.95, 0.7); // engine access panel
+  }
+  b.add(new THREE.CylinderGeometry(0.13, 0.17, 0.5, 12), steel, 0, 1.55, 0.3);
+  b.add(new THREE.SphereGeometry(0.07, 8, 6), plastic(0xd0463a), 0, 1.4, 1.3);
+
+  // Tail: swept fin, a small fin underneath, tailplane with end plates, and the rotor gearbox.
+  b.add(box(0.1, 1.35, 0.75), body, 0, 1.15, 5.35, 0.35);
+  b.add(box(0.08, 0.55, 0.45), body, 0, 0.3, 5.45, -0.35);
+  b.add(box(0.06, 0.06, 0.3), steel, 0, 0.02, 5.6); // tail bumper
+  b.add(box(1.8, 0.07, 0.5), body, 0, 0.62, 4.3);
+  for (const s of [-1, 1]) b.add(box(0.06, 0.3, 0.4), dark, s * 0.9, 0.62, 4.3);
+  b.add(tubeX(0.12, 0.2, 10), dark, -0.12, 1.22, 5.4);
+  b.add(new THREE.SphereGeometry(0.06, 8, 6), white, 0, 0.66, 5.78); // tail light
+  b.add(new THREE.CylinderGeometry(0.01, 0.014, 1.2, 5), deep, 0, 1.25, 2.8, -0.5); // whip aerial
+
+  // Cockpit: the gunner's seat in front, the pilot's raised behind, instrument panels.
+  b.add(box(0.5, 0.1, 0.45), dark, 0, 0.12, -2.3);
+  b.add(box(0.5, 0.55, 0.1), dark, 0, 0.42, -2.03);
+  b.add(box(0.8, 0.22, 0.12), deep, 0, 0.56, -2.98, -0.4);
+  b.add(box(0.5, 0.1, 0.45), dark, 0, 0.3, -1.12);
+  b.add(box(0.5, 0.6, 0.1), dark, 0, 0.64, -0.8);
+  b.add(box(0.8, 0.2, 0.12), deep, 0, 0.72, -1.8, -0.4);
+  for (const x of [-0.2, 0, 0.2]) {
+    b.add(tubeZ(0.045, 0.045, 0.02, 10), white, x, 0.74, -1.87, -0.4);
+    b.add(tubeZ(0.045, 0.045, 0.02, 10), white, x, 0.58, -3.05, -0.4);
+  }
+  chopperPilot(b, color, -1.15, 0.38);
+
+  for (const s of [-1, 1]) {
+    // Stub wing (drooping a touch), a missile rail inboard and a rocket pod outboard.
+    b.add(box(1.5, 0.12, 0.85), dark, s * 1.35, -0.18, -0.15, 0, 0, -s * 0.06);
+    b.add(box(0.1, 0.22, 0.5), deep, s * 1.0, -0.32, -0.2);
+    b.add(box(0.08, 0.06, 1.1), steel, s * 1.0, -0.46, -0.25);
+    b.add(box(0.1, 0.22, 0.5), deep, s * 1.75, -0.36, -0.15);
+    b.add(tubeZ(0.27, 0.27, 1.35, 16), deep, s * 1.75, -0.63, -0.25);
+    b.add(tubeZ(0.28, 0.28, 0.1, 16), body, s * 1.75, -0.63, -0.85);
+    b.add(tubeZ(0.28, 0.28, 0.1, 16), body, s * 1.75, -0.63, 0.35);
+    b.add(tubeZ(0.1, 0.1, 0.02, 10), black, s * 1.75, -0.63, -0.93);
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2;
+      b.add(tubeZ(0.065, 0.065, 0.02, 8), black, s * 1.75 + Math.cos(a) * 0.17, -0.63 + Math.sin(a) * 0.17, -0.93);
+    }
+    b.add(new THREE.SphereGeometry(0.07, 8, 6), plastic(s < 0 ? 0xd0463a : 0x3fd06a), s * 2.1, -0.22, -0.15); // nav lights
+
+    // Skids on cross tubes, turned up at the toes.
+    b.add(tubeZ(0.06, 0.06, 3.6, 8), steel, s * 0.85, -1.2, -0.7);
+    b.beam(v(s * 0.85, -1.2, -2.48), v(s * 0.85, -1.0, -2.85), 0.12, steel, true);
+    for (const z of [-1.7, 0.4]) b.beam(v(s * 0.85, -1.2, z), v(s * 0.42, -0.6, z), 0.1, steel, true);
+
+    // Side door with a window, white stars on the cabin and the boom.
+    b.add(box(0.03, 0.46, 0.62), deep, s * 0.72, 0.18, 0.15);
+    b.add(box(0.035, 0.2, 0.3), glass, s * 0.72, 0.28, 0.15);
+    b.add(starGeometry(0.22, 0.086), white, s * 0.62, 0.2, 1.0, 0, (s * Math.PI) / 2, 0);
+    b.add(starGeometry(0.19, 0.074), white, s * 0.285, 0.48, 3.0, 0, (s * Math.PI) / 2, 0);
+  }
+  for (const z of [-1.7, 0.4]) b.add(tubeX(0.05, 0.9, 8), steel, 0, -0.62, z);
+  // Nose: pitot tube, landing light, and the chin turret's mount.
+  b.add(tubeZ(0.02, 0.02, 0.5, 6), steel, 0.2, -0.05, -4.45);
+  b.add(tubeZ(0.09, 0.09, 0.04, 12), plastic(0xfff3c0), 0, -0.52, -3.9, -0.6);
+  b.add(new THREE.CylinderGeometry(0.2, 0.24, 0.16, 14), deep, 0, -0.6, -3.35);
+
+  // Tandem bubble canopy with its frame, over both seats.
+  const bubble = [
+    { z: -3.6, w: 0.72, h: 0.28, y: 0.5 },
+    { z: -3.2, w: 1.1, h: 0.9, y: 0.55 },
+    { z: -2.3, w: 1.22, h: 1.3, y: 0.6 },
+    { z: -1.3, w: 1.22, h: 1.55, y: 0.66 },
+    { z: -0.55, w: 1.1, h: 1.2, y: 0.66 },
+    { z: -0.3, w: 0.7, h: 0.5, y: 0.66 },
+  ];
+  b.add(loftGeometry(bubble, 24, 2.6, [0, Math.PI]), glass);
+  for (const s of [bubble[1], { z: -1.8, w: 1.22, h: 1.43, y: 0.63 }, bubble[4]]) {
+    b.add(new THREE.TorusGeometry(1, 0.06, 6, 24, Math.PI), deep, 0, s.y, s.z, 0, 0, 0, s.w / 2 + 0.01, s.h / 2 + 0.01, 1);
+  }
+  for (const s of [-1, 1]) b.add(box(0.05, 0.05, 3.1), deep, s * 0.6, 0.6, -1.95);
+  b.buildInto(g);
+
+  const frontSeat = new THREE.Object3D();
+  frontSeat.position.set(0, 0.22, -2.35);
+  g.add(frontSeat);
+
+  // Main rotor: four blades with yellow tips on a hub, and a faint disc that shows as it spins up.
+  const mainRotor = new THREE.Group();
+  mainRotor.position.set(0, 1.82, 0.3);
+  const r = new PartBuilder();
+  r.add(new THREE.CylinderGeometry(0.3, 0.26, 0.22, 14), steel);
+  r.add(new THREE.ConeGeometry(0.2, 0.22, 12), steel, 0, 0.22, 0);
+  for (let i = 0; i < 4; i++) {
+    const a = (i * Math.PI) / 2;
+    const at = (d: number) => [Math.cos(a) * d, -Math.sin(a) * d] as const;
+    const [gx, gz] = at(0.45);
+    r.add(box(0.5, 0.14, 0.2), steel, gx, 0, gz, 0, a);
+    const [bx, bz] = at(2.4);
+    r.add(box(3.9, 0.06, 0.34), deep, bx, 0.02, bz, 0, a, -0.015);
+    const [tx, tz] = at(4.3);
+    r.add(box(0.36, 0.07, 0.35), yellow, tx, -0.01, tz, 0, a);
+  }
+  r.buildInto(mainRotor);
+  const rotorDisc = new THREE.Mesh(
+    new THREE.CircleGeometry(4.45, 40).rotateX(-Math.PI / 2),
+    new THREE.MeshBasicMaterial({ color: 0x1d2418, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide }),
+  );
+  rotorDisc.position.copy(mainRotor.position);
+  g.add(mainRotor, rotorDisc);
+
+  // Tail rotor on the left of the fin.
+  const tailRotor = new THREE.Group();
+  tailRotor.position.set(-0.24, 1.22, 5.4);
+  const t = new PartBuilder();
+  t.add(tubeX(0.1, 0.12, 10), steel);
+  for (let i = 0; i < 2; i++) {
+    const a = (i * Math.PI) / 2;
+    t.add(box(0.04, 1.5, 0.16), deep, -0.04, 0, 0, a);
+    for (const e of [-1, 1]) t.add(box(0.05, 0.16, 0.17), yellow, -0.04, e * 0.68 * Math.cos(a), e * 0.68 * Math.sin(a), a);
+  }
+  t.buildInto(tailRotor);
+  g.add(tailRotor);
+
+  // Chin turret: a ball under the nose with twin barrels.
+  const chinTurret = new THREE.Group();
+  chinTurret.position.set(0, -0.74, -3.35);
+  const chinGun = new THREE.Group();
+  chinGun.position.y = -0.04;
+  chinTurret.add(chinGun);
+  const ball = new PartBuilder();
+  ball.add(new THREE.SphereGeometry(0.26, 14, 10), deep);
+  for (const s of [-1, 1]) ball.add(box(0.06, 0.26, 0.3), dark, s * 0.26, -0.02, -0.02);
+  ball.buildInto(chinTurret);
+  const gun = new PartBuilder();
+  gun.add(tubeZ(0.12, 0.12, 0.3, 12), dark, 0, 0, -0.22);
+  for (const s of [-1, 1]) {
+    gun.add(tubeZ(0.04, 0.05, 1.0, 8), steel, s * 0.07, 0, -0.75);
+    gun.add(tubeZ(0.06, 0.06, 0.1, 8), deep, s * 0.07, 0, -1.2);
+  }
+  gun.add(box(0.2, 0.05, 0.08), deep, 0, 0, -0.9); // barrel clamp
+  gun.buildInto(chinGun);
+  const chinMuzzle = new THREE.Object3D();
+  chinMuzzle.position.set(0, 0, -1.3);
+  chinGun.add(chinMuzzle);
+  g.add(chinTurret);
+
+  const rails = [-1, 1].map((s) => {
+    const rail = new THREE.Object3D();
+    rail.position.set(s * 1.0, -0.6, -0.3);
+    g.add(rail);
+    return rail;
+  });
+  const podMuzzles = [-1, 1].map((s) => {
+    const m = new THREE.Object3D();
+    m.position.set(s * 1.75, -0.63, -1.05);
+    g.add(m);
+    return m;
+  });
+  return { group: g, mainRotor, rotorDisc, tailRotor, chinTurret, chinGun, chinMuzzle, frontSeat, rails, podMuzzles };
 }

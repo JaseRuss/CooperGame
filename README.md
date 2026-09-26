@@ -73,12 +73,12 @@ plug one in and press a button so the browser detects it.
 
 | Action | Controller | Keyboard / mouse |
 | --- | --- | --- |
-| Drive | Left stick | W A S D or arrow keys |
+| Drive (or fly the chopper) | Left stick | W A S D or arrow keys |
 | Aim turret | Right stick | Mouse |
-| Fire (the jeep fires jam rounds) | RT or A | Left click or Space |
+| Fire (the jeep fires jam rounds, the chopper its chin gun) | RT or A | Left click or Space |
 | Jam cannon (hold, short range) | LT | E |
 | Mega jam: jam all round the tank (when charged) | X | X |
-| Homing rocket (when charged; the jeep fires missiles) | LB | F or right click |
+| Homing rocket (when charged; the jeep and chopper fire missiles) | LB | F or right click |
 | AA missiles (with a helicopter locked) | RB | Q |
 | Switch first / third person | Y | C |
 | Pause, full map and options | Start | M |
@@ -88,7 +88,7 @@ Driving works like the Warthog in Halo by default: push the stick the way you
 want to go relative to the camera. Pull back to reverse. Let go and the tank
 turns to face where you're aiming. Prefer the old way? Pause, open **Options**
 (X or O) and switch **Tank controls** to **Classic**. Options also has aim speed,
-buddy name tags, how long the **jeep** lasts, **music** and **sound effects**
+buddy name tags, how long the **jeep** and the **chopper** last, **music** and **sound effects**
 volume (Off, Low, Medium or High), and the **buddy names**: pick a buddy and
 press A or Enter, then type a new name, or on a controller use up and down to
 pick each letter, left and right to move, and X to delete. Your choices are
@@ -151,12 +151,19 @@ sound on.
 - Hit a building and a health bar pops up over it for a few seconds.
 - The pause map shows where the enemy is gathered as a red glow.
 
-## Jeep stations
+## Jeep and chopper stations
 
-Every other family base (Cooper's, Mum's, Dad's and Inness's) has a **jeep
-station** just outside the gate, like a drive-through car wash. Drive the tank
-through it and, in a puff of smoke, it turns into a jeep. Some enemy bases get
-a station too once you've captured them. They show as a blue **J** on the maps.
+Every family base has a changing station just outside the gate, and they take
+turns round the map: Cooper's, Mum's, Dad's and Inness's have a **jeep
+station**, and Granny's, Grandpa's, Auntie Claire's and Uncle Steven's have a
+**chopper station**. Each enemy base gets one too once you've captured it, a
+jeep station and a chopper station in turn. Jeep stations show as a blue **J**
+on the maps, chopper stations as an orange **H**.
+
+### Jeep stations
+
+A jeep station is like a drive-through car wash. Drive the tank through it and,
+in a puff of smoke, it turns into a jeep.
 
 - The jeep is much faster than the tank. A driver steers and the commander rides
   in the back on the guns.
@@ -168,6 +175,29 @@ a station too once you've captured them. They show as a blue **J** on the maps.
 - After **3 minutes** (change it under **Jeep time** in **Options**) it turns
   back into the tank in another puff of smoke. Drive through a station while
   you're in the jeep to top the time back up.
+
+### Chopper stations
+
+A chopper station is a round helipad with a big **H**, a windsock and a sign
+with a spinning rotor on top. Drive the tank (or the jeep) onto the pad and, in
+a puff of smoke, it turns into an attack helicopter and takes off.
+
+- The chopper flies high over everything, so it can't bump into buildings or
+  trees. You don't have to worry about height: push the stick (or W A S D) the
+  way you want to go on screen, including sideways and backwards, and the nose
+  turns to face where you're aiming. A pilot flies it and the commander sits in
+  the front seat.
+- It can't fly into the Fortress while the gates are locked.
+- **Fire** shoots the chin gun: a fast stream of small shells.
+- **LB / F** fires two homing missiles, one off each wing. They reload in 8
+  seconds.
+- AA missiles fire from the rocket pods, and the **mega jam** drops rings of
+  jam onto the ground below.
+- First person (**Y** / **C**) is a gun camera under the nose.
+- After **3 minutes** (change it under **Chopper time** in **Options**) it comes
+  down to land wherever it is (steer it somewhere clear), then turns back into
+  the tank. Fly over a chopper station, even on the way down, to top the time
+  back up.
 
 ## Mission 2: Night Raid
 

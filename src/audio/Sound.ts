@@ -4,6 +4,7 @@ import { clamp } from '../utils/math';
 import { Music } from './Music';
 import type { Mission } from '../core/config';
 import type { Volume } from '../core/Settings';
+import type { Vehicle } from '../entities/PlayerTank';
 
 /**
  * Kenney CC0 samples in public/sounds (Sci-fi, Impact and Interface Sounds), under the name the
@@ -191,13 +192,25 @@ export class Sound {
   }
 
   /**
-   * The player's engine: a low, clanking rumble for the tank and a higher buzz for the jeep,
-   * rising with speed. Silent while `running` is false (paused, rocket cam).
+   * The player's engine: a low, clanking rumble for the tank, a higher buzz for the jeep and the
+   * chopper's thudding rotor, rising with speed. Silent while `running` is false (paused, rocket cam).
    */
-  updateEngine(speed: number, jeep: boolean, running: boolean): void {
+  updateEngine(speed: number, vehicle: Vehicle, running: boolean): void {
     if (this.ctx.state !== 'running') return;
     const e = (this.engine ??= this.buildEngine());
     const t = this.ctx.currentTime;
+    const jeep = vehicle === 'jeep';
+    if (vehicle === 'chopper') {
+      // The rotor: a deep note chopped up by the blades going round, a little quicker when flying fast.
+      const pace = clamp(speed / 40, 0, 1.3);
+      e.a.frequency.setTargetAtTime(46 + pace * 10, t, 0.3);
+      e.b.frequency.setTargetAtTime(92 + pace * 20, t, 0.3);
+      e.filter.frequency.setTargetAtTime(380 + pace * 260, t, 0.2);
+      e.lfo.frequency.setTargetAtTime(11 + pace * 2, t, 0.3);
+      e.clatter.gain.setTargetAtTime(0.85, t, 0.2);
+      e.gain.gain.setTargetAtTime(running ? 0.085 * (0.8 + pace * 0.3) : 0, t, running ? 0.3 : 0.05);
+      return;
+    }
     const pace = clamp(speed / (jeep ? 36 : 22), 0, 1.3);
     const pitch = jeep ? 62 + pace * 70 : 34 + pace * 26;
     e.a.frequency.setTargetAtTime(pitch, t, 0.12);

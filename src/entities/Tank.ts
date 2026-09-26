@@ -459,6 +459,12 @@ export class Tank {
     return this.hullYaw + this.barrelYaw;
   }
 
+  /** Where a first-person camera sits: the commander's sight, clear of the turret roof, just behind and above the gun. */
+  firstPersonEye(): THREE.Vector3 {
+    const q = this.barrelPivot.getWorldQuaternion(new THREE.Quaternion());
+    return this.barrelPivot.getWorldPosition(new THREE.Vector3()).add(new THREE.Vector3(0, 0.62, 0.85).applyQuaternion(q));
+  }
+
   /** Hull heading in radians; 0 faces -Z, positive turns left. */
   get yaw(): number {
     return this.hullYaw;

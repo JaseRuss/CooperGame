@@ -2,13 +2,14 @@ import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { Tank, HULL_HALF_EXTENTS, type ArmorZone } from './Tank';
 import type { InputState } from '../input/InputManager';
-import { PLAYER_MAX_HEALTH, PLAYER_MAX_SPEED } from '../core/config';
+import { PLAYER_MAX_HEALTH, PLAYER_MAX_SPEED, WORLD_HALF } from '../core/config';
 import { ARMY_GREEN, plastic, shade } from '../utils/plastic';
 import { PartBuilder, tubeZ } from '../utils/modelKit';
 import { buildRocketModel } from '../combat/HomingRocket';
-import { buildJeepParts, type JeepParts } from '../world/Vehicles';
+import { buildChopperParts, buildJeepParts, CHOPPER_SKID_DEPTH, type ChopperParts, type JeepParts } from '../world/Vehicles';
+import { heightAt } from '../world/Terrain';
 import type { DriveStyle } from '../core/Settings';
-import { clamp } from '../utils/math';
+import { clamp, damp } from '../utils/math';
 
 // Warthog-style driving: the stick is read in the camera's frame, so up is always "where I'm
 // looking". Pull back and the tank reverses with its nose still toward the camera, rather than
@@ -27,7 +28,7 @@ const ALIGN_TURN_RATE = 0.8;
 const AA_TUBES = [-0.15, 0, 0.15].flatMap((x) => [0.07, -0.08].map((y) => [x, y] as const));
 
 // The jeep from a changing station: same body and collider, much quicker and nimbler.
-export type Vehicle = 'tank' | 'jeep';
+export type Vehicle = 'tank' | 'jeep' | 'chopper';
 const JEEP_MAX_SPEED = 36; // m/s (the tank does 22)
 const JEEP_TURN_RATE = 1.3; // × the tank's
 /** The toy jeep is ~3.9 m long; scaled to about the tank's footprint so it fills the same collider. */
@@ -39,6 +40,30 @@ const JEEP_JAM_INTERVAL = 0.11;
 const JEEP_JAM_SPREAD = 0.035;
 /** The jeep's twin missile pod: tube mouths (x, y) on its front face. */
 const JEEP_MISSILE_TUBES = [-0.13, 0.13].map((x) => [x, 0] as const);
+
+// The chopper from a changing station: the same body and collider again, flying at one height
+// over everything, wherever the stick points on screen.
+const CHOPPER_MAX_SPEED = 40; // m/s
+/** How quickly it picks up speed and slows down (a damping rate): helicopters drift a bit. */
+const CHOPPER_ACCEL = 1.6;
+/** Cruising height above the ground: clear of the tallest skyscraper (about 48 m) with room to spare. */
+const CHOPPER_CRUISE_HEIGHT = 56;
+const CHOPPER_CLIMB_RATE = 11; // m/s
+const CHOPPER_DESCENT_RATE = 8; // m/s, coming in to land
+/** Slower over the ground while landing, so there's time to pick a spot. */
+const CHOPPER_LANDING_SPEED = 0.45;
+/** The nose swings round to face the aim this fast (rad/s). */
+const CHOPPER_TURN_RATE = 1.7;
+const CHOPPER_ROTOR_SPEED = 24; // rad/s at full speed
+/** The chin gun: seconds between rounds, a little spray, and how far down it can look. */
+const CHOPPER_GUN_INTERVAL = 0.1;
+const CHOPPER_GUN_SPREAD = 0.02;
+const CHOPPER_PITCH_MIN = -1.2;
+const CHOPPER_START_PITCH = -0.35;
+/** It can't fly off the edge of the map: it stops this far inside. */
+const CHOPPER_EDGE = WORLD_HALF - 30;
+/** The model's cabin sits over the collider, with the skids on the ground under it. */
+const CHOPPER_MOUNT = new THREE.Vector3(0, -HULL_HALF_EXTENTS.y + CHOPPER_SKID_DEPTH, 1.0);
 
 function wrap(a: number): number {
   return Math.atan2(Math.sin(a), Math.cos(a));
@@ -64,7 +89,7 @@ export class PlayerTank extends Tank {
   private readonly aaNoses: THREE.Mesh[] = [];
 
   private vehicleMode: Vehicle = 'tank';
-  /** Everything that makes up the tank's look (hull and turret), hidden while it's a jeep. */
+  /** Everything that makes up the tank's look (hull and turret), hidden while it's a jeep or chopper. */
   private readonly tankParts: THREE.Object3D[];
   private readonly jeepRig = new THREE.Group();
   /** The jeep's gun mount: turns with the aim (yaw), with the gun and missile pod pitching on it. */
@@ -73,11 +98,27 @@ export class PlayerTank extends Tank {
   private readonly jeepMuzzle = new THREE.Object3D();
   private readonly jeepPodMuzzle = new THREE.Object3D();
   private readonly jeepMissileNoses: THREE.Mesh[] = [];
-  private jeepJamCooldown = 0;
+  /** Between rounds of the jeep's jam gun or the chopper's chin gun. */
+  private rapidCooldown = 0;
   /** The jeep's wheels (roll and steer) and steering wheel, animated as it drives. */
   private jeepParts!: JeepParts;
   private jeepSteer = 0;
   private readonly lastJeepPosition = new THREE.Vector3();
+
+  private readonly chopperRig = new THREE.Group();
+  /** Leans the chopper into its travel (and bobs it while hovering). */
+  private readonly chopperTilt = new THREE.Group();
+  private chopperParts!: ChopperParts;
+  private readonly chopperMissiles: THREE.Object3D[] = [];
+  private readonly flyVelocity = new THREE.Vector3();
+  private rotorSpeed = 0;
+  private hoverTime = 0;
+  private landingMode = false;
+  private touchedDown = false;
+  /** Which rocket pod the next AA dart leaves from. */
+  private podSide = 0;
+  /** How far the tank's (and jeep's) gun can dip, put back after flying. */
+  private readonly groundPitchMin = this.barrelPitchMin;
 
   constructor(world: RAPIER.World, spawnX: number, spawnZ: number, facingRadians = 0) {
     super(world, spawnX, spawnZ, PLAYER_MAX_HEALTH, ARMY_GREEN, facingRadians, 'player');
@@ -105,6 +146,7 @@ export class PlayerTank extends Tank {
     this.buildAAPod();
     this.tankParts = [...this.root.children];
     this.buildJeepRig();
+    this.buildChopperRig();
   }
 
   // ---------- the jeep ----------
@@ -173,6 +215,129 @@ export class PlayerTank extends Tank {
     this.root.add(this.jeepRig);
   }
 
+  // ---------- the chopper ----------
+
+  /**
+   * The toy attack helicopter, with the pilot in the back seat and the commander up front on the
+   * chin gun, and a missile on each stub wing. Built once and hidden until a station swaps it in.
+   */
+  private buildChopperRig(): void {
+    const parts = (this.chopperParts = buildChopperParts(ARMY_GREEN));
+    this.chopperTilt.position.copy(CHOPPER_MOUNT);
+    this.chopperTilt.add(parts.group);
+    this.chopperRig.add(this.chopperTilt);
+    // The commander rides in the front seat, binoculars and all.
+    const gunner = Tank.createCommander(ARMY_GREEN);
+    gunner.position.y = -0.9 * gunner.scale.y; // his belt on the seat
+    parts.frontSeat.add(gunner);
+    for (const rail of parts.rails) {
+      const missile = buildRocketModel();
+      missile.scale.setScalar(0.5);
+      missile.rotation.y = Math.PI; // the model's nose is +Z; the chopper's front is -Z
+      rail.add(missile);
+      this.chopperMissiles.push(missile);
+    }
+    this.chopperRig.visible = false;
+    this.root.add(this.chopperRig);
+  }
+
+  /**
+   * Flies where the stick points on screen (it can go sideways and backwards too) at a fixed
+   * height over the ground, too high to hit anything, while the nose swings round to face the
+   * aim. Coming in to land it drops onto whatever is underneath instead.
+   */
+  private fly(sx: number, sy: number, len: number, dt: number): void {
+    const aimYaw = this.turretWorldYaw;
+    const stick = Math.hypot(sx, sy);
+    const speed = stick > 0 ? (len / stick) * CHOPPER_MAX_SPEED * (this.landingMode ? CHOPPER_LANDING_SPEED : 1) : 0;
+    // The camera's forward is (-sin, -cos) and its right is (cos, -sin).
+    const goalX = (-Math.sin(aimYaw) * sy + Math.cos(aimYaw) * sx) * speed;
+    const goalZ = (-Math.cos(aimYaw) * sy - Math.sin(aimYaw) * sx) * speed;
+    this.flyVelocity.x = damp(this.flyVelocity.x, goalX, CHOPPER_ACCEL, dt);
+    this.flyVelocity.z = damp(this.flyVelocity.z, goalZ, CHOPPER_ACCEL, dt);
+    const err = wrap(aimYaw - this.yaw);
+    this.setHullHeading(this.yaw + clamp(err, -CHOPPER_TURN_RATE * dt, CHOPPER_TURN_RATE * dt));
+
+    const pos = this.position;
+    const next = new THREE.Vector3(pos.x + this.flyVelocity.x * dt, pos.y, pos.z + this.flyVelocity.z * dt);
+    const floor = heightAt(next.x, next.z) + HULL_HALF_EXTENTS.y;
+    if (this.landingMode) {
+      // The character controller stops it on whatever is underneath: the ground, a roof or a lake.
+      this.controller.computeColliderMovement(
+        this.collider,
+        new THREE.Vector3(this.flyVelocity.x * dt, -CHOPPER_DESCENT_RATE * dt, this.flyVelocity.z * dt),
+      );
+      const moved = this.controller.computedMovement();
+      next.set(pos.x + moved.x, Math.max(floor, pos.y + moved.y), pos.z + moved.z);
+      this.touchedDown = this.controller.computedGrounded() || next.y <= floor + 0.05;
+    } else {
+      const climb = clamp((floor + CHOPPER_CRUISE_HEIGHT - pos.y) * 1.2, -CHOPPER_DESCENT_RATE, CHOPPER_CLIMB_RATE);
+      next.y += climb * dt;
+    }
+    if (Math.abs(next.x) > CHOPPER_EDGE) {
+      next.x = clamp(next.x, -CHOPPER_EDGE, CHOPPER_EDGE);
+      this.flyVelocity.x = 0;
+    }
+    if (Math.abs(next.z) > CHOPPER_EDGE) {
+      next.z = clamp(next.z, -CHOPPER_EDGE, CHOPPER_EDGE);
+      this.flyVelocity.z = 0;
+    }
+    this.body.setNextKinematicTranslation(next);
+    this.root.position.copy(next);
+  }
+
+  /** Spins the rotors up, leans into the travel (nose down going forward, banking sideways) and bobs. */
+  private animateChopper(dt: number): void {
+    const parts = this.chopperParts;
+    this.rotorSpeed = damp(this.rotorSpeed, CHOPPER_ROTOR_SPEED, 1.5, dt);
+    parts.mainRotor.rotation.y += this.rotorSpeed * dt;
+    parts.tailRotor.rotation.x += this.rotorSpeed * 2.2 * dt;
+    parts.rotorDisc.material.opacity = 0.16 * (this.rotorSpeed / CHOPPER_ROTOR_SPEED);
+    const along = -this.flyVelocity.x * Math.sin(this.yaw) - this.flyVelocity.z * Math.cos(this.yaw);
+    const side = this.flyVelocity.x * Math.cos(this.yaw) - this.flyVelocity.z * Math.sin(this.yaw);
+    this.chopperTilt.rotation.x = damp(this.chopperTilt.rotation.x, clamp(-along * 0.006, -0.22, 0.22), 3, dt);
+    this.chopperTilt.rotation.z = damp(this.chopperTilt.rotation.z, clamp(-side * 0.008, -0.25, 0.25), 3, dt);
+    this.hoverTime += dt;
+    this.chopperTilt.position.y = CHOPPER_MOUNT.y + Math.sin(this.hoverTime * 1.8) * 0.15 * clamp(this.heightAboveGround / 5, 0, 1);
+  }
+
+  get isChopper(): boolean {
+    return this.vehicleMode === 'chopper';
+  }
+
+  /** How high the hull is over the ground under it (0 for anything driving). */
+  get heightAboveGround(): number {
+    return Math.max(0, this.position.y - heightAt(this.position.x, this.position.z) - HULL_HALF_EXTENTS.y);
+  }
+
+  /** Puts the chopper back at (x, z) and stops it: it tried to fly somewhere it can't go. */
+  holdAt(x: number, z: number): void {
+    this.flyVelocity.set(0, 0, 0);
+    this.root.position.x = x;
+    this.root.position.z = z;
+    this.body.setNextKinematicTranslation(this.root.position);
+  }
+
+  /** Time's up: bring the chopper down onto whatever is below. */
+  beginLanding(): void {
+    if (this.isChopper) this.landingMode = true;
+  }
+
+  /** Back up to cruising height (it passed over a chopper station on the way down). */
+  cancelLanding(): void {
+    this.landingMode = false;
+    this.touchedDown = false;
+  }
+
+  get landing(): boolean {
+    return this.landingMode;
+  }
+
+  /** Down on the ground (or a roof) after landing, ready to turn back into the tank. */
+  get landed(): boolean {
+    return this.landingMode && this.touchedDown;
+  }
+
   get vehicle(): Vehicle {
     return this.vehicleMode;
   }
@@ -185,10 +350,19 @@ export class PlayerTank extends Tank {
   setVehicle(vehicle: Vehicle): void {
     this.vehicleMode = vehicle;
     const jeep = vehicle === 'jeep';
-    for (const part of this.tankParts) part.visible = !jeep;
+    const chopper = vehicle === 'chopper';
+    for (const part of this.tankParts) part.visible = vehicle === 'tank';
     this.jeepRig.visible = jeep;
+    this.chopperRig.visible = chopper;
     this.turnRateScale = jeep ? JEEP_TURN_RATE : 1;
     this.lastJeepPosition.copy(this.position);
+    // The chin gun can look well down at the ground (and starts off looking at it); the tank's gun can't.
+    this.barrelPitchMin = chopper ? CHOPPER_PITCH_MIN : this.groundPitchMin;
+    this.aim(0, chopper ? CHOPPER_START_PITCH - this.barrelPitch : 0); // also clamps the aim into the new limits
+    this.flyVelocity.set(0, 0, 0);
+    this.rotorSpeed = 0;
+    this.landingMode = false;
+    this.touchedDown = false;
   }
 
   /** Rolls the jeep's wheels by how far it moved, and steers the front wheels (and the driver's wheel) into turns. */
@@ -209,9 +383,10 @@ export class PlayerTank extends Tank {
     return this.isJeep ? JEEP_MAX_SPEED : PLAYER_MAX_SPEED;
   }
 
-  /** The jeep's missile pod shows red noses while a missile is ready. */
-  setJeepMissilesReady(ready: boolean): void {
+  /** The jeep's missile pod shows red noses, and the chopper's rails their missiles, while they're ready. */
+  setMissilesReady(ready: boolean): void {
     for (const m of this.jeepMissileNoses) m.visible = ready;
+    for (const m of this.chopperMissiles) m.visible = ready;
   }
 
   /** Where a jeep missile leaves the pod, and which way (along the aim, lofted up a little). */
@@ -221,26 +396,42 @@ export class PlayerTank extends Tank {
     return { origin, direction };
   }
 
-  /** Where the jeep's jam gun muzzle is (for the aim guide). */
-  get jeepMuzzlePosition(): THREE.Vector3 {
-    return this.jeepMuzzle.getWorldPosition(new THREE.Vector3());
+  /** Where each missile leaves and which way: the jeep's pod fires one, the chopper one off each rail. */
+  get missileLaunches(): { origin: THREE.Vector3; direction: THREE.Vector3 }[] {
+    if (!this.isChopper) return [this.jeepMissileLaunch];
+    return this.chopperParts.rails.map((rail) => ({ origin: rail.getWorldPosition(new THREE.Vector3()), direction: this.muzzleWorldDirection }));
   }
 
-  /** The jeep's main gun: a stream of fast jam rounds along the aim while the trigger's held. */
-  tryJeepJam(): { origin: THREE.Vector3; direction: THREE.Vector3 } | null {
-    if (!this.isJeep || this.jeepJamCooldown > 0 || this.isGunJammed) return null;
-    this.jeepJamCooldown = JEEP_JAM_INTERVAL;
+  /** Where the main gun's muzzle is: the tank's cannon, the jeep's jam gun or the chopper's chin gun. */
+  get gunMuzzlePosition(): THREE.Vector3 {
+    const muzzle = this.isChopper ? this.chopperParts.chinMuzzle : this.isJeep ? this.jeepMuzzle : this.muzzle;
+    return muzzle.getWorldPosition(new THREE.Vector3());
+  }
+
+  /**
+   * The jeep's and the chopper's main guns (jam rounds or chin gun rounds): a fast stream along
+   * the aim while the trigger's held.
+   */
+  tryRapidFire(): { origin: THREE.Vector3; direction: THREE.Vector3 } | null {
+    if (this.vehicleMode === 'tank' || this.rapidCooldown > 0 || this.isGunJammed) return null;
+    this.rapidCooldown = this.isChopper ? CHOPPER_GUN_INTERVAL : JEEP_JAM_INTERVAL;
+    const spread = this.isChopper ? CHOPPER_GUN_SPREAD : JEEP_JAM_SPREAD;
     const direction = this.muzzleWorldDirection;
-    direction.x += (Math.random() - 0.5) * JEEP_JAM_SPREAD;
-    direction.y += (Math.random() - 0.5) * JEEP_JAM_SPREAD * 0.5;
-    direction.z += (Math.random() - 0.5) * JEEP_JAM_SPREAD;
-    return { origin: this.jeepMuzzlePosition, direction: direction.normalize() };
+    direction.x += (Math.random() - 0.5) * spread;
+    direction.y += (Math.random() - 0.5) * spread * 0.5;
+    direction.z += (Math.random() - 0.5) * spread;
+    return { origin: this.gunMuzzlePosition, direction: direction.normalize() };
   }
 
   /** First person: hide the jeep's gun mount too, so the camera isn't inside the jam jar. */
   override setTurretHidden(hidden: boolean): void {
     super.setTurretHidden(hidden);
     this.jeepMount.visible = !hidden;
+  }
+
+  /** The chopper's first-person view is a gun camera just under the chin gun, clear of the nose looking down. */
+  override firstPersonEye(): THREE.Vector3 {
+    return this.isChopper ? this.chopperParts.chinGun.localToWorld(new THREE.Vector3(0, -0.3, 0)) : super.firstPersonEye();
   }
 
   /** A six-tube anti-aircraft pod on the turret bustle, angled up; loaded tubes show red noses. */
@@ -275,9 +466,14 @@ export class PlayerTank extends Tank {
 
   /**
    * Where the next AA missile leaves the pod, and which way (up and out along the turret). The
-   * jeep fires them from its missile pod.
+   * jeep fires them from its missile pod, the chopper from its rocket pods.
    */
   get aaLaunch(): { origin: THREE.Vector3; direction: THREE.Vector3 } {
+    if (this.isChopper) {
+      // From the rocket pods, left and right in turn.
+      const pod = this.chopperParts.podMuzzles[this.podSide++ % 2];
+      return { origin: pod.getWorldPosition(new THREE.Vector3()), direction: this.muzzleWorldDirection.add(new THREE.Vector3(0, 0.3, 0)).normalize() };
+    }
     if (this.isJeep) {
       const { origin, direction } = this.jeepMissileLaunch;
       return { origin, direction: direction.add(new THREE.Vector3(0, 0.5, 0)).normalize() };
@@ -335,7 +531,7 @@ export class PlayerTank extends Tank {
     const direction = this.muzzleWorldDirection;
     direction.x += (Math.random() - 0.5) * 0.03;
     direction.z += (Math.random() - 0.5) * 0.03;
-    const muzzle = this.isJeep ? this.jeepMuzzle : this.jamMuzzle;
+    const muzzle = this.isChopper ? this.chopperParts.chinMuzzle : this.isJeep ? this.jeepMuzzle : this.jamMuzzle;
     return { origin: muzzle.getWorldPosition(new THREE.Vector3()), direction: direction.normalize(), speedScale: 0.62 + 0.45 * t };
   }
 
@@ -370,7 +566,9 @@ export class PlayerTank extends Tank {
       sy = input.throttle;
     }
     const len = Math.min(1, Math.hypot(sx, sy));
-    if (this.driveStyle === 'classic') {
+    if (this.isChopper) {
+      this.fly(sx, sy, len, dt);
+    } else if (this.driveStyle === 'classic') {
       const stickLen = Math.hypot(input.moveX, input.moveY);
       if (stickLen > 0) this.driveClassic(input.moveX, input.moveY, Math.min(1, stickLen), dt);
       else this.drive(input.throttle, input.steer, dt, this.maxSpeed);
@@ -393,12 +591,15 @@ export class PlayerTank extends Tank {
     this.aim(-hullDelta - input.aimYawDelta, -input.aimPitchDelta);
     this.jeepMount.rotation.y = this.barrelYaw;
     this.jeepTilt.rotation.x = this.barrelPitch;
-    this.jeepJamCooldown = Math.max(0, this.jeepJamCooldown - dt);
+    this.chopperParts.chinTurret.rotation.y = this.barrelYaw;
+    this.chopperParts.chinGun.rotation.x = this.barrelPitch;
+    this.rapidCooldown = Math.max(0, this.rapidCooldown - dt);
     if (this.isJeep) this.animateJeep(dt, hullDelta);
+    if (this.isChopper) this.animateChopper(dt);
     this.update(dt);
 
-    // The jeep has no cannon: its trigger fires the jam gun instead (see tryJeepJam).
-    return input.firing && !this.isJeep ? this.tryFire() : null;
+    // The jeep and the chopper have no cannon: the trigger fires their own guns (see tryRapidFire).
+    return input.firing && this.vehicleMode === 'tank' ? this.tryFire() : null;
   }
 
   private driveCameraRelative(sx: number, sy: number, len: number, dt: number): void {

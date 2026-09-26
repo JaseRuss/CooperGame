@@ -94,6 +94,7 @@ function makePadTexture(): THREE.CanvasTexture {
  * other side as a jeep. Only the posts are solid, so it drives straight through either way.
  */
 export class JeepStation {
+  readonly kind = 'jeep';
   readonly center: THREE.Vector3;
   private readonly root = new THREE.Group();
   private readonly cog = new THREE.Group();

@@ -12,14 +12,16 @@ export interface Settings {
   /** The four buddy tank crews, in the order they're called in. */
   buddyNames: string[];
   /** How long a jeep from a changing station lasts before it turns back into the tank. */
-  jeepMinutes: JeepMinutes;
+  jeepMinutes: RideMinutes;
+  /** How long a chopper from a changing station lasts before it lands and turns back into the tank. */
+  chopperMinutes: RideMinutes;
   /** Off, Low, Medium or High. */
   musicVolume: Volume;
   sfxVolume: Volume;
 }
 
-export type JeepMinutes = 1 | 2 | 3 | 5;
-const JEEP_MINUTES: JeepMinutes[] = [1, 2, 3, 5];
+export type RideMinutes = 1 | 2 | 3 | 5;
+const RIDE_MINUTES: RideMinutes[] = [1, 2, 3, 5];
 export type Volume = 0 | 1 | 2 | 3;
 const VOLUMES: Volume[] = [0, 1, 2, 3];
 const VOLUME_LABELS = ['Off', 'Low', 'Medium', 'High'];
@@ -33,6 +35,7 @@ export const DEFAULT_SETTINGS: Settings = {
   nameTags: true,
   buddyNames: [...DEFAULT_BUDDY_NAMES],
   jeepMinutes: 3,
+  chopperMinutes: 3,
   musicVolume: 2,
   sfxVolume: 3,
 };
@@ -55,11 +58,13 @@ export function loadSettings(): Settings {
       // Older saves have no names; a damaged list falls back name by name.
       const names = Array.isArray(saved.buddyNames) ? saved.buddyNames : [];
       const buddyNames = DEFAULT_BUDDY_NAMES.map((d, i) => (typeof names[i] === 'string' ? cleanBuddyName(names[i], d) : d));
-      const jeepMinutes = JEEP_MINUTES.includes(saved.jeepMinutes as JeepMinutes) ? (saved.jeepMinutes as JeepMinutes) : DEFAULT_SETTINGS.jeepMinutes;
+      const minutes = (m: unknown, fallback: RideMinutes) => (RIDE_MINUTES.includes(m as RideMinutes) ? (m as RideMinutes) : fallback);
+      const jeepMinutes = minutes(saved.jeepMinutes, DEFAULT_SETTINGS.jeepMinutes);
+      const chopperMinutes = minutes(saved.chopperMinutes, DEFAULT_SETTINGS.chopperMinutes);
       const volume = (v: unknown, fallback: Volume) => (VOLUMES.includes(v as Volume) ? (v as Volume) : fallback);
       const musicVolume = volume(saved.musicVolume, DEFAULT_SETTINGS.musicVolume);
       const sfxVolume = volume(saved.sfxVolume, DEFAULT_SETTINGS.sfxVolume);
-      return { ...DEFAULT_SETTINGS, ...saved, buddyNames, jeepMinutes, musicVolume, sfxVolume };
+      return { ...DEFAULT_SETTINGS, ...saved, buddyNames, jeepMinutes, chopperMinutes, musicVolume, sfxVolume };
     }
   } catch {
     // Storage can be blocked (private windows, embedded previews); defaults are fine.
@@ -111,10 +116,19 @@ export const OPTION_ROWS: OptionRow[] = [
   {
     key: 'jeepMinutes',
     label: 'Jeep time',
-    values: JEEP_MINUTES.map((m) => ({
+    values: RIDE_MINUTES.map((m) => ({
       value: m,
       label: `${m} min`,
       hint: `Drive through a jeep station for a fast jeep that lasts ${m} minute${m > 1 ? 's' : ''}, then turns back into your tank.`,
+    })),
+  },
+  {
+    key: 'chopperMinutes',
+    label: 'Chopper time',
+    values: RIDE_MINUTES.map((m) => ({
+      value: m,
+      label: `${m} min`,
+      hint: `Drive onto a chopper station's pad for a chopper that flies for ${m} minute${m > 1 ? 's' : ''}, then lands and turns back into your tank.`,
     })),
   },
   {

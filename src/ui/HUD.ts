@@ -28,8 +28,11 @@ export interface HUDState {
   health: number;
   maxHealth: number;
   reloadFraction: number; // 0 = ready to fire, 1 = just fired
-  /** Set while driving the jeep from a changing station: seconds left of it, and its missile reload (0..1). */
-  jeep: { timeLeft: number; total: number; missileCharge: number } | null;
+  /**
+   * Set while in the jeep or chopper from a changing station: seconds left of it, its missile
+   * reload (0..1), and whether the chopper is coming in to land.
+   */
+  ride: { vehicle: 'jeep' | 'chopper'; timeLeft: number; total: number; missileCharge: number; landing: boolean } | null;
   cameraMode: 'first' | 'third';
   usingGamepad: boolean;
   /** Name of the family base the player is parked in, or null. */
@@ -448,7 +451,8 @@ export class HUD {
       '<span><i style="background:#5fe05f"></i>You</span><span><i style="background:#9be27a"></i>Buddies &amp; friendly troops</span>' +
       '<span><i style="background:#ffcc33"></i>Family bases</span><span><i style="background:#d23c32"></i>Enemy bases</span>' +
       '<span><i style="background:linear-gradient(90deg,#ffd44a,#dc2a1a)"></i>Enemies gathered</span>' +
-      '<span><i style="background:#ff75d8"></i>Enemy helicopter</span><span><i style="background:#2fb8ff; border-radius:2px"></i>Jeep station</span>';
+      '<span><i style="background:#ff75d8"></i>Enemy helicopter</span><span><i style="background:#2fb8ff; border-radius:2px"></i>Jeep station</span>' +
+      '<span><i style="background:#ff9a2f"></i>Chopper station</span>';
 
     this.optionList = el('div', 'panel options', this.pages.options);
     this.optionHint = el('div', 'hint shadow', this.pages.options);
@@ -487,7 +491,7 @@ export class HUD {
     this.victoryFooter = el('div', 'shadow', this.victory);
     this.victoryFooter.style.cssText = 'font-size:14px; opacity:0.85;';
 
-    // --- jeep timer (bottom-centre), while driving the jeep ---
+    // --- jeep / chopper timer (bottom-centre), while in one ---
     this.jeepTimer = el('div', 'panel jeeptimer');
     root.insertBefore(this.jeepTimer, this.overlay); // under the pause screen, like the rest of the HUD
     const jeepRow = el('div', 'row', this.jeepTimer);
@@ -843,29 +847,30 @@ export class HUD {
     this.segs.forEach((s, i) => (s.style.background = i < lit ? hullColor : 'rgba(0,0,0,0.45)'));
     this.healthText.textContent = `${Math.ceil(state.health)} / ${state.maxHealth}`;
     const loaded = state.reloadFraction <= 0;
-    const jeep = state.jeep;
-    this.gunName.textContent = jeep ? 'JAM GUN' : 'MAIN GUN';
+    const ride = state.ride;
+    const chopper = ride?.vehicle === 'chopper';
+    this.gunName.textContent = ride ? (chopper ? 'CHIN GUN' : 'JAM GUN') : 'MAIN GUN';
     this.reloadFill.style.width = `${(1 - state.reloadFraction) * 100}%`;
-    this.reloadText.textContent = jeep ? 'RAPID FIRE' : loaded ? 'LOADED' : 'RELOADING';
-    this.reloadText.style.color = jeep ? '#ff8aa8' : loaded ? '#ffd24a' : '#eef3f8';
-    this.modeText.textContent = `${state.cameraMode === 'first' ? '1st' : '3rd'} person · ${state.driveStyle === 'warthog' ? 'Warthog' : 'Classic'} drive`;
+    this.reloadText.textContent = ride ? 'RAPID FIRE' : loaded ? 'LOADED' : 'RELOADING';
+    this.reloadText.style.color = ride ? (chopper ? '#ffd24a' : '#ff8aa8') : loaded ? '#ffd24a' : '#eef3f8';
+    this.modeText.textContent = `${state.cameraMode === 'first' ? '1st' : '3rd'} person · ${chopper ? 'Flying' : `${state.driveStyle === 'warthog' ? 'Warthog' : 'Classic'} drive`}`;
 
-    // The jeep swaps the homing rocket for quick-reloading missiles.
-    const charge = jeep ? jeep.missileCharge : state.rocketCharge;
+    // The jeep and chopper swap the homing rocket for quick-reloading missiles.
+    const charge = ride ? ride.missileCharge : state.rocketCharge;
     const rocketReady = charge >= 1;
-    this.rocketName.textContent = jeep ? 'JEEP MISSILES' : 'HOMING ROCKET';
+    this.rocketName.textContent = ride ? (chopper ? 'CHOPPER MISSILES' : 'JEEP MISSILES') : 'HOMING ROCKET';
     this.rocketFill.style.width = `${Math.floor(charge * 100)}%`;
     this.rocketText.textContent = rocketReady ? `READY · ${state.usingGamepad ? 'LB' : 'F'}` : `${Math.floor(charge * 100)}%`;
 
-    // Jeep timer: counts down, and flashes red near the end.
-    this.jeepTimer.style.display = jeep ? 'block' : 'none';
-    if (jeep) {
-      const secs = Math.ceil(jeep.timeLeft);
-      const low = jeep.timeLeft < 15;
+    // Jeep / chopper timer: counts down, and flashes red near the end (and while the chopper lands).
+    this.jeepTimer.style.display = ride ? 'block' : 'none';
+    if (ride) {
+      const secs = Math.ceil(ride.timeLeft);
+      const low = ride.timeLeft < 15 || ride.landing;
       this.jeepTimer.classList.toggle('low', low);
-      this.jeepWhat.textContent = low ? 'BACK TO TANK IN' : 'JEEP TIME';
-      this.jeepClock.textContent = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
-      this.jeepFill.style.width = `${(jeep.timeLeft / Math.max(1, jeep.total)) * 100}%`;
+      this.jeepWhat.textContent = ride.landing ? 'LANDING' : low ? 'BACK TO TANK IN' : chopper ? 'CHOPPER TIME' : 'JEEP TIME';
+      this.jeepClock.textContent = ride.landing ? '' : `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
+      this.jeepFill.style.width = `${(ride.timeLeft / Math.max(1, ride.total)) * 100}%`;
     }
     this.rocketText.style.color = rocketReady ? '#ff9a5a' : '#eef3f8';
     this.rocketSlot.classList.toggle('ready', rocketReady);
@@ -908,13 +913,14 @@ export class HUD {
     );
 
     const k = (key: string, what: string) => `<span class="key">${key}</span>${what}`;
-    const fire = jeep ? 'jam gun' : 'fire';
-    const rocket = jeep ? 'missile' : 'rocket';
+    const fire = ride ? (chopper ? 'chin gun' : 'jam gun') : 'fire';
+    const rocket = ride ? (chopper ? 'missiles' : 'missile') : 'rocket';
+    const drive = chopper ? 'fly' : 'drive';
     this.setHTML(
       this.keys,
       (state.usingGamepad
-        ? `${k('LS', 'drive')}${k('RS', 'aim')}${k('RT', fire)}${k('LT', 'jam')}${k('LB', rocket)}${k('RB', 'AA')}<br>${k('X', 'mega jam')}${k('Y', 'camera')}${k('Start', 'pause · options')}${k('Back', 'home')}`
-        : `${k('WASD', 'drive')}${k('Mouse', 'aim')}${k('Click', fire)}${k('E', 'jam')}${k('F', rocket)}${k('Q', 'AA')}<br>${k('X', 'mega jam')}${k('C', 'camera')}${k('M', 'pause · options')}${k('R', 'home')}` +
+        ? `${k('LS', drive)}${k('RS', 'aim')}${k('RT', fire)}${k('LT', 'jam')}${k('LB', rocket)}${k('RB', 'AA')}<br>${k('X', 'mega jam')}${k('Y', 'camera')}${k('Start', 'pause · options')}${k('Back', 'home')}`
+        : `${k('WASD', drive)}${k('Mouse', 'aim')}${k('Click', fire)}${k('E', 'jam')}${k('F', rocket)}${k('Q', 'AA')}<br>${k('X', 'mega jam')}${k('C', 'camera')}${k('M', 'pause · options')}${k('R', 'home')}` +
             (state.mouseCaptureHint ? '<br><span style="color:#ffd24a">Click the game to capture the mouse for aiming</span>' : '')) +
         // A gamepad press doesn't count for the browser's "user has interacted" rule, so say so.
         (state.soundLocked ? '<br><span style="color:#8fe0ff">Sound is off until you click or press a key</span>' : ''),

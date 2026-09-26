@@ -8,6 +8,13 @@ const THIRD_PERSON_OFFSET = new THREE.Vector3(0, 4.6, 9.2);
 const THIRD_PERSON_LOOK_OFFSET = new THREE.Vector3(0, 1.6, 0);
 const FOLLOW_LAMBDA = 8;
 const MAX_CAMERA_DIP_PITCH = 0.38;
+/**
+ * Chasing the chopper: this far back along the aim and this far above it (square to the aim), so
+ * the camera looks straight down the shot with the chopper below the middle of the view rather
+ * than in front of whatever it's aiming at.
+ */
+const AIR_CHASE_DISTANCE = 19;
+const AIR_CHASE_RISE = 6.5;
 const UP = new THREE.Vector3(0, 1, 0);
 
 /**
@@ -21,12 +28,19 @@ export class CameraRig {
   private initialized = false;
   private inCinematic = false;
   private shake = 0;
+  /** Chase the chopper (see AIR_CHASE_DISTANCE) rather than a tank. */
+  private aerial = false;
 
   constructor(private readonly camera: THREE.PerspectiveCamera) {}
 
   /** Adds camera shake; decays over roughly half a second. */
   addShake(amount: number): void {
     this.shake = Math.min(1.2, this.shake + amount);
+  }
+
+  /** Switches the chase cam between following a tank or jeep and following the chopper. */
+  setAerial(aerial: boolean): void {
+    this.aerial = aerial;
   }
 
   toggle(): void {
@@ -98,6 +112,16 @@ export class CameraRig {
       .addScaledVector(forward, 12)
       .add(new THREE.Vector3(0, Math.tan(target.aimPitch) * 12, 0));
 
+    if (this.aerial) {
+      // Straight down the aim; "up" here is the camera's own up, square to the aim.
+      const pitch = target.aimPitch;
+      const aim = forward.clone().multiplyScalar(Math.cos(pitch)).setY(Math.sin(pitch));
+      const up = forward.clone().multiplyScalar(-Math.sin(pitch)).setY(Math.cos(pitch));
+      desiredPos.copy(target.position).addScaledVector(aim, -AIR_CHASE_DISTANCE).addScaledVector(up, AIR_CHASE_RISE);
+      desiredPos.y = Math.max(desiredPos.y, target.position.y + 1); // never down in the ground on take-off
+      desiredLook.copy(desiredPos).addScaledVector(aim, 30);
+    }
+
     if (!this.initialized) {
       this.currentPos.copy(desiredPos);
       this.currentLook.copy(desiredLook);
@@ -111,14 +135,7 @@ export class CameraRig {
   }
 
   private updateFirstPerson(target: Tank): void {
-    const worldPos = new THREE.Vector3();
-    const worldQuat = new THREE.Quaternion();
-    target.barrelPivot.getWorldPosition(worldPos);
-    target.barrelPivot.getWorldQuaternion(worldQuat);
-
-    // Commander's-sight position: clear of the turret roof, just behind and above the gun.
-    const eyeOffset = new THREE.Vector3(0, 0.62, 0.85).applyQuaternion(worldQuat);
-    this.camera.position.copy(worldPos).add(eyeOffset);
-    this.camera.quaternion.copy(worldQuat);
+    this.camera.position.copy(target.firstPersonEye());
+    target.barrelPivot.getWorldQuaternion(this.camera.quaternion);
   }
 }

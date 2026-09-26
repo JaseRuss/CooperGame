@@ -50,8 +50,8 @@ export interface MapView {
   /** Nearest enemy base still standing (or the Fortress once they're all down); the minimap points at it. */
   objective: MapBase | null;
   fortress: MapBase & { title: string; locked: boolean; destroyed: boolean };
-  /** Drive-through stations that turn the tank into a jeep. */
-  jeepStations: { x: number; z: number }[];
+  /** Changing stations that turn the tank into a jeep or a chopper. */
+  stations: { x: number; z: number; kind: 'jeep' | 'chopper' }[];
 }
 
 export interface MapDrawOptions {
@@ -236,19 +236,23 @@ export class WorldMap {
       ctx.stroke();
     }
 
-    // Jeep stations: a blue tile with a J.
-    for (const st of view.jeepStations) {
+    // Changing stations: a blue tile with a J for the jeep, an orange disc with an H for the chopper.
+    for (const st of view.stations) {
       const r = Math.max(14, 6 / s);
-      ctx.fillStyle = '#2fb8ff';
-      ctx.fillRect(st.x - r, st.z - r, r * 2, r * 2);
-      ctx.strokeStyle = '#0b2533';
+      const jeep = st.kind === 'jeep';
+      ctx.fillStyle = jeep ? '#2fb8ff' : '#ff9a2f';
+      ctx.strokeStyle = jeep ? '#0b2533' : '#331a05';
       ctx.lineWidth = 2 / s;
-      ctx.strokeRect(st.x - r, st.z - r, r * 2, r * 2);
+      ctx.beginPath();
+      if (jeep) ctx.rect(st.x - r, st.z - r, r * 2, r * 2);
+      else ctx.arc(st.x, st.z, r * 1.1, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
       ctx.fillStyle = '#ffffff';
       ctx.font = `900 ${r * 1.6}px "Segoe UI", sans-serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText('J', st.x, st.z + r * 0.1);
+      ctx.fillText(jeep ? 'J' : 'H', st.x, st.z + r * 0.1);
     }
 
     // Enemy bases: red squares (green tick once destroyed).
