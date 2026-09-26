@@ -21,7 +21,7 @@ import { PlayerTank, type Vehicle } from '../entities/PlayerTank';
 import type { Tank, Faction } from '../entities/Tank';
 import { EnemyTank } from '../entities/EnemyTank';
 import { HelicopterEnemy } from '../entities/HelicopterEnemy';
-import { BuddyTank, RedTank, type AllyTarget } from '../entities/AllyTank';
+import { BuddyTank, RedTank, type AllyTarget, type BuddyVehicle } from '../entities/AllyTank';
 import { TroopManager } from '../entities/TroopManager';
 import { ZOMBIE_COLOR, type Shot } from '../entities/Soldier';
 import { HitRegistry } from '../combat/HitRegistry';
@@ -93,6 +93,11 @@ const ROCKET_LOCK_CONE = (35 * Math.PI) / 180;
 const ROCKET_BLAST_RADIUS = 16;
 const ROCKET_DAMAGE = 140;
 const ROCKET_LINGER_TIME = 3.2;
+/**
+ * Below this share of the hull, the homing rocket (and the jeep's and chopper's missiles) are
+ * knocked out until the tank is repaired: a reason to head back to a home base.
+ */
+const ROCKET_MIN_HEALTH = 0.3;
 
 // Changing stations: drive through a jeep station and the tank becomes a fast jeep for a while,
 // or onto a chopper station's pad and it takes off as a chopper (the times are in the options).
@@ -122,6 +127,9 @@ const CHOPPER_LOW = 4;
 const BUDDY_RECHARGE_TIME = 300;
 // Crews come from the options (Keston, Max, Innes and Jason unless renamed).
 const MAX_BUDDIES = DEFAULT_BUDDY_NAMES.length;
+/** What buddies turn up in, and how often. */
+const BUDDY_VEHICLES: [BuddyVehicle, number][] = [['tank', 0.45], ['jeep', 0.3], ['chopper', 0.25]];
+const BUDDY_ARRIVAL: Record<BuddyVehicle, string> = { tank: 'IS ROLLING IN', jeep: 'IS ZOOMING IN IN A JEEP', chopper: 'IS FLYING IN IN A CHOPPER' };
 
 // Enemy base objectives.
 const CHECKLIST_RANGE = 350; // show the target list when this close to an enemy base
@@ -277,8 +285,6 @@ export class Game {
   private fortress!: Fortress;
   private finalAssault = false;
   private fortressAnnounced = false;
-  /** Next buddy in the rota; a knocked-out buddy's turn passes to the next name. */
-  private nextBuddy = 0;
   private rocketCharge = 0;
   private buddyCharge = 1;
   private megaJamCharge = 1;
@@ -593,26 +599,21 @@ export class Game {
     const spot = this.player.position.clone().add(offset);
     spot.y = surfaceHeightAt(spot.x, spot.z); // on the ground, even with the player up in the chopper
 
-    // Take the next crew in the rota that isn't already out.
+    // A crew that isn't already out, picked at random, in a vehicle picked at random.
     const out = new Set(this.buddies.map((b) => b.crew));
-    let pick = this.nextBuddy;
-    for (let k = 0; k < MAX_BUDDIES; k++) {
-      const i = (this.nextBuddy + k) % MAX_BUDDIES;
-      if (!out.has(i)) {
-        pick = i;
-        break;
-      }
-    }
-    this.nextBuddy = (pick + 1) % MAX_BUDDIES;
+    const free = Array.from({ length: MAX_BUDDIES }, (_, i) => i).filter((i) => !out.has(i));
+    const pick = free[Math.floor(Math.random() * free.length)];
+    let roll = Math.random();
+    const vehicle = BUDDY_VEHICLES.find(([, share]) => (roll -= share) < 0)?.[0] ?? 'tank';
     const name = this.settings.buddyNames[pick];
-    const buddy = new BuddyTank(this.world, spot.x, spot.z, this.player.yaw, slot, pick, name);
+    const buddy = new BuddyTank(this.world, spot.x, spot.z, this.player.yaw, slot, pick, name, vehicle);
     this.scene.add(buddy.root);
     buddy.setNameTagVisible(this.settings.nameTags);
     this.hitRegistry.register(buddy.physicsCollider, { kind: 'tank', tank: buddy });
     this.buddies.push(buddy);
     this.impacts.splash(spot, 0.6); // a puff of dust as it rolls in
     this.buddyCharge = 0;
-    this.hud.showBanner(`${name.toUpperCase()} IS ROLLING IN!`, `${this.buddies.length} of ${MAX_BUDDIES} buddy tanks with you`);
+    this.hud.showBanner(`${name.toUpperCase()} ${BUDDY_ARRIVAL[vehicle]}!`, `${this.buddies.length} of ${MAX_BUDDIES} buddies with you`);
   }
 
   private applySettings(): void {
@@ -691,6 +692,16 @@ export class Game {
   }
 
   private fire(tank: Tank, shot: Shot): void {
+    if (tank instanceof BuddyTank && tank.vehicle !== 'tank') {
+      if (tank.vehicle === 'chopper') this.fireChinGun(shot, tank.physicsCollider, false);
+      else {
+        // The buddy jeep's machine gun: rifle rounds that bowl soldiers over.
+        this.impacts.muzzleFlash(shot.origin, shot.direction, 0.3);
+        this.sound.play('crack', { at: shot.origin, volume: 0.2, rate: 2.6, minGap: 0.08 });
+        this.fireBullet(shot, tank.physicsCollider, 'player');
+      }
+      return;
+    }
     this.impacts.muzzleFlash(shot.origin, shot.direction);
     if (tank === this.player) this.cameraRig.addShake(0.35);
     // A deep boom and a sharp crack; your own gun is right in your ears.
@@ -788,16 +799,19 @@ export class Game {
     this.onCriticalHit('Jam in the gun slit', point, true);
   }
 
-  /** A round from the chopper's chin gun: a small bang where it lands, for tanks, buildings and troops alike. */
-  private fireChinGun(shot: Shot): void {
+  /**
+   * A round from a chopper's chin gun (the player's, or a buddy's): a small bang where it lands,
+   * for tanks, buildings and troops alike.
+   */
+  private fireChinGun(shot: Shot, shooter = this.player.physicsCollider, byPlayer = true): void {
     this.impacts.muzzleFlash(shot.origin, shot.direction);
-    this.sound.play('crack', { volume: 0.3, rate: 2.2, minGap: 0.06 });
+    this.sound.play('crack', { at: byPlayer ? undefined : shot.origin, volume: 0.3, rate: 2.2, minGap: 0.06 });
     this.projectiles.spawn(
       shot.origin,
       shot.direction,
       CHOPPER_GUN_SPEED,
       CHOPPER_GUN_DAMAGE,
-      this.player.physicsCollider,
+      shooter,
       (point, result) => {
         if (result.collapsedBuilding) this.collapseBuilding(result.collapsedBuilding, 'player');
         else if (result.water) this.impacts.splash(point, 0.3);
@@ -805,7 +819,7 @@ export class Game {
           result.tree.knockDown(shot.direction);
           this.impacts.dustPuff(point);
         } else this.explode(point, CHOPPER_GUN_BLAST, 'player');
-        if (result.critical) this.onCriticalHit(result.critical, point, true);
+        if (result.critical) this.onCriticalHit(result.critical, point, byPlayer);
       },
       0.55,
       'player',
@@ -872,20 +886,25 @@ export class Game {
   private allyTargets(): AllyTarget[] {
     const targets: AllyTarget[] = [];
     for (const tank of this.targetableEnemies) {
-      targets.push({ position: tank.position, priority: 3, alive: () => !tank.isDestroyed && !tank.shielded });
+      targets.push({ position: tank.position, priority: 3, alive: () => !tank.isDestroyed && !tank.shielded, kind: 'tank' });
     }
     for (const base of this.enemyBases) {
-      for (const o of base.objectives) if (!o.isDestroyed()) targets.push({ position: o.position, priority: 2.5, alive: () => !o.isDestroyed() });
+      for (const o of base.objectives) if (!o.isDestroyed()) targets.push({ position: o.position, priority: 2.5, alive: () => !o.isDestroyed(), kind: 'objective' });
     }
     if (!this.fortress.locked && !ZOMBIES) {
-      for (const o of this.fortress.objectives) if (!o.isDestroyed()) targets.push({ position: o.position, priority: 2.5, alive: () => !o.isDestroyed() });
+      for (const o of this.fortress.objectives) if (!o.isDestroyed()) targets.push({ position: o.position, priority: 2.5, alive: () => !o.isDestroyed(), kind: 'objective' });
     }
-    for (const bunker of this.targetableBunkers) targets.push({ position: bunker.position, priority: 2, alive: () => bunker.alive });
-    for (const s of this.troops.activeSoldiers('enemy')) targets.push({ position: s.position, priority: 1, alive: () => s.isActive });
+    for (const bunker of this.targetableBunkers) targets.push({ position: bunker.position, priority: 2, alive: () => bunker.alive, kind: 'bunker' });
+    for (const s of this.troops.activeSoldiers('enemy')) targets.push({ position: s.position, priority: 1, alive: () => s.isActive, kind: 'soldier' });
     return targets;
   }
 
   // ---------- homing rocket ----------
+
+  /** A badly damaged hull knocks the homing rocket and missiles out until it's repaired. */
+  private get rocketsDamaged(): boolean {
+    return this.player.health < this.player.maxHealth * ROCKET_MIN_HEALTH;
+  }
 
   /** The enemy the rocket would lock onto: whatever sits closest to the turret's aim, tanks first. */
   private findLockTarget(): { position: THREE.Vector3; track: RocketTarget } | null {
@@ -1150,7 +1169,7 @@ export class Game {
     }
 
     this.missileCharge = Math.min(1, this.missileCharge + dt / MISSILE_RECHARGE);
-    this.player.setMissilesReady(this.missileCharge >= 1);
+    this.player.setMissilesReady(this.missileCharge >= 1 && !this.rocketsDamaged);
     for (let i = this.missiles.length - 1; i >= 0; i--) {
       const hit = this.missiles[i].update(dt, this.world, (p) => this.impacts.trailPuff(p));
       if (!hit) continue;
@@ -1436,6 +1455,7 @@ export class Game {
       return;
     }
     for (const tank of [this.player, ...this.buddies, ...this.redTanks]) {
+      if (Math.abs(tank.position.y - at.y) > 6) continue; // a chopper up in the air
       if (Math.hypot(tank.position.x - at.x, tank.position.z - at.z) < BITE_REACH) tank.takeDamage(TANK_BITE * power * scale);
     }
     this.troops.shoot(at, 1.6, 'enemy');
@@ -1657,6 +1677,7 @@ export class Game {
       aimRange: aim.range,
       aimTarget: aim.target,
       rocketCharge: this.rocketCharge,
+      rocketDamaged: this.rocketsDamaged,
       rocketLockScreen: lockScreen,
       aaLoaded: this.aaLoaded,
       aaMax: AA_CAPACITY,
@@ -1720,7 +1741,10 @@ export class Game {
       }
       if (input.mapTogglePressed) this.hud.toggleBigMap();
       if (input.rocketPressed) {
-        if (this.player.vehicle !== 'tank') this.tryMissiles();
+        if (this.rocketsDamaged) {
+          this.hud.showCallout(`${this.player.vehicle === 'tank' ? 'ROCKET' : 'MISSILES'} DAMAGED! REPAIR AT A HOME BASE`, '#ff6a5a');
+          this.sound.play('uiBack', { volume: 0.5, minGap: 0.3 });
+        } else if (this.player.vehicle !== 'tank') this.tryMissiles();
         else if (this.rocketCharge >= 1) this.launchRocket();
       }
       if (input.aaPressed) this.tryFireAA();
@@ -1731,7 +1755,7 @@ export class Game {
       this.addRocketCharge(dt / ROCKET_RECHARGE_TIME);
       this.buddyCharge = Math.min(1, this.buddyCharge + dt / BUDDY_RECHARGE_TIME);
     }
-    this.player.setRocketReady(this.rocketCharge >= 1 && !this.rocketSeq);
+    this.player.setRocketReady(this.rocketCharge >= 1 && !this.rocketSeq && !this.rocketsDamaged);
 
     // AA darts are only restocked back at a home base, one at a time.
     if (this.aaLoaded < AA_CAPACITY && !this.aa.firing && this.atHome(this.player.position)) {
@@ -1875,7 +1899,7 @@ export class Game {
 
     // Trees go over when a tank reaches them (or the chopper comes down low over them).
     const playerLow = this.player.heightAboveGround < CHOPPER_LOW;
-    const tankPositions = [...(playerLow ? [this.player] : []), ...this.buddies, ...this.enemySlots.flatMap((slot) => slot.tank ? [slot.tank] : []), ...this.redSlots.flatMap((slot) => slot.tank ? [slot.tank] : [])]
+    const tankPositions = [...(playerLow ? [this.player] : []), ...this.buddies.filter((b) => !b.flying), ...this.enemySlots.flatMap((slot) => slot.tank ? [slot.tank] : []), ...this.redSlots.flatMap((slot) => slot.tank ? [slot.tank] : [])]
       .filter((tank) => !tank.isDestroyed)
       .map((tank) => tank.position);
     for (const tree of this.trees) tree.update(dt, tankPositions);
@@ -1932,7 +1956,7 @@ export class Game {
       this.cameraRig.setAerial(this.player.isChopper);
       this.cameraRig.update(this.player, dt);
       aim = this.updateAim();
-      if (this.player.vehicle !== 'tank' ? this.missileCharge >= 1 : this.rocketCharge >= 1) {
+      if ((this.player.vehicle !== 'tank' ? this.missileCharge >= 1 : this.rocketCharge >= 1) && !this.rocketsDamaged) {
         const lock = this.findLockTarget();
         if (lock) lockScreen = this.toScreen(lock.position.clone().add(new THREE.Vector3(0, 1.5, 0)));
       }

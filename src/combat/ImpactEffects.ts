@@ -383,20 +383,22 @@ export class ImpactEffects {
   }
 
   /** Small flash + puff at the gun barrel when firing. */
-  muzzleFlash(point: THREE.Vector3, direction: THREE.Vector3): void {
-    this.flash(point, 600, 0.08);
+  /** `scale` shrinks it for small guns (a machine gun's flash is a fraction of a cannon's, with no smoke). */
+  muzzleFlash(point: THREE.Vector3, direction: THREE.Vector3, scale = 1): void {
+    this.flash(point, 600 * scale, 0.08);
     this.add({
       geometry: SPHERE,
       position: point.clone(),
       velocity: direction.clone().multiplyScalar(6),
       life: 0.12,
-      startScale: 0.3,
-      endScale: 1.1,
+      startScale: 0.3 * scale,
+      endScale: 1.1 * scale,
       startOpacity: 1,
       additive: true,
       colorFrom: new THREE.Color(0xfff2b0),
       colorTo: new THREE.Color(0xff7a20),
     });
+    if (scale < 0.5) return;
     for (let i = 0; i < 2; i++) {
       this.add({
         geometry: SPHERE,

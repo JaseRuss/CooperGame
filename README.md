@@ -136,6 +136,9 @@ sound on.
 - **Mega jam** (X): lobs rings of jam all round the tank. It takes 20 seconds to
   refill.
 - Your tank (and your buddies) go a bit faster on **roads**.
+- **Low hull:** when the hull drops below a third, the homing rocket (and the
+  jeep's and chopper's missiles) are knocked out until you repair at a family
+  base.
 - Drive into trees and lamp posts, or shoot them, to knock them flat.
 - **Rear hits** do double damage to enemy tanks. Front armour takes half damage.
 - Knocked-out enemy tanks usually just blow up, but sometimes the turret pops
@@ -147,9 +150,12 @@ sound on.
 - **Fuel tanks** in the enemy bases go up from one shell in a huge fireball that
   can set off the tank next door. Radars fall to one shell, water towers to two. The
   crosshair turns gold and says CRITICAL when you're lined up on one.
-- **Buddy tanks** (Keston, Max, Innes and Jason, unless you rename them) follow
+- **Buddies** (Keston, Max, Innes and Jason, unless you rename them) follow
   you and join the fight. One rolls in by themselves whenever the buddy meter
   fills (it starts full and refills over five minutes), up to all four at once.
+  Who comes next is a surprise, and so is what they come in: a **tank**, a fast
+  **jeep** with a machine gun that goes after soldiers, or a **chopper** that
+  flies out ahead of you where you can see it and shoots its chin gun.
 - Hit a building and a health bar pops up over it for a few seconds.
 - The pause map shows where the enemy is gathered as a red glow.
 

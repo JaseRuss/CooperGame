@@ -63,6 +63,8 @@ export interface HUDState {
   aimTarget: AimTarget;
   /** 0..1; the rocket can launch at 1. */
   rocketCharge: number;
+  /** The hull's too badly damaged for the rocket or missiles: repair at a home base. */
+  rocketDamaged: boolean;
   /** Screen position of the enemy the rocket would lock onto, when ready. */
   rocketLockScreen: { x: number; y: number } | null;
   /** AA darts left, out of `aaMax`; they're only restocked at a home base. */
@@ -894,10 +896,14 @@ export class HUD {
 
     // The jeep and chopper swap the homing rocket for quick-reloading missiles.
     const charge = ride ? ride.missileCharge : state.rocketCharge;
-    const rocketReady = charge >= 1;
+    const rocketReady = charge >= 1 && !state.rocketDamaged;
     this.rocketName.textContent = ride ? (chopper ? 'CHOPPER MISSILES' : 'JEEP MISSILES') : 'HOMING ROCKET';
     this.rocketFill.style.width = `${Math.floor(charge * 100)}%`;
-    this.rocketText.textContent = rocketReady ? `READY · ${state.usingGamepad ? 'LB' : 'F'}` : `${Math.floor(charge * 100)}%`;
+    this.rocketText.textContent = state.rocketDamaged
+      ? 'DAMAGED · REPAIR AT BASE'
+      : rocketReady
+        ? `READY · ${state.usingGamepad ? 'LB' : 'F'}`
+        : `${Math.floor(charge * 100)}%`;
 
     // Jeep / chopper timer: counts down, and flashes red near the end (and while the chopper lands).
     this.jeepTimer.style.display = ride ? 'block' : 'none';
@@ -909,7 +915,7 @@ export class HUD {
       this.jeepClock.textContent = ride.landing ? '' : `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
       this.jeepFill.style.width = `${(ride.timeLeft / Math.max(1, ride.total)) * 100}%`;
     }
-    this.rocketText.style.color = rocketReady ? '#ff9a5a' : '#eef3f8';
+    this.rocketText.style.color = state.rocketDamaged ? '#ff6a5a' : rocketReady ? '#ff9a5a' : '#eef3f8';
     this.rocketSlot.classList.toggle('ready', rocketReady);
 
     const aaLocked = state.aaLockScreen !== null;
@@ -1025,8 +1031,8 @@ export class HUD {
       this.promptLabel.style.display = 'block';
       this.promptLabel.style.color = '#ff9a8a';
       this.promptLabel.textContent = ZOMBIES
-        ? 'Hull critical — drive into the Fortress (or a family base) to repair'
-        : 'Hull critical — head back to a family base (yellow rings on the map)';
+        ? 'Hull critical — rockets are out! Drive into the Fortress (or a family base) to repair'
+        : 'Hull critical — rockets are out! Head back to a family base (yellow rings on the map)';
     } else {
       this.promptLabel.style.display = 'none';
     }
