@@ -5,6 +5,7 @@ import { surfaceHeightAt } from '../world/Terrain';
 import { plastic } from '../utils/plastic';
 import type { Faction } from './Tank';
 import { createJammedTag, createMuzzleGlob } from '../combat/JamCannon';
+import { KNIGHTS } from '../core/config';
 
 const UP = new THREE.Vector3(0, 1, 0);
 const ENGAGE_RANGE = 120;
@@ -12,7 +13,37 @@ const WALK_SPEED = 1.8;
 const LOS_CHECK_INTERVAL = 0.5;
 const DOWN_LINGER = 14;
 
-export type Shot = { origin: THREE.Vector3; direction: THREE.Vector3 };
+/**
+ * A shot fired: from `origin` along `direction`. A zombie's bite or swipe is a `melee` shot instead:
+ * `origin` is the spot it lands on and `melee` how hard it hits.
+ */
+export type Shot = { origin: THREE.Vector3; direction: THREE.Vector3; melee?: number };
+
+/** Zombies: walkers shamble, runners hurry, brutes are big, slow and take several hits. */
+export type ZombieKind = 'walker' | 'runner' | 'brute';
+export const ZOMBIE_COLOR: Record<ZombieKind, number> = { walker: 0xa9d38e, runner: 0xd6cc6e, brute: 0xa98cc8 };
+
+const zombieMaterials = new Map<number, THREE.MeshPhysicalMaterial>();
+
+/** Glow-in-the-dark plastic: the zombies shine faintly, so they stand out in the dusk. */
+function zombiePlastic(color: number): THREE.MeshPhysicalMaterial {
+  let m = zombieMaterials.get(color);
+  if (!m) {
+    m = plastic(color).clone();
+    m.emissive = new THREE.Color(color).multiplyScalar(0.28);
+    zombieMaterials.set(color, m);
+  }
+  return m;
+}
+const ZOMBIE_STATS: Record<ZombieKind, { speed: number; hp: number; bite: number; scale: number }> = {
+  walker: { speed: 2.6, hp: 1, bite: 1, scale: 1 },
+  runner: { speed: 4.6, hp: 1, bite: 1, scale: 0.95 },
+  brute: { speed: 2.1, hp: 4, bite: 3, scale: 1.6 },
+};
+/** A zombie goes for anything on the other side this close; otherwise it shambles on to its goal. */
+const ZOMBIE_AGGRO = 24;
+const ZOMBIE_REACH = 2.8;
+const ZOMBIE_ATTACK_TIME = 1.1;
 
 // ---------- figure geometry (built once, shared by every soldier) ----------
 // Modelled on the classic bag-of-army-men rifleman: helmet with a net band, webbing, pack with a
@@ -141,7 +172,140 @@ function kneelingFigure(): THREE.BufferGeometry {
   ]);
 }
 
+/** A crossbow at the shoulder pointing -Z: stock, bow arms swept back, string, a bolt and the stirrup. */
+function crossbow(x: number, y: number, z: number): THREE.BufferGeometry[] {
+  return [
+    box(0.08, 0.11, 0.85, x, y - 0.01, z - 0.3), // stock
+    box(0.07, 0.15, 0.2, x, y - 0.09, z + 0.03), // butt
+    box(0.6, 0.05, 0.05, x - 0.29, y + 0.03, z - 0.64, 0, 0.38), // bow arms
+    box(0.6, 0.05, 0.05, x + 0.29, y + 0.03, z - 0.64, 0, -0.38),
+    box(1.02, 0.015, 0.015, x, y + 0.04, z - 0.44), // string
+    new THREE.CylinderGeometry(0.016, 0.016, 0.55, 4).rotateX(Math.PI / 2).translate(x, y + 0.07, z - 0.55), // bolt
+    new THREE.TorusGeometry(0.06, 0.014, 4, 8).translate(x, y - 0.02, z - 0.8), // stirrup
+  ];
+}
+
+/**
+ * A toy knight from the hips up (hips at height y): mail shirt under a tabard, a great helm with a
+ * crest, a sword at the hip, a kite shield slung on the back and a crossbow at the shoulder.
+ */
+function knightUpperBody(y: number): THREE.BufferGeometry[] {
+  const v = (x: number, yy: number, z: number) => v3(x, y + yy, z);
+  return [
+    box(0.4, 0.18, 0.25, 0, y, 0), // hips
+    box(0.44, 0.52, 0.27, 0, y + 0.33, 0, -0.08), // mail shirt
+    box(0.47, 0.6, 0.31, 0, y + 0.22, 0, -0.08), // tabard
+    new THREE.CylinderGeometry(0.25, 0.31, 0.34, 12).scale(1, 1, 0.72).translate(0, y - 0.1, 0), // tabard skirt
+    box(0.49, 0.07, 0.34, 0, y + 0.06, 0), // belt
+    box(0.05, 0.08, 0.72, -0.27, y - 0.08, 0.14, 0.95), // scabbard
+    box(0.22, 0.04, 0.05, -0.27, y + 0.13, -0.12), // crossguard
+    ball(0.035, v(-0.27, 0.2, -0.16)), // pommel
+    // Kite shield on the back: boss and a raised cross.
+    box(0.42, 0.52, 0.05, 0, y + 0.34, 0.2, 0.08),
+    box(0.06, 0.46, 0.03, 0, y + 0.34, 0.236, 0.08),
+    box(0.36, 0.06, 0.03, 0, y + 0.44, 0.23, 0.08),
+    ball(0.06, v(0, 0.34, 0.245)),
+    ball(0.11, v(-0.25, 0.54, 0.01), 1.1, 0.75, 1.1), // pauldrons
+    ball(0.11, v(0.25, 0.54, 0.01), 1.1, 0.75, 1.1),
+    // Great helm: a flat-topped pot with an eye-slit brow, a nasal, breathing holes and a crest.
+    new THREE.CylinderGeometry(0.06, 0.07, 0.1, 8).translate(0, y + 0.6, 0),
+    new THREE.CylinderGeometry(0.15, 0.165, 0.32, 14).translate(0, y + 0.72, 0),
+    new THREE.CylinderGeometry(0.157, 0.157, 0.03, 14).translate(0, y + 0.885, 0),
+    box(0.3, 0.035, 0.05, 0, y + 0.76, -0.15),
+    box(0.035, 0.2, 0.04, 0, y + 0.66, -0.165),
+    ball(0.02, v(-0.07, 0.63, -0.16)),
+    ball(0.02, v(0.07, 0.63, -0.16)),
+    box(0.045, 0.15, 0.36, 0, y + 0.96, 0.02), // crest
+    // Arms bent to hold the crossbow.
+    ...jointed(v(0.25, 0.53, 0.01), v(0.33, 0.36, -0.05), v(0.14, 0.44, -0.2), 0.065),
+    ...jointed(v(-0.25, 0.53, 0.01), v(-0.18, 0.37, -0.34), v(0.1, 0.46, -0.58), 0.065),
+    ball(0.065, v(0.14, 0.44, -0.2)),
+    ball(0.065, v(0.1, 0.46, -0.58)),
+    ...crossbow(0.12, y + 0.52, 0),
+  ];
+}
+
+function standingKnight(): THREE.BufferGeometry {
+  const frontAnkle = v3(-0.12, 0.13, -0.24);
+  const backAnkle = v3(0.12, 0.13, 0.22);
+  return mergeGeometries([
+    stand(),
+    ...boot(frontAnkle),
+    ...boot(backAnkle),
+    ...jointed(frontAnkle, v3(-0.12, 0.52, -0.15), v3(-0.1, 0.93, -0.02), 0.095),
+    ...jointed(backAnkle, v3(0.11, 0.53, 0.14), v3(0.1, 0.93, 0.02), 0.095),
+    ball(0.1, v3(-0.12, 0.52, -0.17), 1, 0.8, 1), // knee cops
+    ball(0.1, v3(0.11, 0.53, 0.12), 1, 0.8, 1),
+    ...knightUpperBody(0.95),
+  ]);
+}
+
+function kneelingKnight(): THREE.BufferGeometry {
+  const frontAnkle = v3(-0.12, 0.13, -0.32);
+  return mergeGeometries([
+    stand(),
+    ...boot(frontAnkle),
+    ...jointed(frontAnkle, v3(-0.12, 0.52, -0.3), v3(-0.1, 0.58, 0.04), 0.095),
+    limb(v3(0.12, 0.1, 0.05), v3(0.1, 0.58, 0.05), 0.095),
+    ball(0.09, v3(0.12, 0.1, 0.05)),
+    limb(v3(0.12, 0.1, 0.05), v3(0.12, 0.12, 0.42), 0.085),
+    box(0.14, 0.1, 0.24, 0.12, 0.11, 0.55, -1.2),
+    ...knightUpperBody(0.6),
+  ]);
+}
+
+/**
+ * A toy zombie on its stand: hunched forward in a torn uniform, head lolling, one boot lost and
+ * the bare foot dragging, both arms held straight out in front. `lurch` leans it right over with
+ * one arm clawing up high.
+ */
+function zombieFigure(lurch: boolean): THREE.BufferGeometry {
+  const hip = v3(0, 0.9, 0);
+  const lean = lurch ? 0.5 : 0.26;
+  const bend = new THREE.Matrix4()
+    .makeTranslation(hip.x, hip.y, hip.z)
+    .multiply(new THREE.Matrix4().makeRotationX(-lean))
+    .multiply(new THREE.Matrix4().makeTranslation(-hip.x, -hip.y, -hip.z));
+  const v = (x: number, y: number, z: number) => v3(x, hip.y + y, z);
+  const upper: THREE.BufferGeometry[] = [
+    box(0.4, 0.18, 0.25, 0, hip.y, 0),
+    box(0.43, 0.5, 0.26, 0, hip.y + 0.33, 0),
+    box(0.46, 0.07, 0.3, 0, hip.y + 0.06, 0), // belt
+    ...[-0.16, -0.05, 0.07, 0.17].map((x, i) => new THREE.ConeGeometry(0.06, 0.16 + (i % 2) * 0.08, 4).rotateX(Math.PI).translate(x, hip.y - 0.12, -0.12)), // torn shirt tails
+    box(0.12, 0.1, 0.03, 0.1, hip.y + 0.4, -0.14), // flapping pocket
+    new THREE.CylinderGeometry(0.06, 0.07, 0.12, 8).translate(0.02, hip.y + 0.6, 0),
+    ball(0.14, v(0.05, 0.72, -0.02), 1, 1.1, 1), // head, lolling to one side
+    ball(0.075, v(-0.03, 0.84, 0.02), 1.3, 0.7, 1), // lumpy brain bump
+    box(0.14, 0.05, 0.1, 0.05, hip.y + 0.6, -0.12), // hanging jaw
+    box(0.12, 0.03, 0.04, 0.05, hip.y + 0.76, -0.13), // heavy brow
+    ball(0.03, v(0.18, 0.71, -0.01)), // one ear left
+    // Arms straight out, reaching.
+    ...jointed(v(0.25, 0.53, 0), v(0.24, 0.52, -0.3), lurch ? v(0.2, 0.98, -0.42) : v(0.2, 0.5, -0.64), 0.065),
+    ...jointed(v(-0.25, 0.53, 0), v(-0.24, 0.55, -0.3), v(-0.19, 0.56, -0.66), 0.065),
+    ball(0.06, lurch ? v(0.2, 0.98, -0.42) : v(0.2, 0.5, -0.64)),
+    ball(0.06, v(-0.19, 0.56, -0.66)),
+    ...[-0.04, 0, 0.04].flatMap((d) => [
+      limb(v(-0.19 + d, 0.56, -0.68), v(-0.19 + d * 1.4, 0.52, -0.8), 0.018),
+      limb(lurch ? v(0.2 + d, 1.0, -0.45) : v(0.2 + d, 0.5, -0.66), lurch ? v(0.2 + d * 1.4, 1.1, -0.55) : v(0.2 + d * 1.4, 0.46, -0.78), 0.018),
+    ]),
+  ].map((g) => g.applyMatrix4(bend));
+  const bootAnkle = v3(-0.12, 0.13, -0.16);
+  const bareAnkle = v3(0.14, 0.12, 0.42);
+  return mergeGeometries([
+    stand(),
+    ...boot(bootAnkle),
+    ball(0.08, v3(0.14, 0.07, 0.5), 1, 0.6, 1.6), // bare foot, dragged
+    ...jointed(bootAnkle, v3(-0.13, 0.5, -0.06), v3(-0.1, 0.9, 0), 0.095),
+    ...jointed(bareAnkle, v3(0.13, 0.45, 0.26), v3(0.1, 0.9, 0.02), 0.09),
+    box(0.2, 0.06, 0.2, 0.13, 0.62, 0.2, 0.4), // torn trouser leg
+    ...upper,
+  ]);
+}
+
 const FIGURES = [standingFigure(), kneelingFigure()];
+/** The knights mission's enemy crossbowmen, standing and kneeling. */
+const KNIGHT_FIGURES = KNIGHTS ? [standingKnight(), kneelingKnight()] : FIGURES;
+const ZOMBIE_FIGURES = [zombieFigure(false), zombieFigure(true)];
 const MUZZLE_HEIGHT = [1.49, 1.14];
 
 /** A static army-man figure (0 = standing, 1 = kneeling) in the given plastic colour, e.g. for base guards. */
@@ -162,9 +326,21 @@ export const JAM_MATERIAL = new THREE.MeshPhysicalMaterial({
   sheenColor: new THREE.Color(0xff5070),
 });
 
-/** A plastic army man: hops around, shoots at the other side, gets knocked flat by blasts. */
+/**
+ * A plastic army man: hops around, shoots at the other side, gets knocked flat by blasts. On the
+ * knights mission the enemy's men are knights with crossbows, and on the zombie mission they're
+ * zombies, which shamble at the nearest target (or on toward their goal) and bite.
+ */
 export class Soldier {
   readonly mesh: THREE.Mesh;
+  /** Set for a zombie: walker, runner or brute. */
+  readonly zombie: ZombieKind | null;
+  /** Hits left (brutes take several). */
+  private hp = 1;
+  private readonly baseMaterial: THREE.Material;
+  private attackTimer = 0;
+  /** Counted once toward the zombies knocked over. */
+  counted = false;
   private state: 'active' | 'flying' | 'down' = 'active';
   private readonly pos = new THREE.Vector3();
   private heading: number;
@@ -194,10 +370,19 @@ export class Soldier {
     private readonly rng: () => number,
     readonly faction: Faction,
     color: number,
+    zombie: ZombieKind | null = null,
   ) {
-    this.pose = rng() < 0.35 ? 1 : 0;
-    this.mesh = new THREE.Mesh(FIGURES[this.pose], plastic(color));
+    this.zombie = zombie;
+    this.pose = zombie ? (zombie === 'walker' ? (rng() < 0.3 ? 1 : 0) : 1) : rng() < 0.35 ? 1 : 0;
+    const figures = zombie ? ZOMBIE_FIGURES : faction === 'enemy' ? KNIGHT_FIGURES : FIGURES;
+    this.baseMaterial = zombie ? zombiePlastic(color) : plastic(color);
+    this.mesh = new THREE.Mesh(figures[this.pose], this.baseMaterial);
     this.mesh.castShadow = true;
+    if (zombie) {
+      this.hp = ZOMBIE_STATS[zombie].hp;
+      this.mesh.scale.setScalar(ZOMBIE_STATS[zombie].scale * (0.95 + rng() * 0.1));
+      this.attackTimer = rng() * ZOMBIE_ATTACK_TIME;
+    }
     this.pos.set(x, surfaceHeightAt(x, z), z);
     this.heading = rng() * Math.PI * 2;
     this.fireTimer = 1 + rng() * 2;
@@ -256,6 +441,16 @@ export class Soldier {
   /** Blast or run over: fly away from `from` and land flat on the ground. */
   knockDown(from: THREE.Vector3, strength: number): void {
     if (this.state !== 'active') return;
+    if (this.hp > 1) {
+      // A brute takes it on the chin: staggers back a step, shakes off any jam, and keeps coming.
+      this.hp--;
+      const away = new THREE.Vector3(this.pos.x - from.x, 0, this.pos.z - from.z);
+      if (away.lengthSq() > 0.01) this.pos.addScaledVector(away.normalize(), 1.2);
+      this.jamTime = 0;
+      this.mesh.material = this.baseMaterial;
+      this.tipAngle = 0;
+      return;
+    }
     this.jamTime = 0;
     this.clearGunJam();
     const away = new THREE.Vector3(this.pos.x - from.x, 0, this.pos.z - from.z);
@@ -269,7 +464,11 @@ export class Soldier {
   }
 
   /** `target`: the nearest thing on the other side worth shooting at, or null to just wander. */
-  update(dt: number, world: RAPIER.World, target: THREE.Vector3 | null): Shot | null {
+  /**
+   * `blocked`: for zombies, true where they can't walk (the Fortress wall); they stop there and
+   * batter it instead.
+   */
+  update(dt: number, world: RAPIER.World, target: THREE.Vector3 | null, blocked?: (x: number, z: number) => boolean): Shot | null {
     if (this.state === 'flying') {
       this.fallVelocity.y -= 24 * dt;
       this.pos.addScaledVector(this.fallVelocity, dt);
@@ -304,6 +503,8 @@ export class Soldier {
       }
       return null;
     }
+
+    if (this.zombie) return this.updateZombie(dt, target, blocked);
 
     const dx = target ? target.x - this.pos.x : 0;
     const dz = target ? target.z - this.pos.z : 0;
@@ -351,6 +552,57 @@ export class Soldier {
 
     this.pos.y = surfaceHeightAt(this.pos.x, this.pos.z);
     this.applyTransform(hop);
+    return shot;
+  }
+
+  /**
+   * Shambles at the nearest target in reach and bites it, or on toward the anchor (the Fortress),
+   * swaying as it goes. Where `blocked` stops it (the wall) it batters away at that instead.
+   */
+  private updateZombie(dt: number, target: THREE.Vector3 | null, blocked?: (x: number, z: number) => boolean): Shot | null {
+    const stats = ZOMBIE_STATS[this.zombie as ZombieKind];
+    const chase = target !== null && Math.hypot(target.x - this.pos.x, target.z - this.pos.z) < ZOMBIE_AGGRO;
+    const gx = chase && target ? target.x : this.anchor.x;
+    const gz = chase && target ? target.z : this.anchor.y;
+    const dx = gx - this.pos.x;
+    const dz = gz - this.pos.z;
+    const dist = Math.hypot(dx, dz);
+    this.hopPhase += dt * (this.zombie === 'runner' ? 11 : 6);
+    this.attackTimer -= dt;
+    let attacking = false;
+    let shot: Shot | null = null;
+    if (dist > 0.01) this.heading = Math.atan2(-dx, -dz);
+    const strike = (at: THREE.Vector3) => {
+      attacking = true;
+      if (this.attackTimer > 0) return;
+      this.attackTimer = ZOMBIE_ATTACK_TIME * (0.85 + this.rng() * 0.3);
+      shot = { origin: at, direction: UP.clone(), melee: stats.bite };
+    };
+    if (chase && target && dist < ZOMBIE_REACH) {
+      strike(target.clone());
+    } else if (dist > 0.5) {
+      const step = Math.min(dist, stats.speed * dt);
+      const nx = this.pos.x + (dx / dist) * step;
+      const nz = this.pos.z + (dz / dist) * step;
+      if (blocked?.(nx, nz)) {
+        // At the wall: hammer on it.
+        strike(new THREE.Vector3(this.pos.x + (dx / dist) * 1.5, this.pos.y + 1, this.pos.z + (dz / dist) * 1.5));
+      } else {
+        this.pos.x = nx;
+        this.pos.z = nz;
+      }
+    }
+    this.pos.y = surfaceHeightAt(this.pos.x, this.pos.z);
+    // Sway side to side as it lurches along, or bow into each swipe while attacking.
+    const fwd = new THREE.Vector3(-Math.sin(this.heading), 0, -Math.cos(this.heading));
+    if (attacking) {
+      this.tipAxis.crossVectors(UP, fwd).normalize();
+      this.tipAngle = -Math.max(0, Math.sin(this.hopPhase * 1.6)) * 0.35;
+    } else {
+      this.tipAxis.copy(fwd);
+      this.tipAngle = Math.sin(this.hopPhase) * 0.14;
+    }
+    this.applyTransform(Math.abs(Math.sin(this.hopPhase)) * (this.zombie === 'runner' ? 0.18 : 0.08));
     return shot;
   }
 

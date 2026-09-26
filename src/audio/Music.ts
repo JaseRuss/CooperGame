@@ -9,7 +9,7 @@ import { mulberry32 } from '../utils/rng';
  */
 
 type Drum = 'kick' | 'snare' | 'hat' | 'bongoHi' | 'bongoLo' | 'tom';
-type Lead = 'bugle' | 'flute' | 'marimba';
+type Lead = 'bugle' | 'flute' | 'marimba' | 'lute';
 
 interface Song {
   bpm: number;
@@ -38,6 +38,7 @@ interface Song {
 const C = 48;
 const D = 50;
 const A = 45;
+const G = 43;
 
 const SONGS: Record<Mission, Song> = {
   // Day Battle: a jaunty toy-soldier march in C major, with a bugle playing the tune.
@@ -96,6 +97,43 @@ const SONGS: Record<Mission, Song> = {
     tuneOctave: 2,
     pad: false,
     seed: 47,
+  },
+  // Castle Siege: a lively jig in G major, a plucked lute over a drone bass, tabor and tambourine.
+  4: {
+    bpm: 126,
+    chords: [[G, 'maj'], [G, 'maj'], [G + 5, 'maj'], [G + 7, 'maj'], [G, 'maj'], [G - 3, 'min'], [G + 5, 'maj'], [G + 7, 'maj']],
+    drums: {
+      tom: ['x..x..x.x..x..x.', 'x..x..x.x..x.x.x'],
+      hat: ['..o..o..o..o..o.'],
+    },
+    bass: 'r.....f.r.....f.',
+    bassWave: 'sawtooth',
+    lead: 'lute',
+    rhythm: ['x.xx.xx.x.xx.xx.', 'x..x..x.x.xx.x..', 'x.xx.xx.x.x.x.x.', 'x..x..x.x.......'],
+    key: G,
+    tuneNotes: [0, 2, 4, 5, 7, 9, 11, 12, 14],
+    tuneOctave: 2,
+    pad: false,
+    seed: 61,
+  },
+  // Zombie Attack: a creepy minor march on a bony xylophone, a heartbeat kick and dark pads.
+  5: {
+    bpm: 96,
+    chords: [[A, 'min'], [A, 'min'], [A - 4, 'maj'], [A - 7, 'min'], [A, 'min'], [A - 2, 'maj'], [A - 7, 'min'], [A + 7, 'maj']],
+    drums: {
+      kick: ['x..x............', 'x..x......x..x..'],
+      tom: ['........x.......', '........x...x.x.'],
+      hat: ['....o.......o...'],
+    },
+    bass: 'r...r...f...r.t.',
+    bassWave: 'triangle',
+    lead: 'marimba',
+    rhythm: ['x.x.x...x.x.x...', 'x...x.x.x.......', 'x.x.x...x.x.x.x.', 'x.......x...x...'],
+    key: A,
+    tuneNotes: [0, 2, 3, 5, 7, 8, 11, 12],
+    tuneOctave: 2,
+    pad: true,
+    seed: 83,
   },
 };
 
@@ -172,6 +210,14 @@ export class Music {
     const t = this.ctx.currentTime + 0.05;
     [[67, 0, 0.12], [72, 0.13, 0.12], [76, 0.26, 0.45]].forEach(([m, at, len]) => this.lead('bugle', t + at, m, len, 0.13));
     this.drum('snare', t + 0.26, 0.6);
+  }
+
+  /** A new zombie wave: a low, spooky three-note horn call with a thump. */
+  alarm(): void {
+    const t = this.ctx.currentTime + 0.05;
+    [[45, 0, 0.35], [44, 0.4, 0.35], [40, 0.8, 0.9]].forEach(([m, at, len]) => this.lead('bugle', t + at, m + 12, len, 0.16));
+    this.drum('kick', t, 1);
+    this.drum('tom', t + 0.8, 1);
   }
 
   // ---------- sequencing ----------
@@ -314,6 +360,17 @@ export class Music {
 
   private lead(kind: Lead, t: number, midi: number, len: number, peak: number): void {
     const hz = midiHz(midi);
+    if (kind === 'lute') {
+      // Plucked strings: a bright sawtooth whose filter closes quickly, plus a soft octave.
+      const f = this.ctx.createBiquadFilter();
+      f.type = 'lowpass';
+      f.frequency.setValueAtTime(3200, t);
+      f.frequency.exponentialRampToValueAtTime(700, t + 0.25);
+      f.connect(this.env(t, peak * 1.1, 0.003, 0.02, Math.min(0.6, len + 0.2)));
+      this.osc('sawtooth', hz, t, t + len + 0.3, f);
+      this.osc('triangle', hz * 2, t, t + 0.2, this.env(t, peak * 0.3, 0.002, 0.01, 0.15));
+      return;
+    }
     if (kind === 'marimba') {
       // Wooden bar: a sine plus a quickly-dying high partial.
       this.osc('sine', hz, t, t + 0.6, this.env(t, peak * 1.4, 0.003, 0.01, 0.5));

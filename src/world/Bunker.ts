@@ -7,6 +7,8 @@ import { plastic, shade, ARMY_TAN } from '../utils/plastic';
 import type { Shot } from '../entities/Soldier';
 import type { Faction } from '../entities/Tank';
 import { PartBuilder, sandbagGeometry, tubeZ } from '../utils/modelKit';
+import { KNIGHTS } from '../core/config';
+import { STONE, STONE_DARK, WOOD, WOOD_DARK } from './Medieval';
 
 const BUNKER_COLOR = 0xa99f86;
 const BUNKER_HEALTH = 180;
@@ -117,9 +119,77 @@ function bunkerShapes(trim: number): Map<THREE.Material, THREE.BufferGeometry> {
   return shapes;
 }
 
-function buildBunkerMesh(trim: number): { root: THREE.Group; gunPivot: THREE.Group } {
+/**
+ * The knights mission's enemy pillbox: a squat stone guardhouse the same size as the concrete one,
+ * battlements on top, an arrow slit where the gun slit is (so it's still the weak point), a corner
+ * turret with a pointed roof and a banner in the army's colour.
+ */
+function guardhouseShapes(trim: number): Map<THREE.Material, THREE.BufferGeometry> {
+  const key = -1 - trim;
+  const cached = shapeCache.get(key);
+  if (cached) return cached;
+  const stone = plastic(STONE);
+  const dark = plastic(STONE_DARK);
+  const gloom = plastic(0x2a2620);
+  const wood = plastic(WOOD);
+  const woodDark = plastic(WOOD_DARK);
+  const army = plastic(trim);
+  const p = new PartBuilder();
+  const box = (w: number, h: number, d: number) => new THREE.BoxGeometry(w, h, d);
+  p.add(box(7, 3.2, 6), stone, 0, 1.6, 0);
+  p.add(box(7.8, 0.8, 6.8), dark, 0, 0.4, 0);
+  p.add(box(7.5, 0.4, 6.5), dark, 0, 3.3, 0);
+  // Battlements all round the roof.
+  for (let i = 0; i < 6; i++) {
+    for (const z of [-3.05, 3.05]) p.add(box(0.7, 0.9, 0.5), stone, -3.1 + i * 1.24, 3.95, z);
+  }
+  for (let i = 0; i < 5; i++) {
+    for (const x of [-3.55, 3.55]) p.add(box(0.5, 0.9, 0.7), stone, x, 3.95, -2.4 + i * 1.2);
+  }
+  for (const y of [1.1, 2.1]) p.add(box(7.04, 0.07, 6.04), dark, 0, y, 0);
+  // The wide arrow slit in front, in a stone frame.
+  p.add(box(4.2, 0.45, 0.3), gloom, 0, 1.6, -2.92);
+  p.add(box(4.8, 0.16, 0.42), dark, 0, 1.92, -3.0);
+  p.add(box(4.8, 0.16, 0.42), dark, 0, 1.28, -3.0);
+  for (const s of [-1, 1]) p.add(box(0.16, 0.8, 0.42), dark, s * 2.4, 1.6, -3.0);
+  // A round corner turret with a pointed roof and a pennant.
+  p.add(new THREE.CylinderGeometry(1.2, 1.35, 5.6, 12), stone, 2.9, 2.8, 2.4);
+  p.add(new THREE.ConeGeometry(1.6, 2.4, 12), army, 2.9, 6.8, 2.4);
+  p.add(new THREE.CylinderGeometry(0.05, 0.06, 1.6, 6), woodDark, 2.9, 8.6, 2.4);
+  p.add(box(1.1, 0.6, 0.04), army, 3.45, 9.1, 2.4);
+  // Wooden door at the back with iron studs, and a banner over the front.
+  p.add(box(1.4, 2.2, 0.14), wood, -1.6, 1.1, 3.05);
+  for (let i = 0; i < 3; i++) p.add(box(1.44, 0.1, 0.18), woodDark, -1.6, 0.4 + i * 0.7, 3.06);
+  p.add(box(1.6, 2.2, 0.08), army, -2.4, 2.3, -3.06);
+  p.add(new THREE.ConeGeometry(0.8, 0.7, 3).rotateZ(Math.PI), army, -2.4, 0.95, -3.06, 0, 0, 0, 1, 1, 0.1);
+  p.add(new THREE.CylinderGeometry(0.4, 0.4, 0.06, 12).rotateX(Math.PI / 2), plastic(0xd9a520), -2.4, 2.5, -3.12);
+  // Firewood and a barrel by the door.
+  for (let i = 0; i < 5; i++) p.add(new THREE.CylinderGeometry(0.15, 0.15, 1.2, 6).rotateZ(Math.PI / 2), woodDark, 1.1, 0.2 + Math.floor(i / 3) * 0.28, 3.4 + (i % 3) * 0.3);
+  p.add(new THREE.CylinderGeometry(0.45, 0.45, 1, 10), wood, 0.2, 0.5, 3.6);
+  const shapes = p.buildGeometries();
+  shapeCache.set(key, shapes);
+  return shapes;
+}
+
+/** A little ballista on the swivel: bow arms, a string, a bolt and a crank, pointing along -Z. */
+function buildBallista(pivot: THREE.Group): void {
+  const wood = plastic(WOOD);
+  const woodDark = plastic(WOOD_DARK);
+  const b = new PartBuilder();
+  b.add(new THREE.BoxGeometry(0.28, 0.22, 1.6), wood, 0, 0, -0.5);
+  for (const s of [-1, 1]) {
+    b.add(new THREE.BoxGeometry(0.9, 0.09, 0.09), woodDark, s * 0.45, 0, -1.2, 0, s * 0.35);
+    b.beam(new THREE.Vector3(s * 0.85, 0, -0.9), new THREE.Vector3(0, 0.02, -0.3), 0.025, plastic(0xe8e0c8));
+  }
+  b.add(tubeZ(0.035, 0.035, 1.5, 6), woodDark, 0, 0.14, -0.9);
+  b.add(new THREE.ConeGeometry(0.07, 0.22, 6).rotateX(-Math.PI / 2), plastic(0x6a6d72), 0, 0.14, -1.74);
+  b.add(new THREE.CylinderGeometry(0.12, 0.12, 0.4, 8).rotateZ(Math.PI / 2), woodDark, 0, 0, 0.2);
+  b.buildInto(pivot);
+}
+
+function buildBunkerMesh(trim: number, medieval = false): { root: THREE.Group; gunPivot: THREE.Group } {
   const root = new THREE.Group();
-  for (const [mat, geo] of bunkerShapes(trim)) {
+  for (const [mat, geo] of medieval ? guardhouseShapes(trim) : bunkerShapes(trim)) {
     const mesh = new THREE.Mesh(geo, mat);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
@@ -130,6 +200,10 @@ function buildBunkerMesh(trim: number): { root: THREE.Group; gunPivot: THREE.Gro
   const gunPivot = new THREE.Group();
   gunPivot.position.set(0, 1.6, -2.7);
   root.add(gunPivot);
+  if (medieval) {
+    buildBallista(gunPivot);
+    return { root, gunPivot };
+  }
   const dark = plastic(shade(BUNKER_COLOR, 0.35));
   const metal = plastic(0x5b5f58);
   const gun = new PartBuilder();
@@ -168,7 +242,7 @@ export class Bunker {
     /** Army colour of the sandbags. */
     trim: number = ARMY_TAN,
   ) {
-    const { root, gunPivot } = buildBunkerMesh(trim);
+    const { root, gunPivot } = buildBunkerMesh(trim, KNIGHTS && faction === 'enemy');
     this.gunPivot = gunPivot;
     this.root = root;
     this.facing = facing;

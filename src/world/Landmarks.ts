@@ -1,6 +1,6 @@
 import { mulberry32 } from '../utils/rng';
 import { randRange } from '../utils/math';
-import { WORLD_HALF, WORLD_SEED, FRIENDLY_BASES, ENEMY_BASE_COUNT, FORTRESS_HALF, distanceToFriendlyBase } from '../core/config';
+import { WORLD_HALF, WORLD_SEED, FRIENDLY_BASES, ENEMY_BASE_COUNT, FORTRESS_HALF, KNIGHTS, distanceToFriendlyBase } from '../core/config';
 import { TOWNS } from './TownPlan';
 import type { EnemyArmy } from '../utils/plastic';
 
@@ -31,7 +31,8 @@ const ENEMY_BASE_NAMES = ['Alpha', 'Bravo', 'Charlie', 'Delta', 'Echo', 'Foxtrot
 const ENEMY_BASE_MIN_DIST_FROM_FRIENDLY = 420;
 const ENEMY_BASE_MIN_SPACING = 420;
 const LAKE_COUNT = 5;
-const MALL_COUNT = 3;
+/** Knights have no shopping malls or airports. */
+const MALL_COUNT = KNIGHTS ? 0 : 3;
 
 function rectDistance(s: Rect, x: number, z: number): number {
   const dx = Math.max(Math.abs(x - s.cx) - s.halfX, 0);
@@ -69,7 +70,7 @@ function plan(): { sites: Site[]; lakes: Lake[] } {
   sites.push({ kind: 'fortress', name: 'Fortress', cx: 0, cz: 0, halfX: FORTRESS_HALF, halfZ: FORTRESS_HALF, rotated: false, flip: 1 });
 
   // Airport next: it needs the most room.
-  for (let attempt = 0; attempt < 400 && !sites.some((s) => s.kind === 'airport'); attempt++) {
+  for (let attempt = 0; attempt < 400 && !KNIGHTS && !sites.some((s) => s.kind === 'airport'); attempt++) {
     const rotated = rng() < 0.5;
     const hx = rotated ? AIRPORT_HALF.z : AIRPORT_HALF.x;
     const hz = rotated ? AIRPORT_HALF.x : AIRPORT_HALF.z;

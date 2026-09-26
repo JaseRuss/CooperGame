@@ -26,6 +26,39 @@ const MAX_RANGE = 900;
 const SHELL_GEOMETRY = new THREE.SphereGeometry(0.16, 8, 6);
 const SHELL_MATERIAL = new THREE.MeshBasicMaterial({ color: 0xffd27a });
 
+/**
+ * How a shot looks in flight: a glowing tracer (the default), or on the knights mission a dragon's
+ * fireball, an iron cannonball or an arrow. They all fly and hit exactly the same way.
+ */
+export type ShotStyle = 'shell' | 'fireball' | 'cannonball' | 'arrow';
+
+const FIREBALL_GEOMETRY = new THREE.IcosahedronGeometry(0.6, 1);
+const FIREBALL_MATERIAL = new THREE.MeshBasicMaterial({ color: 0xff7a1a, transparent: true, opacity: 0.75, depthWrite: false });
+const FIRE_CORE_MATERIAL = new THREE.MeshBasicMaterial({ color: 0xfff08a });
+/** A flame licking back from the fireball (it points along -Z, away from the way it flies). */
+const FIRE_TAIL_GEOMETRY = new THREE.ConeGeometry(0.5, 2.2, 10, 1, true).rotateX(-Math.PI / 2).translate(0, 0, -1.2);
+const FIRE_TAIL_MATERIAL = new THREE.MeshBasicMaterial({ color: 0xff4a12, transparent: true, opacity: 0.55, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending });
+const CANNONBALL_GEOMETRY = new THREE.SphereGeometry(0.3, 12, 8);
+const CANNONBALL_MATERIAL = new THREE.MeshStandardMaterial({ color: 0x2e3036, roughness: 0.5, metalness: 0.3 });
+/** An arrow along +Z (the way lookAt points a mesh): shaft, head and white fletching. */
+const ARROW_GEOMETRY = (() => {
+  const shaft = new THREE.CylinderGeometry(0.035, 0.035, 1.3, 5).rotateX(Math.PI / 2);
+  const head = new THREE.ConeGeometry(0.08, 0.22, 5).rotateX(Math.PI / 2).translate(0, 0, 0.75);
+  const fletch = new THREE.BoxGeometry(0.22, 0.02, 0.28).translate(0, 0, -0.55);
+  const fletch2 = new THREE.BoxGeometry(0.02, 0.22, 0.28).translate(0, 0, -0.55);
+  const parts = [shaft, head, fletch, fletch2].map((g) => {
+    const n = g.index ? g.toNonIndexed() : g;
+    for (const name of Object.keys(n.attributes)) if (name !== 'position' && name !== 'normal') n.deleteAttribute(name);
+    return n;
+  });
+  const merged = new THREE.BufferGeometry();
+  const pos = parts.flatMap((g) => Array.from(g.attributes.position.array as Float32Array));
+  merged.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  merged.computeVertexNormals();
+  return merged;
+})();
+const ARROW_MATERIAL = new THREE.MeshBasicMaterial({ color: 0xe8dcc0 });
+
 export interface Trajectory {
   /** Points along the flight path, from the muzzle to the impact. */
   points: THREE.Vector3[];
@@ -83,6 +116,8 @@ export class Projectile {
   private age = 0;
   private traveled = 0;
   dead = false;
+  /** A fireball's bright core, which flickers. */
+  private readonly core: THREE.Mesh | null = null;
 
   constructor(
     private readonly scene: THREE.Scene,
@@ -94,11 +129,27 @@ export class Projectile {
     private readonly onImpact?: (point: THREE.Vector3, result: ImpactResult) => void,
     visualScale = 1,
     private readonly faction: Faction = 'enemy',
+    style: ShotStyle = 'shell',
   ) {
     this.velocity = direction.clone().normalize().multiplyScalar(speed);
-    // Glowing tracer, stretched along its flight direction so it reads at long range.
-    this.mesh = new THREE.Mesh(SHELL_GEOMETRY, SHELL_MATERIAL);
-    this.mesh.scale.set(visualScale, visualScale, 5 * visualScale);
+    if (style === 'fireball') {
+      this.mesh = new THREE.Mesh(FIREBALL_GEOMETRY, FIREBALL_MATERIAL);
+      this.mesh.scale.setScalar(visualScale);
+      this.core = new THREE.Mesh(FIREBALL_GEOMETRY, FIRE_CORE_MATERIAL);
+      this.core.scale.setScalar(0.6);
+      this.mesh.add(this.core, new THREE.Mesh(FIRE_TAIL_GEOMETRY, FIRE_TAIL_MATERIAL));
+    } else if (style === 'cannonball') {
+      this.mesh = new THREE.Mesh(CANNONBALL_GEOMETRY, CANNONBALL_MATERIAL);
+      this.mesh.scale.setScalar(visualScale);
+      this.mesh.castShadow = true;
+    } else if (style === 'arrow') {
+      this.mesh = new THREE.Mesh(ARROW_GEOMETRY, ARROW_MATERIAL);
+      this.mesh.scale.setScalar(visualScale * 1.6);
+    } else {
+      // Glowing tracer, stretched along its flight direction so it reads at long range.
+      this.mesh = new THREE.Mesh(SHELL_GEOMETRY, SHELL_MATERIAL);
+      this.mesh.scale.set(visualScale, visualScale, 5 * visualScale);
+    }
     this.mesh.position.copy(origin);
     this.mesh.lookAt(origin.clone().add(this.velocity));
     scene.add(this.mesh);
@@ -127,6 +178,11 @@ export class Projectile {
 
     this.mesh.position.copy(newPos);
     this.mesh.lookAt(newPos.clone().add(this.velocity));
+    if (this.core) {
+      this.core.scale.setScalar(0.55 + Math.random() * 0.2);
+      this.mesh.scale.z = 1 + Math.random() * 0.25; // the tail flickers
+      this.mesh.rotateZ(this.age * 9);
+    }
     this.traveled += segLen;
 
     if (this.age > MAX_LIFETIME || this.traveled > MAX_RANGE || newPos.y < -20) {

@@ -4,7 +4,8 @@ A Claude Code project to build an army men game for Cooper.
 
 A toy-soldier tank sandbox that runs in the browser. Drive a green plastic tank
 around a big open world, flatten the five tan enemy bases, and head back to a
-family base to repair. You can't be destroyed, so there's no game over.
+family base to repair. You can't be destroyed, so there's no game over, except
+in the last level, where the zombies can break into the Fortress.
 
 Built with [Three.js](https://threejs.org/), [Rapier](https://rapier.rs/) physics,
 TypeScript and [Vite](https://vite.dev/). See [Credits](#credits) for where the ready-made
@@ -95,7 +96,8 @@ pick each letter, left and right to move, and X to delete. Your choices are
 remembered.
 
 **Sound:** each level has its own music: a march for the day battle, a sneaky
-tune for the night raid and bongos in the jungle. Browsers keep a page quiet
+tune for the night raid, bongos in the jungle, a jig for the castles and a spooky
+xylophone for the zombies. Browsers keep a page quiet
 until you click or press a key, and a controller button doesn't count, so if
 you're playing on a controller, click the game or press a key once to turn the
 sound on.
@@ -215,11 +217,40 @@ with villages of wooden huts and shacks joined by dirt tracks. The trees hide
 the enemy until you're close, so drive through them or blast them over with the
 main gun to clear a path.
 
+## Mission 4: Castle Siege
+
+Win the jungle and you ride into the land of knights. You're still in your tank,
+but the enemy bases are stone **castles** with towers, a gatehouse, a keep, a
+great hall, a forge, powder stores (one shell sets them off), a watchtower and a
+trebuchet. Shells can knock holes in the castle walls, so you don't have to go
+in through the gate. The tan and blue armies are **knights** with crossbows, their
+tanks are old **cannons** pushed about by two gunners, and their helicopters are
+**dragons** that breathe fireballs (one shell or two AA darts brings one down).
+The pillboxes are stone guardhouses with a ballista. The villages are thatched
+cottages on dirt tracks, and the Fortress in the middle is the **Great Castle**.
+
+## Mission 5: Zombie Attack
+
+The last level. Green, red, tan and blue have all joined up to defend the
+**Fortress**, and waves of plastic **zombies** are coming. A new wave comes every
+minute, from more sides and bigger each time: walkers, then speedy runners, then
+big purple brutes that take several hits. Pillboxes, squads and tanks from every
+army hold a ring round the walls, and there's a jeep station and a chopper
+station by the gates. Drive into the Fortress to repair and rearm, and press
+Back / R to get back there.
+
+Zombies that reach the Fortress wall batter it, and the wall's strength bar at
+the top of the screen goes down (it mends slowly while they're kept off). When it
+runs out, the zombies are in and the game is over. Nobody can hold them off
+forever: most games end somewhere around 15 minutes. The screen shows how long
+you held out, which wave you reached and how many zombies you knocked over. Press
+A or Enter to try again.
+
 ## Level select
 
 Pause, open **Options** and pick a level under **Level select** at the bottom,
 then press A or Enter (or click it). It starts that mission from the beginning.
-You can also open the game with `?mission=2` or `?mission=3`.
+You can also open the game with `?mission=2` up to `?mission=5`.
 
 ## Credits
 

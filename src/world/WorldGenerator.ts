@@ -18,7 +18,8 @@ import type { SquadSpawn } from '../entities/TroopManager';
 import { mulberry32 } from '../utils/rng';
 import { randRange } from '../utils/math';
 import { ENEMY_ARMY_COLOR, ARMY_RED, ARMY_TAN, ARMY_BLUE, plastic } from '../utils/plastic';
-import { WORLD_HALF, WORLD_SEED, BASE_RADIUS, MAX_ENEMIES, FORTRESS_HALF, JUNGLE, distanceToFriendlyBase } from '../core/config';
+import { WORLD_HALF, WORLD_SEED, BASE_RADIUS, MAX_ENEMIES, FORTRESS_HALF, JUNGLE, KNIGHTS, ZOMBIES, distanceToFriendlyBase } from '../core/config';
+import { buildCottage, buildHayCart, COTTAGE_ROOFS, SHUTTER_COLORS } from './Medieval';
 import { Tree, TREE_SIZE, LAMP_SIZE, type ToppleSize } from './Tree';
 
 export interface EnemySpawnPoint {
@@ -105,7 +106,7 @@ export function generateWorld(
   const highways = planHighways();
   setSurfaceRoads(highways);
   scene.add(buildHighwayMeshes(highways));
-  if (!JUNGLE) placePowerLines(scene, assets, highways);
+  if (!JUNGLE && !KNIGHTS) placePowerLines(scene, assets, highways);
   const landmarks = new LandmarkSet(world, scene, hitRegistry, assets);
   const town = dressTowns(world, scene, hitRegistry, assets);
   const enemyBases = SITES.filter((s) => s.kind === 'enemyBase').map((s) => new EnemyBase(world, scene, hitRegistry, assets, s));
@@ -117,14 +118,15 @@ export function generateWorld(
     ...enemyBases.flatMap((b) => b.buildings),
     ...fortress.buildings.filter((b) => !fortress.bunkers.some((k) => k.building === b)),
   ];
-  const bunkers = [...placeBunkers(world, scene, hitRegistry, highways), ...enemyBases.map((b) => b.bunker), ...fortress.bunkers];
+  // On the zombie mission there are no enemy pillboxes, and the Fortress's own are on our side (the Game has them).
+  const bunkers = ZOMBIES ? [] : [...placeBunkers(world, scene, hitRegistry, highways), ...enemyBases.map((b) => b.bunker), ...fortress.bunkers];
   const forests = planForests(highways, bunkers);
   // Everything that topples when a tank drives into it: trees and lamp posts.
   const trees = [...placeTrees(world, scene, hitRegistry, assets, highways, bunkers, forests), ...town.lamps, ...landmarks.lampPosts];
   if (JUNGLE) placeUndergrowth(scene, assets, highways, bunkers, forests);
   const holds = (site: Site) => whileBaseHolds(site, enemyBases, fortress);
   const enemySpawns = placeEnemySpawns(holds);
-  const squads = [...planSquads(bunkers, holds), ...planRedSquads()];
+  const squads = [...(ZOMBIES ? [] : planSquads(bunkers, holds)), ...planRedSquads()];
   return { buildings, enemySpawns, highways, bunkers, squads, landmarks, enemyBases, redRoutes: planRedRoutes(), fortress, forests, trees };
 }
 
@@ -260,7 +262,7 @@ function placeRoads(scene: THREE.Scene): void {
       mesh.position.set(road.x, y, road.z);
       mesh.receiveShadow = true;
       scene.add(mesh);
-      if (JUNGLE) continue; // village tracks are bare earth
+      if (JUNGLE || KNIGHTS) continue; // village tracks are bare earth
 
       const line = new THREE.Mesh(
         new THREE.PlaneGeometry(road.alongX ? road.length - ROAD_WIDTH : 0.35, road.alongX ? 0.35 : road.length - ROAD_WIDTH),
@@ -284,6 +286,15 @@ function placeHouses(world: RAPIER.World, scene: THREE.Scene, hitRegistry: HitRe
   for (const town of TOWNS) {
     for (const lot of town.lots) {
       const shop = lot.kind === 'shop';
+      if (KNIGHTS) {
+        // Villages of thatched cottages; tall town houses and inns on the high street.
+        const variant = shop ? 2 + Math.floor(rng() * 2) : Math.floor(rng() * 2);
+        const roof = COTTAGE_ROOFS[Math.floor(rng() * COTTAGE_ROOFS.length)];
+        const model = buildCottage(variant, roof, SHUTTER_COLORS[Math.floor(rng() * SHUTTER_COLORS.length)]);
+        const scale = fitScale(model, lot.facing, 1, MAX_HOUSE_WIDTH, MAX_HOUSE_DEPTH);
+        buildings.push(plantBuilding(world, scene, hitRegistry, model, lot.x, lot.z, lot.facing, scale, shop ? 160 : 110, 0x9a8a70));
+        continue;
+      }
       if (JUNGLE) {
         const group = shop ? 'bigHut' : 'hut';
         const model = assets.clone(group, assets.random(group, rng));
@@ -314,6 +325,17 @@ function dressTowns(world: RAPIER.World, scene: THREE.Scene, hitRegistry: HitReg
   const kerb = ROAD_WIDTH / 2 + 1.5;
 
   for (const town of TOWNS) {
+    // The knights' villages have hay carts by the road instead of cars, and no street lights.
+    if (KNIGHTS) {
+      for (const lot of town.lots) {
+        if (rng() > PARKED_CAR_CHANCE * 0.6) continue;
+        const side = lot.z > lot.streetZ ? 1 : -1;
+        const x = lot.x + randRange(rng, -6, 6);
+        const z = lot.streetZ + side * (ROAD_WIDTH / 2 - 1.6);
+        cars.push(plantBuilding(world, scene, hitRegistry, buildHayCart(), x, z, rng() < 0.5 ? Math.PI / 2 : -Math.PI / 2, 1, 26, 0x8a6a3a));
+      }
+      continue;
+    }
     // Jungle villages have no street lights and only the odd truck or jeep.
     if (JUNGLE) {
       for (const lot of town.lots) {
@@ -599,6 +621,7 @@ function toppleInstances(
 function placeEnemySpawns(holds: HoldFor): EnemySpawnPoint[] {
   const rng = mulberry32(WORLD_SEED + 97);
   const spawns: EnemySpawnPoint[] = [];
+  if (ZOMBIES) return spawns; // the zombies are the only enemy
   let attempts = 0;
 
   while (spawns.length < MAX_ENEMIES && attempts < 500) {

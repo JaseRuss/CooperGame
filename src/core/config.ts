@@ -11,23 +11,28 @@ export const TERRAIN_HEIGHT = 18;
 /**
  * Which mission is playing, from the page's `?mission=` parameter. Mission 1 is the daytime
  * battle; mission 2 is the night raid, on a fresh battlefield (its own seed) under flares;
- * mission 3 is a steamy jungle of thick trees and villages of wooden huts.
+ * mission 3 is a steamy jungle of thick trees and villages of wooden huts; mission 4 is a land of
+ * knights and castles; mission 5 is the last stand, every army together against waves of zombies.
  */
-export type Mission = 1 | 2 | 3;
+export type Mission = 1 | 2 | 3 | 4 | 5;
 
 /** Every mission in play order, as the level select lists them. */
 export const MISSIONS: { mission: Mission; title: string; blurb: string }[] = [
   { mission: 1, title: 'Day Battle', blurb: 'Sunny fields and towns. Knock out five enemy bases, then storm the Fortress.' },
   { mission: 2, title: 'Night Raid', blurb: 'New ground under the moon. Flares light up the enemy and flak guns guard their bases.' },
   { mission: 3, title: 'Jungle Strike', blurb: 'Thick jungle and wooden hut villages. Smash through the trees to find the enemy bases.' },
+  { mission: 4, title: 'Castle Siege', blurb: 'Knights, cannons and dragons! Knock down five enemy castles, then the Great Castle.' },
+  { mission: 5, title: 'Zombie Attack', blurb: 'Every army together at the Fortress against wave after wave of zombies. How long can you hold out?' },
 ];
 
 const missionParam = Number(new URLSearchParams(window.location.search).get('mission'));
 export const MISSION: Mission = MISSIONS.find((m) => m.mission === missionParam)?.mission ?? 1;
 export const NIGHT = MISSION === 2;
 export const JUNGLE = MISSION === 3;
+export const KNIGHTS = MISSION === 4;
+export const ZOMBIES = MISSION === 5;
 
-const SEEDS: Record<Mission, number> = { 1: 1337, 2: 2468, 3: 3579 };
+const SEEDS: Record<Mission, number> = { 1: 1337, 2: 2468, 3: 3579, 4: 4680, 5: 5791 };
 export const WORLD_SEED = SEEDS[MISSION];
 
 /** Reloads the page into another mission (a fresh world, from the start). */
@@ -81,7 +86,8 @@ export function nearestFriendlyBase(x: number, z: number): FriendlyBase {
   return best;
 }
 
-export const ENEMY_BASE_COUNT = 5;
+/** The zombie mission has no enemy bases: the zombies come from outside. */
+export const ENEMY_BASE_COUNT = ZOMBIES ? 0 : 5;
 
 /** Half-size of the Fortress in the middle of the map: the final objective, locked until every enemy base falls. */
 export const FORTRESS_HALF = 110;

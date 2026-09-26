@@ -12,6 +12,8 @@ import {
   FRIENDLY_BASES,
   BASE_RADIUS,
   JUNGLE,
+  KNIGHTS,
+  ZOMBIES,
 } from '../core/config';
 
 const noise2D = createNoise2D(mulberry32(WORLD_SEED));
@@ -187,11 +189,13 @@ export function buildTerrain(): TerrainBuild {
   const colors = new Float32Array(position.count * 3);
   // Light, sunny "playmat" greens so the darker army-green plastic stands out.
   // The jungle floor is deeper and muddier, but still lighter than the green plastic.
-  const grass = new THREE.Color(JUNGLE ? '#6f9c3e' : '#8dbb55');
-  const grassHigh = new THREE.Color(JUNGLE ? '#8aa748' : '#b2c26a');
-  const dirt = new THREE.Color(JUNGLE ? '#9a7a4e' : '#bda673');
-  const sand = new THREE.Color(JUNGLE ? '#c9b27a' : '#e3d29a');
-  const lakeBed = new THREE.Color(JUNGLE ? '#6b6a3e' : '#8a8a5c');
+  // The knights' meadows are lush; the zombie mission's grass has gone dull and dry.
+  const pick = (day: string, jungle: string, knights: string, zombies: string) => new THREE.Color(JUNGLE ? jungle : KNIGHTS ? knights : ZOMBIES ? zombies : day);
+  const grass = pick('#8dbb55', '#6f9c3e', '#84bd4e', '#86b456');
+  const grassHigh = pick('#b2c26a', '#8aa748', '#a9c95f', '#a3b666');
+  const dirt = pick('#bda673', '#9a7a4e', '#b39a66', '#9e8c68');
+  const sand = pick('#e3d29a', '#c9b27a', '#e0cf96', '#c8bb92');
+  const lakeBed = pick('#8a8a5c', '#6b6a3e', '#86895a', '#6f6a58');
   const tmp = new THREE.Color();
 
   for (let i = 0; i < position.count; i++) {

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type RAPIER from '@dimforge/rapier3d-compat';
-import { Soldier, type Shot } from './Soldier';
+import { Soldier, type Shot, type ZombieKind } from './Soldier';
 import type { Faction } from './Tank';
 import type { MapMarker } from '../ui/WorldMap';
 
@@ -16,6 +16,8 @@ export interface SquadSpawn {
   color: number;
   /** The squad keeps respawning only while this holds (its bunker stands, its base isn't taken). */
   holdWhile: (() => boolean) | null;
+  /** A pack of zombies (never respawns; the anchor is where they're heading). */
+  zombie?: ZombieKind;
 }
 
 interface Squad {
@@ -28,6 +30,10 @@ export class TroopManager {
   private readonly squads: Squad[] = [];
   /** Soldiers standing where this holds can't be targeted or hurt. */
   shielded: ((p: THREE.Vector3) => boolean) | null = null;
+  /** Where zombies can't walk (the Fortress wall): they stop there and batter it. */
+  blocked: ((x: number, z: number) => boolean) | null = null;
+  /** Zombies knocked over so far. */
+  zombiesDowned = 0;
 
   constructor(
     private readonly scene: THREE.Scene,
@@ -43,12 +49,35 @@ export class TroopManager {
     this.fillSquad(squad);
   }
 
+  /**
+   * A pack of zombies that appears at (x, z) and heads for `goal`. They don't come back once
+   * they're knocked over.
+   */
+  addZombies(x: number, z: number, goal: THREE.Vector2, kinds: ZombieKind[], color: (k: ZombieKind) => number): void {
+    const squad: Squad = { spawn: { anchor: goal, count: 0, wanderRadius: 0, faction: 'enemy', color: 0, holdWhile: () => false, zombie: 'walker' }, soldiers: [], respawnTimer: 0 };
+    kinds.forEach((kind, i) => {
+      const a = (i / kinds.length) * Math.PI * 2 + this.rng();
+      const r = 1.5 + this.rng() * 5;
+      const s = new Soldier(x + Math.cos(a) * r, z + Math.sin(a) * r, goal, 0, this.rng, 'enemy', color(kind), kind);
+      this.scene.add(s.mesh);
+      squad.soldiers.push(s);
+    });
+    this.squads.push(squad);
+  }
+
+  /** Zombies still on their feet. */
+  get zombiesStanding(): number {
+    let n = 0;
+    for (const squad of this.squads) if (squad.spawn.zombie) for (const s of squad.soldiers) if (s.isActive) n++;
+    return n;
+  }
+
   private fillSquad(squad: Squad): void {
-    const { anchor, count, wanderRadius, faction, color } = squad.spawn;
+    const { anchor, count, wanderRadius, faction, color, zombie } = squad.spawn;
     for (let i = 0; i < count; i++) {
       const a = (i / count) * Math.PI * 2 + this.rng();
       const r = 2 + this.rng() * wanderRadius * 0.6;
-      const soldier = new Soldier(anchor.x + Math.cos(a) * r, anchor.y + Math.sin(a) * r, anchor, wanderRadius, this.rng, faction, color);
+      const soldier = new Soldier(anchor.x + Math.cos(a) * r, anchor.y + Math.sin(a) * r, anchor, wanderRadius, this.rng, faction, color, zombie ?? null);
       this.scene.add(soldier.mesh);
       squad.soldiers.push(soldier);
     }
@@ -66,11 +95,14 @@ export class TroopManager {
     onShot: (shot: Shot, faction: Faction) => void,
   ): void {
     const activeSq = ACTIVE_RANGE * ACTIVE_RANGE;
-    for (const squad of this.squads) {
+    // Backwards, since a zombie pack that's all been knocked over is dropped from the list.
+    for (let q = this.squads.length - 1; q >= 0; q--) {
+      const squad = this.squads[q];
       const foes = targets[squad.spawn.faction];
       for (let i = squad.soldiers.length - 1; i >= 0; i--) {
         const s = squad.soldiers[i];
-        if (s.isActive && s.position.distanceToSquared(playerPos) > activeSq) continue;
+        // Far-off soldiers stand still to save time, but zombies never stop coming.
+        if (s.isActive && !s.zombie && s.position.distanceToSquared(playerPos) > activeSq) continue;
         let target: THREE.Vector3 | null = null;
         let nearest = Infinity;
         for (const f of foes) {
@@ -80,8 +112,12 @@ export class TroopManager {
             target = f;
           }
         }
-        const shot = s.update(dt, world, target);
+        const shot = s.update(dt, world, target, this.blocked ?? undefined);
         if (shot) onShot(shot, squad.spawn.faction);
+        if (s.zombie && !s.isActive && !s.counted) {
+          s.counted = true;
+          this.zombiesDowned++;
+        }
         if (s.expired) {
           this.scene.remove(s.mesh);
           squad.soldiers.splice(i, 1);
@@ -90,6 +126,10 @@ export class TroopManager {
       }
 
       if (squad.soldiers.length === 0) {
+        if (squad.spawn.zombie) {
+          this.squads.splice(q, 1);
+          continue;
+        }
         if (squad.spawn.holdWhile && !squad.spawn.holdWhile()) continue;
         squad.respawnTimer -= dt;
         if (squad.respawnTimer <= 0) this.fillSquad(squad);

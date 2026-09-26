@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { Tank } from './Tank';
-import { ENEMY_MAX_HEALTH, ENEMY_MAX_SPEED } from '../core/config';
+import { ENEMY_MAX_HEALTH, ENEMY_MAX_SPEED, KNIGHTS } from '../core/config';
+import { buildCannonParts, CANNON_LAYOUT } from './KnightModels';
 import { randRange } from '../utils/math';
 import { heightAt } from '../world/Terrain';
 import { ARMY_TAN } from '../utils/plastic';
@@ -24,6 +25,8 @@ export class EnemyTank extends Tank {
   private readonly healthBarCanvas: HTMLCanvasElement;
   private readonly healthBarCtx: CanvasRenderingContext2D;
   private readonly healthBarTexture: THREE.CanvasTexture;
+  /** On the knights mission it's an old field cannon wheeled about by two gunners. */
+  private cannon: { wheels: THREE.Object3D[]; crew: THREE.Object3D[]; last: THREE.Vector3; phase: number } | null = null;
 
   constructor(
     world: RAPIER.World,
@@ -34,7 +37,8 @@ export class EnemyTank extends Tank {
     private readonly rng: () => number,
     color: number = ARMY_TAN,
   ) {
-    super(world, spawnX, spawnZ, ENEMY_MAX_HEALTH, color);
+    super(world, spawnX, spawnZ, ENEMY_MAX_HEALTH, color, 0, 'enemy', !KNIGHTS);
+    if (KNIGHTS) this.buildCannon(color);
     this.pickNewPatrolTarget();
 
     this.healthBarCanvas = document.createElement('canvas');
@@ -50,6 +54,31 @@ export class EnemyTank extends Tank {
     this.healthBarSprite.visible = false;
     this.root.add(this.healthBarSprite);
     this.redrawHealthBar();
+  }
+
+  /** Carriage, wheels and gunners on the hull; the barrel on the Tank rig's aiming pivots, so it fires like a tank. */
+  private buildCannon(color: number): void {
+    const parts = buildCannonParts(color);
+    this.root.add(parts.carriage);
+    this.turretPivot.position.copy(CANNON_LAYOUT.trunnion);
+    this.root.add(this.turretPivot);
+    this.turretPivot.add(this.barrelPivot);
+    this.barrelPivot.add(parts.gun);
+    this.muzzle.position.set(0, 0, CANNON_LAYOUT.muzzle);
+    this.barrelPivot.add(this.muzzle);
+    this.cannon = { wheels: parts.wheels, crew: parts.crew, last: this.position.clone(), phase: Math.random() * 3 };
+  }
+
+  /** Rolls the wheels by how far the cannon moved, and makes the gunners hop along as they push. */
+  private animateCannon(): void {
+    const c = this.cannon;
+    if (!c) return;
+    const along = this.position.clone().sub(c.last).dot(this.forward);
+    c.last.copy(this.position);
+    if (Math.abs(along) > 5) return; // a teleport, not a push
+    for (const w of c.wheels) w.rotation.x -= along / CANNON_LAYOUT.wheelRadius;
+    c.phase += Math.abs(along) * 1.6;
+    c.crew.forEach((g, i) => (g.position.y = -0.5 + Math.abs(Math.sin(c.phase + i * 1.3)) * 0.14));
   }
 
   private pickNewPatrolTarget(): void {
@@ -177,6 +206,7 @@ export class EnemyTank extends Tank {
     }
 
     this.drive(throttle, steer, dt, ENEMY_MAX_SPEED);
+    this.animateCannon();
     this.update(dt);
     this.redrawHealthBar();
     this.healthBarSprite.visible = this.health < this.maxHealth;

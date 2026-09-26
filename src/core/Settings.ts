@@ -137,7 +137,7 @@ export const OPTION_ROWS: OptionRow[] = [
     values: VOLUMES.map((v) => ({
       value: v,
       label: VOLUME_LABELS[v],
-      hint: v === 0 ? 'No music.' : 'Each level has its own tune: a march by day, a sneaky tune at night and bongos in the jungle.',
+      hint: v === 0 ? 'No music.' : 'Each level has its own tune: a march by day, a sneaky tune at night, bongos in the jungle, a jig for the castles and a spooky one for the zombies.',
     })),
   },
   {

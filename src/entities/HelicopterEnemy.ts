@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { Tank } from './Tank';
-import { ENEMY_MAX_HEALTH } from '../core/config';
+import { ENEMY_MAX_HEALTH, KNIGHTS } from '../core/config';
+import { buildDragonParts, DRAGON_MOUTH, DRAGON_NECK, type DragonParts } from './KnightModels';
 import { heightAt } from '../world/Terrain';
 import { ARMY_TAN, plastic, shade } from '../utils/plastic';
 import { PartBuilder, loftGeometry, tubeX, tubeZ } from '../utils/modelKit';
@@ -110,7 +111,10 @@ function dress(geos: Map<THREE.Material, THREE.BufferGeometry>, parent: THREE.Ob
   }
 }
 
-/** Airborne enemy that shares the tank health, faction, shell and target interfaces. */
+/**
+ * Airborne enemy that shares the tank health, faction, shell and target interfaces: a gunship, or
+ * on the knights mission a dragon that breathes fireballs (the Game gives its shots that look).
+ */
 export class HelicopterEnemy extends Tank {
   override readonly fireInterval = 3.1;
   override readonly shellDamage = 10;
@@ -130,6 +134,8 @@ export class HelicopterEnemy extends Tank {
   private readonly previousTargetPosition = new THREE.Vector3();
   private readonly targetVelocity = new THREE.Vector3();
   private readonly cruiseHeight = CRUISE_HEIGHT;
+  private readonly dragon: DragonParts | null = null;
+  private flapTime = Math.random() * 10;
 
   constructor(
     world: RAPIER.World,
@@ -145,22 +151,36 @@ export class HelicopterEnemy extends Tank {
     world.removeCollider(this.collider, true);
     this.collider = world.createCollider(RAPIER.ColliderDesc.cuboid(HIT_HALF.x, HIT_HALF.y, HIT_HALF.z).setTranslation(0, 0.3, 1.2), this.body);
 
-    const shapes = gunshipShapes(color);
     this.root.add(this.airframe);
-    dress(shapes.body, this.airframe);
-    this.mainRotor.position.set(0, 2.85, 0);
-    dress(shapes.rotor, this.mainRotor);
-    this.tailRotor.position.set(0.45, 2.4, 8.2);
-    dress(shapes.tail, this.tailRotor);
-    this.airframe.add(this.mainRotor, this.tailRotor);
+    if (KNIGHTS) {
+      // The head sits on Tank's aiming pivots, so it turns to face whatever it breathes fire at.
+      const dragon = buildDragonParts(color);
+      this.dragon = dragon;
+      this.airframe.add(dragon.body);
+      this.turretPivot.position.copy(DRAGON_NECK);
+      this.airframe.add(this.turretPivot);
+      this.turretPivot.add(this.barrelPivot);
+      this.barrelPivot.add(dragon.head);
+      this.muzzle.position.set(0, -0.25, DRAGON_MOUTH);
+      this.barrelPivot.add(this.muzzle);
+      this.barrelPitchMin = -1.05;
+    } else {
+      const shapes = gunshipShapes(color);
+      dress(shapes.body, this.airframe);
+      this.mainRotor.position.set(0, 2.85, 0);
+      dress(shapes.rotor, this.mainRotor);
+      this.tailRotor.position.set(0.45, 2.4, 8.2);
+      dress(shapes.tail, this.tailRotor);
+      this.airframe.add(this.mainRotor, this.tailRotor);
 
-    // Chin turret: Tank's aiming pivots, so the shared aim/fire code drives it.
-    this.turretPivot.position.set(0, -0.9, -4.3);
-    this.airframe.add(this.turretPivot);
-    this.turretPivot.add(this.barrelPivot);
-    dress(shapes.gun, this.barrelPivot);
-    this.muzzle.position.set(0, 0, -1.5);
-    this.barrelPivot.add(this.muzzle);
+      // Chin turret: Tank's aiming pivots, so the shared aim/fire code drives it.
+      this.turretPivot.position.set(0, -0.9, -4.3);
+      this.airframe.add(this.turretPivot);
+      this.turretPivot.add(this.barrelPivot);
+      dress(shapes.gun, this.barrelPivot);
+      this.muzzle.position.set(0, 0, -1.5);
+      this.barrelPivot.add(this.muzzle);
+    }
     this.orbitPhase = rng() * Math.PI * 2;
 
     this.healthCanvas = document.createElement('canvas');
@@ -181,10 +201,21 @@ export class HelicopterEnemy extends Tank {
     this.lastPosition.copy(this.root.position);
   }
 
-  /** Spins the rotors and leans the airframe into its direction of travel. */
+  /** Spins the rotors (or flaps the dragon's wings) and leans the airframe into its direction of travel. */
   private animate(dt: number): void {
     this.mainRotor.rotation.y += MAIN_ROTOR_SPEED * dt;
     this.tailRotor.rotation.x += TAIL_ROTOR_SPEED * dt;
+    if (this.dragon) {
+      // Big slow wingbeats: a quick downstroke and a lazier recovery, the body rising on each beat.
+      this.flapTime += dt;
+      const beat = Math.sin(this.flapTime * 3.4);
+      const flap = beat > 0 ? beat * 0.7 : beat * 0.45;
+      this.dragon.wings[0].rotation.z = -flap;
+      this.dragon.wings[1].rotation.z = flap;
+      this.dragon.body.position.y = -beat * 0.35;
+      this.dragon.tail.rotation.y = Math.sin(this.flapTime * 1.3) * 0.28;
+      this.dragon.tail.rotation.x = Math.sin(this.flapTime * 1.7) * 0.08;
+    }
     if (dt <= 0) return;
     const v = this.root.position.clone().sub(this.lastPosition).divideScalar(dt);
     this.lastPosition.copy(this.root.position);

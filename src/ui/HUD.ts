@@ -3,7 +3,7 @@ import type { AimTarget } from './AimGuide';
 import type { ArmorZone } from '../entities/Tank';
 import type { MenuInput } from '../input/InputManager';
 import { OPTION_ROWS, DEFAULT_BUDDY_NAMES, BUDDY_NAME_MAX, cleanBuddyName, type Settings } from '../core/Settings';
-import { WORLD_SIZE, MISSION, MISSIONS, type Mission } from '../core/config';
+import { WORLD_SIZE, MISSION, MISSIONS, KNIGHTS, ZOMBIES, type Mission } from '../core/config';
 
 /** The pause menu's clicks and beeps. */
 export type MenuSound = 'move' | 'change' | 'back' | 'open' | 'confirm';
@@ -24,7 +24,25 @@ export interface ObjectiveLine {
   done: boolean;
 }
 
+/** The zombie mission's scoreboard. */
+export interface ZombieHUD {
+  wave: number;
+  nextWaveIn: number;
+  /** Zombies on their feet or still to come this wave. */
+  standing: number;
+  fortStrength: number;
+  fortMax: number;
+  /** Seconds held so far. */
+  survived: number;
+  downed: number;
+  /** Zombies are battering the wall right now. */
+  atWall: boolean;
+  over: boolean;
+}
+
 export interface HUDState {
+  /** Set on the zombie mission. */
+  zombies: ZombieHUD | null;
   health: number;
   maxHealth: number;
   reloadFraction: number; // 0 = ready to fire, 1 = just fired
@@ -224,12 +242,21 @@ const STYLE = `
 .hud .victory { position:absolute; inset:0; display:none; flex-direction:column; align-items:center; justify-content:center; gap:14px; text-align:center;
   background:radial-gradient(ellipse at center, rgba(40,80,30,0.6), rgba(0,0,0,0.3)); }
 .hud .victory .big { font-size:72px; color:#ffd24a; text-shadow:0 4px 14px #000, 0 0 30px rgba(255,200,60,0.7); }
+.hud .victory.defeat { background:radial-gradient(ellipse at center, rgba(60,90,40,0.55), rgba(20,0,30,0.7)); }
+.hud .victory.defeat .big { color:#c8ff7a; text-shadow:0 4px 14px #000, 0 0 30px rgba(120,255,80,0.6); }
+.hud .zwall { width:260px; margin:5px auto 0; }
+.hud .zwall .bar { height:10px; }
+.hud .zstats { display:flex; gap:14px; justify-content:center; margin-top:5px; font-size:11.5px; font-weight:800; letter-spacing:0.5px; }
+.hud .zstats b { color:#ffd24a; font-weight:800; }
+.hud .zalarm { color:#c8ff7a; animation:hudPulse 0.4s ease-in-out infinite alternate; }
 `;
 
-/** Who's who, always shown under the enemy-bases counter. */
-const ARMY_KEY =
-  '<div class="sides"><span style="color:#9be27a">FRIENDS</span><i style="background:#4b7a2e"></i>Green<i style="background:#b8392e"></i>Red' +
-  '<span style="color:#ff8a7a; margin-left:12px">ENEMIES</span><i style="background:#c4a468"></i>Tan<i style="background:#3d6fc4"></i>Blue</div>';
+/** Who's who, always shown under the enemy-bases counter. On the zombie mission every army is a friend. */
+const ARMY_KEY = ZOMBIES
+  ? '<div class="sides"><span style="color:#9be27a">FRIENDS</span><i style="background:#4b7a2e"></i>Green<i style="background:#b8392e"></i>Red' +
+    '<i style="background:#c4a468"></i>Tan<i style="background:#3d6fc4"></i>Blue<span style="color:#ff8a7a; margin-left:12px">ENEMY</span><i style="background:#9fb98a"></i>Zombies</div>'
+  : '<div class="sides"><span style="color:#9be27a">FRIENDS</span><i style="background:#4b7a2e"></i>Green<i style="background:#b8392e"></i>Red' +
+    '<span style="color:#ff8a7a; margin-left:12px">ENEMIES</span><i style="background:#c4a468"></i>Tan<i style="background:#3d6fc4"></i>Blue</div>';
 
 /** Side view of a helicopter, for the AA lock tag. */
 const HELI_ICON = `<svg width="20" height="14" viewBox="0 0 20 14" fill="#8fd3ff"><rect x="1" y="1" width="16" height="1.4" rx=".7"/>
@@ -312,6 +339,7 @@ export class HUD {
   private readonly checklist: HTMLDivElement;
   private readonly banner: HTMLDivElement;
   private readonly victory: HTMLDivElement;
+  private readonly victoryBig: HTMLDivElement;
   private readonly victoryText: HTMLDivElement;
   private readonly victoryFooter: HTMLDivElement;
   private onMissionStart: ((m: Mission) => void) | null = null;
@@ -444,15 +472,17 @@ export class HUD {
     this.bigMapCanvas = el('canvas', '', this.pages.map);
     this.bigMapCanvas.style.cssText = 'border:3px solid rgba(214,196,138,0.7); border-radius:8px; box-shadow:0 4px 18px rgba(0,0,0,0.6);';
     this.bigMapCtx = this.bigMapCanvas.getContext('2d') as CanvasRenderingContext2D;
-    el('div', 'legend shadow', this.pages.map).innerHTML =
-      '<span><i style="background:#4b7a2e"></i>Green army: you</span><span><i style="background:#b8392e"></i>Red army: friendly</span>' +
-      '<span><i style="background:#c4a468"></i>Tan army: enemy</span><span><i style="background:#3d6fc4"></i>Blue army: enemy</span>';
+    el('div', 'legend shadow', this.pages.map).innerHTML = ZOMBIES
+      ? '<span><i style="background:#4b7a2e"></i>Green army: you</span><span><i style="background:#b8392e"></i>Red</span>' +
+        '<span><i style="background:#c4a468"></i>Tan</span><span><i style="background:#3d6fc4"></i>Blue: all friends now</span><span><i style="background:#9fb98a"></i>Zombies: the enemy</span>'
+      : '<span><i style="background:#4b7a2e"></i>Green army: you</span><span><i style="background:#b8392e"></i>Red army: friendly</span>' +
+        '<span><i style="background:#c4a468"></i>Tan army: enemy</span><span><i style="background:#3d6fc4"></i>Blue army: enemy</span>';
     el('div', 'legend shadow', this.pages.map).innerHTML =
       '<span><i style="background:#5fe05f"></i>You</span><span><i style="background:#9be27a"></i>Buddies &amp; friendly troops</span>' +
       '<span><i style="background:#ffcc33"></i>Family bases</span><span><i style="background:#d23c32"></i>Enemy bases</span>' +
       '<span><i style="background:linear-gradient(90deg,#ffd44a,#dc2a1a)"></i>Enemies gathered</span>' +
-      '<span><i style="background:#ff75d8"></i>Enemy helicopter</span><span><i style="background:#2fb8ff; border-radius:2px"></i>Jeep station</span>' +
-      '<span><i style="background:#ff9a2f"></i>Chopper station</span>';
+      `<span><i style="background:#ff75d8"></i>${KNIGHTS ? 'Dragon' : 'Enemy helicopter'}</span><span><i style="background:#2fb8ff; border-radius:2px"></i>Jeep station</span>' +
+      '<span><i style="background:#ff9a2f"></i>Chopper station</span>`;
 
     this.optionList = el('div', 'panel options', this.pages.options);
     this.optionHint = el('div', 'hint shadow', this.pages.options);
@@ -485,7 +515,7 @@ export class HUD {
 
     // --- victory screen ---
     this.victory = el('div', 'victory', root);
-    el('div', 'stencil big', this.victory, 'WELL DONE COOPER!');
+    this.victoryBig = el('div', 'stencil big', this.victory, 'WELL DONE COOPER!');
     this.victoryText = el('div', 'shadow', this.victory);
     this.victoryText.style.cssText = 'font-size:22px; font-weight:700;';
     this.victoryFooter = el('div', 'shadow', this.victory);
@@ -816,6 +846,13 @@ export class HUD {
     this.bannerAge = BANNER_TIME; // the victory screen replaces any "base destroyed" banner
   }
 
+  /** The zombie mission's end: the zombies got in. */
+  showDefeat(title: string, message: string): void {
+    this.victoryBig.textContent = title;
+    this.victory.classList.add('defeat');
+    this.showVictory(message, '');
+  }
+
   setVictoryFooter(text: string): void {
     this.victoryFooter.textContent = text;
   }
@@ -942,28 +979,12 @@ export class HUD {
     this.banner.style.opacity = `${bannerT < 0.1 ? bannerT * 10 : Math.max(0, (1 - bannerT) * 2.5)}`;
     this.banner.style.transform = `translateX(-50%) scale(${1 + Math.max(0, 0.15 - this.bannerAge) * 2})`;
 
-    // Enemy bases: a flag each, red while standing, green with a tick once taken.
-    const flags = state.map.enemyBases
-      .map(
-        (b) =>
-          `<div class="flag" style="color:${b.destroyed ? '#9be27a' : '#ff8a7a'}">${flagIcon(b.destroyed ? '#5fbf4a' : '#d23c32', b.destroyed)}${b.name.toUpperCase()}</div>`,
-      )
-      .join('');
-    const fort = state.map.fortress;
-    const fortColor = fort.destroyed ? '#9be27a' : fort.locked ? '#b8b09a' : '#ff5a4a';
-    const fortIcon = fort.locked
-      ? `<svg width="22" height="22" viewBox="0 0 22 22"><path d="M7 10V7a4 4 0 0 1 8 0v3" stroke="#d8d2bd" stroke-width="2" fill="none"/><rect x="5" y="10" width="12" height="9" rx="1.5" fill="#d9a520"/></svg>`
-      : flagIcon(fort.destroyed ? '#5fbf4a' : '#8a3cc8', fort.destroyed);
-    const title =
-      fort.destroyed
-        ? 'VICTORY! THE FORTRESS HAS FALLEN'
-        : state.enemyBasesLeft === 0
-          ? 'FINAL ASSAULT <span style="color:#ff8a7a">DESTROY THE FORTRESS</span>'
-          : `ENEMY BASES LEFT <span style="color:#ff8a7a">${state.enemyBasesLeft}</span> / ${state.enemyBasesTotal}`;
-    const fortFlag = `<div class="flag" style="color:${fortColor}; margin-left:6px; padding-left:10px; border-left:1px solid rgba(214,196,138,0.35)">${fortIcon}FORTRESS</div>`;
-    this.setHTML(this.baseCounter, `<div class="stencil title">${title}</div><div class="flags">${flags}${fortFlag}</div>${ARMY_KEY}`);
-
-    this.updateChecklist(state);
+    if (state.zombies) {
+      this.setHTML(this.baseCounter, this.zombiePanel(state.zombies));
+      this.updateChecklist(state);
+    } else {
+      this.updateBaseCounter(state);
+    }
 
     // Rocket cam: letterbox, hide the regular HUD.
     for (const bar of this.letterbox) bar.style.height = state.cinematic ? '9vh' : '0';
@@ -989,7 +1010,7 @@ export class HUD {
       const at = state.aimScreen ?? { x: window.innerWidth / 2, y: window.innerHeight / 2 };
       this.heliTag.style.display = 'flex';
       this.heliTag.style.transform = `translate(${at.x}px, ${at.y}px)`;
-      this.heliTagText.textContent = `HELI LOCKED · ${state.usingGamepad ? 'RB' : 'Q'}`;
+      this.heliTagText.textContent = `${KNIGHTS ? 'DRAGON' : 'HELI'} LOCKED · ${state.usingGamepad ? 'RB' : 'Q'}`;
     } else {
       this.heliTag.style.display = 'none';
     }
@@ -1003,7 +1024,9 @@ export class HUD {
     } else if (healthFrac < 0.3) {
       this.promptLabel.style.display = 'block';
       this.promptLabel.style.color = '#ff9a8a';
-      this.promptLabel.textContent = 'Hull critical — head back to a family base (yellow rings on the map)';
+      this.promptLabel.textContent = ZOMBIES
+        ? 'Hull critical — drive into the Fortress (or a family base) to repair'
+        : 'Hull critical — head back to a family base (yellow rings on the map)';
     } else {
       this.promptLabel.style.display = 'none';
     }
@@ -1024,6 +1047,49 @@ export class HUD {
       }
       this.worldMap.draw(this.bigMapCtx, size, size, 0, 0, WORLD_SIZE, state.map, { arrowScale: 2.6, labels: true, rimPointer: false, heatmap: true });
     }
+  }
+
+  /** Enemy bases: a flag each, red while standing, green with a tick once taken, then the Fortress. */
+  private updateBaseCounter(state: HUDState): void {
+    const flags = state.map.enemyBases
+      .map(
+        (b) =>
+          `<div class="flag" style="color:${b.destroyed ? '#9be27a' : '#ff8a7a'}">${flagIcon(b.destroyed ? '#5fbf4a' : '#d23c32', b.destroyed)}${b.name.toUpperCase()}</div>`,
+      )
+      .join('');
+    const fort = state.map.fortress;
+    const fortColor = fort.destroyed ? '#9be27a' : fort.locked ? '#b8b09a' : '#ff5a4a';
+    const fortIcon = fort.locked
+      ? `<svg width="22" height="22" viewBox="0 0 22 22"><path d="M7 10V7a4 4 0 0 1 8 0v3" stroke="#d8d2bd" stroke-width="2" fill="none"/><rect x="5" y="10" width="12" height="9" rx="1.5" fill="#d9a520"/></svg>`
+      : flagIcon(fort.destroyed ? '#5fbf4a' : '#8a3cc8', fort.destroyed);
+    const title = fort.destroyed
+      ? `VICTORY! ${fort.title.toUpperCase()} HAS FALLEN`
+      : state.enemyBasesLeft === 0
+        ? `FINAL ASSAULT <span style="color:#ff8a7a">DESTROY ${fort.title.toUpperCase()}</span>`
+        : `ENEMY ${KNIGHTS ? 'CASTLES' : 'BASES'} LEFT <span style="color:#ff8a7a">${state.enemyBasesLeft}</span> / ${state.enemyBasesTotal}`;
+    const fortFlag = `<div class="flag" style="color:${fortColor}; margin-left:6px; padding-left:10px; border-left:1px solid rgba(214,196,138,0.35)">${fortIcon}${fort.name.toUpperCase()}</div>`;
+    this.setHTML(this.baseCounter, `<div class="stencil title">${title}</div><div class="flags">${flags}${fortFlag}</div>${ARMY_KEY}`);
+    this.updateChecklist(state);
+  }
+
+  /** The zombie mission's scoreboard: the wave, the next one's countdown, the wall's strength and the score. */
+  private zombiePanel(z: ZombieHUD): string {
+    const frac = Math.max(0, z.fortStrength / z.fortMax);
+    const color = frac > 0.5 ? '#6fd35a' : frac > 0.25 ? '#e8c23f' : '#e0503f';
+    const clock = (t: number) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
+    const title = z.over
+      ? 'THE ZOMBIES GOT IN!'
+      : z.wave === 0
+        ? `ZOMBIES COMING IN <span style="color:#c8ff7a">${Math.ceil(z.nextWaveIn)}</span>`
+        : `WAVE <span style="color:#c8ff7a">${z.wave}</span> · NEXT IN ${Math.ceil(z.nextWaveIn)}`;
+    const wall = z.atWall && !z.over ? '<span class="zalarm">ZOMBIES AT THE WALL!</span>' : 'FORTRESS WALL';
+    return (
+      `<div class="stencil title">${title}</div>` +
+      `<div class="zwall"><div class="row-label" style="margin:0 0 3px">${wall}<span>${Math.ceil(frac * 100)}%</span></div>` +
+      `<div class="bar"><div class="fill" style="width:${frac * 100}%; background:${color}"></div></div></div>` +
+      `<div class="zstats"><span>HELD <b>${clock(z.survived)}</b></span><span>ZOMBIES <b>${z.standing}</b></span><span>KNOCKED OVER <b>${z.downed}</b></span></div>` +
+      ARMY_KEY
+    );
   }
 
   private updateChecklist(state: HUDState): void {

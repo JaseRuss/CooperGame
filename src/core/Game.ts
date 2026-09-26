@@ -23,7 +23,7 @@ import { EnemyTank } from '../entities/EnemyTank';
 import { HelicopterEnemy } from '../entities/HelicopterEnemy';
 import { BuddyTank, RedTank, type AllyTarget } from '../entities/AllyTank';
 import { TroopManager } from '../entities/TroopManager';
-import type { Shot } from '../entities/Soldier';
+import { ZOMBIE_COLOR, type Shot } from '../entities/Soldier';
 import { HitRegistry } from '../combat/HitRegistry';
 import { ProjectileManager } from '../combat/ProjectileManager';
 import { ImpactEffects } from '../combat/ImpactEffects';
@@ -36,9 +36,11 @@ import { CameraRig } from '../camera/CameraRig';
 import { HUD, type HUDState } from '../ui/HUD';
 import { WorldMap, type MapMarker, type MapView } from '../ui/WorldMap';
 import { AimGuide, type AimTarget } from '../ui/AimGuide';
-import { FRIENDLY_BASES, nearestFriendlyBase, BASE_RADIUS, MISSION, MISSIONS, NIGHT, JUNGLE, startMission, type FriendlyBase, type Mission } from '../core/config';
+import { FRIENDLY_BASES, nearestFriendlyBase, BASE_RADIUS, MISSION, MISSIONS, NIGHT, JUNGLE, KNIGHTS, ZOMBIES, startMission, type FriendlyBase, type Mission } from '../core/config';
+import { ZombieWaves } from '../world/ZombieWaves';
+import type { ShotStyle } from '../combat/Projectile';
 import { NightSky, MOON_DIRECTION } from '../world/NightSky';
-import { ARMY_GREEN, ARMY_RED, shade } from '../utils/plastic';
+import { ARMY_GREEN, ARMY_RED, ARMY_TAN, ARMY_BLUE, shade } from '../utils/plastic';
 import { Sound } from '../audio/Sound';
 import { loadSettings, saveSettings, AIM_SPEED_SCALE, DEFAULT_BUDDY_NAMES, type Settings } from './Settings';
 
@@ -127,6 +129,31 @@ const NEXT_MISSION_DELAY = 12; // after winning a mission, the next one starts t
 const nextMission = MISSIONS.find((m) => m.mission === MISSION + 1);
 /** Where the jungle haze turns fully opaque. */
 const JUNGLE_FOG_FAR = 950;
+
+// The zombie mission: every army holds the Fortress while waves of zombies come at it. Zombies
+// that reach the wall batter it; when the wall's strength runs out, the zombies are in and the
+// game is over. The waves grow faster than anyone can keep up with, so it falls in the end.
+const FORT_STRENGTH = 1200;
+/**
+ * Wall damage per blow from a walker (brutes hit harder); it grows a little with every wave. A
+ * crowd at the wall shares it out (it does the square root of the crowd's worth), so a horde
+ * wears the wall down over a couple of minutes rather than smashing it in seconds.
+ */
+const FORT_BITE = 2.6;
+/** About how often each zombie at the wall lands a blow (Soldier's attack time). */
+const BLOW_TIME = 1.1;
+const BITE_GROWTH = 0.07;
+/** The wall is patched up this fast (strength per second) while no zombie is at it. */
+const FORT_REPAIR = 1.5;
+/** A zombie's blow does this much to a tank (the player can't go below 1), and this much to a pillbox. */
+const TANK_BITE = 3;
+const BUNKER_BITE = 5;
+const BITE_REACH = 3.4;
+/** Zombies stop this far outside the wall and batter it. */
+const WALL_STOP = 1.5;
+const LAST_STAND_COLORS = [ARMY_GREEN, ARMY_RED, ARMY_TAN, ARMY_BLUE];
+/** After the zombies get in, how long before a button press starts again (so a held trigger doesn't). */
+const RETRY_DELAY = 4;
 
 interface RocketSequence {
   rocket: HomingRocket;
@@ -273,6 +300,21 @@ export class Game {
   private fortressWarning = 0;
   /** The vehicle to swap to once the smoke puff has thickened, and how long until then. */
   private pendingSwap: { to: Vehicle; delay: number } | null = null;
+  /** The zombie mission's waves, the Fortress wall's strength and how long it's held out. */
+  private waves: ZombieWaves | null = null;
+  private fortStrength = FORT_STRENGTH;
+  private survived = 0;
+  /** Zombies battering the wall this frame (and a moment ago, for the HUD). */
+  private wallBlows = 0;
+  private wallDamage = 0;
+  /** About how many zombies are battering the wall (smoothed). */
+  private wallCrowd = 0;
+  private wallAlarm = 0;
+  private gameOverTime = -1;
+  /** The score when the wall fell (the defenders keep knocking zombies over after). */
+  private finalDowned = 0;
+  /** Where the player starts and goes home to on the zombie mission: just outside the Fortress gate. */
+  private fortHome: { x: number; z: number; yaw: number } | null = null;
 
   constructor(container: HTMLElement) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -298,22 +340,33 @@ export class Game {
 
     // Daylight, or moonlight on the night raid (dark enough for the flares to show, light enough to play).
     // The jungle is a steamy haze: close green-grey fog and warm, filtered sun.
-    const sky = NIGHT ? 0x0d1733 : JUNGLE ? 0xa9c4a2 : 0x9fd3f0;
+    // The zombies come at dusk: a bruised purple sky and a low orange sun.
+    const sky = NIGHT ? 0x0d1733 : JUNGLE ? 0xa9c4a2 : ZOMBIES ? 0xa7a2c2 : KNIGHTS ? 0xa8d9f4 : 0x9fd3f0;
     this.scene.background = new THREE.Color(sky);
-    this.scene.fog = NIGHT ? new THREE.Fog(sky, 280, 1250) : JUNGLE ? new THREE.Fog(sky, 180, JUNGLE_FOG_FAR) : new THREE.Fog(sky, 500, 1700);
+    this.scene.fog = NIGHT
+      ? new THREE.Fog(sky, 280, 1250)
+      : JUNGLE
+        ? new THREE.Fog(sky, 180, JUNGLE_FOG_FAR)
+        : ZOMBIES
+          ? new THREE.Fog(sky, 240, 1250)
+          : new THREE.Fog(sky, 500, 1700);
 
     this.scene.add(
       NIGHT
         ? new THREE.HemisphereLight(0x7088c4, 0x1d1b26, 0.5)
         : JUNGLE
           ? new THREE.HemisphereLight(0xd8ecc8, 0x2e3a1c, 0.95)
-          : new THREE.HemisphereLight(0xbfd9ff, 0x3a3226, 0.9),
+          : ZOMBIES
+            ? new THREE.HemisphereLight(0xe2dcf2, 0x4a4250, 1.05)
+            : new THREE.HemisphereLight(0xbfd9ff, 0x3a3226, 0.9),
     );
     this.sun = NIGHT
       ? new THREE.DirectionalLight(0xaec4ff, 0.55)
       : JUNGLE
         ? new THREE.DirectionalLight(0xffe7b8, 1.5)
-        : new THREE.DirectionalLight(0xfff2d9, 1.7);
+        : ZOMBIES
+          ? new THREE.DirectionalLight(0xffc9a0, 1.6)
+          : new THREE.DirectionalLight(0xfff2d9, 1.7);
     this.sun.castShadow = true;
     this.sun.shadow.mapSize.set(2048, 2048);
     this.sun.shadow.camera.left = -180;
@@ -403,8 +456,10 @@ export class Game {
     }));
     this.redSlots.forEach((slot, i) => this.spawnRed(slot, i % slot.route.length));
 
+    if (ZOMBIES) this.setupLastStand(content.highways);
     const home = this.familyBases[0];
-    this.player = new PlayerTank(this.world, home.info.x, home.info.z, home.spawnYaw);
+    const start = this.fortHome ?? { x: home.info.x, z: home.info.z, yaw: home.spawnYaw };
+    this.player = new PlayerTank(this.world, start.x, start.z, start.yaw);
     this.scene.add(this.player.root);
     this.hitRegistry.register(this.player.physicsCollider, { kind: 'tank', tank: this.player });
     this.hud.setSettings(this.settings, (s) => {
@@ -435,6 +490,8 @@ export class Game {
     this.ready = true;
     if (MISSION === 2) this.hud.showBanner('MISSION 2: NIGHT RAID', 'The enemy has dug in on new ground. Knock out their bases under the flares!');
     else if (MISSION === 3) this.hud.showBanner('MISSION 3: JUNGLE STRIKE', 'The enemy is hiding in the jungle. Drive or blast through the trees to find their bases!');
+    else if (MISSION === 4) this.hud.showBanner('MISSION 4: CASTLE SIEGE', 'Knights, cannons and dragons! Knock down their castles, then the Great Castle');
+    else if (MISSION === 5) this.hud.showBanner('MISSION 5: ZOMBIE ATTACK!', 'Every army together! Keep the zombies away from the Fortress wall');
     else this.hud.showBanner('GREEN & RED ARE FRIENDS', 'Tan and blue are the enemy. Knock out their bases!');
     if (import.meta.env.DEV) (window as unknown as { game: Game }).game = this;
     this.lastPlayerPosition.copy(this.player.position);
@@ -625,8 +682,15 @@ export class Game {
     if (tank === this.player) this.cameraRig.addShake(0.35);
     // A deep boom and a sharp crack; your own gun is right in your ears.
     const at = tank === this.player ? undefined : shot.origin;
-    this.sound.play('cannon', { at, volume: 0.9, minGap: 0.02 });
-    this.sound.play('crack', { at, volume: 0.35, rate: 1.6, minGap: 0.02 });
+    // The knights' dragons breathe fireballs and their cannons fire iron balls.
+    const dragon = KNIGHTS && tank instanceof HelicopterEnemy;
+    const style: ShotStyle = KNIGHTS && tank.faction === 'enemy' ? (dragon ? 'fireball' : 'cannonball') : 'shell';
+    if (dragon) {
+      this.sound.play('launch', { at, volume: 0.8, rate: 0.55, fadeAfter: 0.7, minGap: 0.05 });
+    } else {
+      this.sound.play('cannon', { at, volume: 0.9, minGap: 0.02 });
+      this.sound.play('crack', { at, volume: 0.35, rate: 1.6, minGap: 0.02 });
+    }
     this.projectiles.spawn(
       shot.origin,
       shot.direction,
@@ -650,6 +714,7 @@ export class Game {
       },
       1,
       tank.faction,
+      style,
     );
   }
 
@@ -750,6 +815,7 @@ export class Game {
       },
       0.45,
       faction,
+      KNIGHTS && faction === 'enemy' ? 'arrow' : 'shell', // the knights shoot crossbows
     );
   }
 
@@ -797,7 +863,7 @@ export class Game {
     for (const base of this.enemyBases) {
       for (const o of base.objectives) if (!o.isDestroyed()) targets.push({ position: o.position, priority: 2.5, alive: () => !o.isDestroyed() });
     }
-    if (!this.fortress.locked) {
+    if (!this.fortress.locked && !ZOMBIES) {
       for (const o of this.fortress.objectives) if (!o.isDestroyed()) targets.push({ position: o.position, priority: 2.5, alive: () => !o.isDestroyed() });
     }
     for (const bunker of this.targetableBunkers) targets.push({ position: bunker.position, priority: 2, alive: () => bunker.alive });
@@ -834,7 +900,7 @@ export class Game {
     for (const base of this.enemyBases) {
       for (const o of base.objectives) if (!o.isDestroyed()) consider(o.position, 0.05, () => (o.isDestroyed() ? null : o.position));
     }
-    if (!this.fortress.locked) {
+    if (!this.fortress.locked && !ZOMBIES) {
       for (const o of this.fortress.objectives) if (!o.isDestroyed()) consider(o.position, 0.05, () => (o.isDestroyed() ? null : o.position));
     }
     for (const bunker of this.targetableBunkers) consider(bunker.position, 0.08, () => (bunker.alive ? bunker.position : null));
@@ -936,7 +1002,7 @@ export class Game {
       const d = tank.position.distanceTo(point);
       if (d >= AA_BLAST_RADIUS) continue;
       tank.takeDamage(AA_DAMAGE * (1 - 0.2 * (d / AA_BLAST_RADIUS)));
-      if (tank.isDestroyed && tank instanceof HelicopterEnemy) this.hud.showCallout('CHOPPER DOWN!', '#8fd3ff');
+      if (tank.isDestroyed && tank instanceof HelicopterEnemy) this.hud.showCallout(KNIGHTS ? 'DRAGON DOWN!' : 'CHOPPER DOWN!', '#8fd3ff');
     }
   }
 
@@ -1165,6 +1231,8 @@ export class Game {
         1: 'The Fortress has fallen and every enemy base is yours. The toy box is saved!',
         2: 'Night raid complete! The flares are out and every enemy base is yours.',
         3: 'Jungle strike complete! Every enemy base in the jungle is yours.',
+        4: 'The Great Castle has fallen! Every knight is bowled over and every dragon is down.',
+        5: '',
       };
       this.hud.showVictory(message[MISSION], nextMission ? '' : 'Keep driving around and enjoy it!');
       this.sound.music.fanfare();
@@ -1268,6 +1336,142 @@ export class Game {
     return best;
   }
 
+  // ---------- the zombie mission ----------
+
+  /** Somewhere the tank is repaired and rearmed: a family base, or on the zombie mission the Fortress. */
+  private atHome(p: THREE.Vector3): boolean {
+    return isInsideBase(p) || (ZOMBIES && this.fortress.contains(p.x, p.z));
+  }
+
+  /**
+   * The last stand: the Fortress opens as everyone's stronghold. Its pillboxes are ours, a ring
+   * of pillboxes and squads from every army dig in round it, tanks of every colour patrol the
+   * walls, and a jeep and a chopper station sit outside the gates. The player starts at a gate.
+   */
+  private setupLastStand(highways: Polyline[]): void {
+    const f = this.fortress;
+    f.unlock();
+    this.troops.blocked = (x, z) => f.nearWall(x, z, WALL_STOP);
+    for (const b of f.bunkers) {
+      this.friendlyBunkers.push(b);
+      this.buildings.push(b.building);
+    }
+    const c = f.center;
+    const around = (r: number, a: number) => new THREE.Vector3(c.x + Math.cos(a) * r, 0, c.z + Math.sin(a) * r);
+    // Pillboxes round the outside, slits facing out, skipping the roads to the gates.
+    for (let i = 0; i < 12; i++) {
+      const a = (i / 12) * Math.PI * 2;
+      const p = around(140, a);
+      if (Math.abs(Math.cos(a)) < 0.2 || highways.some((h) => distanceToPolyline(p.x, p.z, h) < 16)) continue; // leave the gates clear
+      const bunker = new Bunker(this.world, this.scene, this.hitRegistry, p.x, p.z, Math.atan2(-Math.cos(a), -Math.sin(a)), 'player', LAST_STAND_COLORS[i % 4]);
+      this.friendlyBunkers.push(bunker);
+      this.buildings.push(bunker.building);
+    }
+    for (let i = 0; i < 8; i++) {
+      const p = around(125, ((i + 0.5) / 8) * Math.PI * 2); // between the gates
+      this.troops.addSquad({ anchor: new THREE.Vector2(p.x, p.z), count: GARRISON_SQUAD_SIZE, wanderRadius: 12, faction: 'player', color: LAST_STAND_COLORS[i % 4], holdWhile: null });
+    }
+    // Tanks of every army on a loop round the walls.
+    const loop = Array.from({ length: 8 }, (_, i) => {
+      const p = around(175, (i / 8) * Math.PI * 2);
+      p.y = surfaceHeightAt(p.x, p.z);
+      return p;
+    });
+    for (let i = 0; i < 8; i++) {
+      const slot: RedSlot = { route: loop, tank: null, respawnTimer: 0, color: LAST_STAND_COLORS[i % 4], loopFrom: 0, respawnAt: i, holdWhile: null };
+      this.redSlots.push(slot);
+      this.spawnRed(slot, i);
+    }
+    // A jeep station and a chopper station beside the gates.
+    const gates = f.rallyPoints;
+    gates.forEach((g, i) => {
+      const out = new THREE.Vector3(g.x - c.x, 0, g.z - c.z).normalize();
+      for (const side of [1, -1]) {
+        const x = g.x + out.z * 42 * side;
+        const z = g.z - out.x * 42 * side;
+        if (highways.some((h) => distanceToPolyline(x, z, h) < STATION_ROAD_CLEARANCE)) continue;
+        this.stations.push(this.buildStation(i === 0 ? 'jeep' : 'chopper', x, z, Math.atan2(out.x, out.z)));
+        break;
+      }
+    });
+    const g = gates[0];
+    const away = new THREE.Vector3(g.x - c.x, 0, g.z - c.z).normalize();
+    this.fortHome = { x: g.x - away.x * 20, z: g.z - away.z * 20, yaw: Math.atan2(-away.x, -away.z) };
+    this.waves = new ZombieWaves(c, Math.random);
+  }
+
+  /** A zombie's blow landing at `at`: the Fortress wall, or whatever of ours is standing there. */
+  private zombieBlow(at: THREE.Vector3, power: number): void {
+    if (this.gameOverTime >= 0) return;
+    const scale = 1 + BITE_GROWTH * Math.max(0, (this.waves?.wave ?? 1) - 1);
+    if (this.fortress.nearWall(at.x, at.z, 0.5)) {
+      this.wallDamage += FORT_BITE * power * scale;
+      this.wallBlows++;
+      if (Math.random() < 0.3) this.impacts.dustPuff(at);
+      this.sound.play('thud', { at, volume: 0.35, rate: 1.3 + Math.random() * 0.3, minGap: 0.15 });
+      return;
+    }
+    for (const tank of [this.player, ...this.buddies, ...this.redTanks]) {
+      if (Math.hypot(tank.position.x - at.x, tank.position.z - at.z) < BITE_REACH) tank.takeDamage(TANK_BITE * power * scale);
+    }
+    this.troops.shoot(at, 1.6, 'enemy');
+    const closest = new THREE.Vector3();
+    for (const b of this.friendlyBunkers) {
+      if (!b.alive) continue;
+      const box = new THREE.Box3().setFromCenterAndSize(b.building.center, b.building.halfExtents.clone().multiplyScalar(2));
+      if (box.clampPoint(at, closest).distanceTo(at) > 2) continue;
+      b.building.takeDamage(BUNKER_BITE * power * scale);
+      if (b.building.destroyed) this.collapseBuilding(b.building, 'enemy');
+    }
+    this.sound.play('thud', { at, volume: 0.25, rate: 1.6, minGap: 0.2 });
+  }
+
+  /** Runs the waves, the wall's strength and the clock; the game ends when the wall gives way. */
+  private updateLastStand(dt: number, confirm: boolean): void {
+    const waves = this.waves;
+    if (!waves) return;
+    if (this.gameOverTime >= 0) {
+      this.gameOverTime += dt;
+      this.hud.setVictoryFooter(this.gameOverTime > RETRY_DELAY ? 'Press A or Enter to try again · Start / M for the level select' : '');
+      if (confirm && this.gameOverTime > RETRY_DELAY) startMission(MISSION);
+      return;
+    }
+    this.survived += dt;
+    const { started, packs } = waves.update(dt, this.troops.zombiesStanding);
+    if (started) {
+      this.sound.music.alarm();
+      const from = started.from.length > 1 ? `${started.from.slice(0, -1).join(', ')} and ${started.from[started.from.length - 1]}` : started.from[0];
+      this.hud.showBanner(`WAVE ${started.wave}!`, `${started.count} zombies coming from the ${from}!`);
+    }
+    for (const p of packs) {
+      this.troops.addZombies(p.x, p.z, p.goal, p.kinds, (k) => ZOMBIE_COLOR[k]);
+    }
+    // The crowd at the wall shares out its damage; the wall mends a little while nobody's at it.
+    this.wallCrowd = THREE.MathUtils.damp(this.wallCrowd, dt > 0 ? (this.wallBlows * BLOW_TIME) / dt : 0, 1.5, dt);
+    this.fortStrength = Math.max(0, this.fortStrength - this.wallDamage / Math.sqrt(Math.max(1, this.wallCrowd)));
+    this.wallDamage = 0;
+    if (this.wallBlows > 0) {
+      if (this.wallAlarm <= 0) this.hud.showCallout('ZOMBIES AT THE WALL!', '#c8ff7a');
+      this.wallAlarm = 3;
+    } else {
+      this.wallAlarm -= dt;
+      if (this.wallAlarm <= 0) this.fortStrength = Math.min(FORT_STRENGTH, this.fortStrength + FORT_REPAIR * dt);
+    }
+    this.wallBlows = 0;
+    if (this.fortStrength <= 0) {
+      this.gameOverTime = 0;
+      this.finalDowned = this.troops.zombiesDowned;
+      this.sound.music.stop();
+      this.sound.music.alarm();
+      const mins = Math.floor(this.survived / 60);
+      const secs = Math.floor(this.survived % 60);
+      this.hud.showDefeat(
+        'THE ZOMBIES GOT IN!',
+        `You held the Fortress for ${mins}:${String(secs).padStart(2, '0')} and made it to wave ${waves.wave}. ${this.finalDowned} zombies knocked over!`,
+      );
+    }
+  }
+
   // ---------- aiming / HUD helpers ----------
 
   /** The flight of the player's next shell (or the jeep's jam round, or the chopper's chin gun round). */
@@ -1351,7 +1555,7 @@ export class Game {
       buddies: this.buddies.map((b) => ({ x: b.position.x, z: b.position.z, name: b.name })),
       markers: this.collectMarkers(),
       objective,
-      fortress: { x: f.center.x, z: f.center.z, name: f.name, title: f.title, locked: f.locked, destroyed: f.isDestroyed },
+      fortress: { x: f.center.x, z: f.center.z, name: f.name, title: f.title, locked: f.locked, destroyed: f.isDestroyed, friendly: ZOMBIES },
       stations: this.stations.map((s) => ({ x: s.center.x, z: s.center.z, kind: s.kind })),
     };
   }
@@ -1364,11 +1568,12 @@ export class Game {
     aaLockScreen: { x: number; y: number } | null = null,
   ): HUDState {
     const near = this.nearestEnemyBase(false);
-    const inside = isInsideBase(this.player.position);
+    const inside = this.atHome(this.player.position);
     const f = this.fortress;
     const fortressDist = Math.hypot(f.center.x - this.player.position.x, f.center.z - this.player.position.z);
-    const checklist =
-      fortressDist < FORTRESS_CHECKLIST_RANGE && (!near || fortressDist < near.distance)
+    const checklist = ZOMBIES
+      ? null
+      : fortressDist < FORTRESS_CHECKLIST_RANGE && (!near || fortressDist < near.distance)
         ? {
             name: f.title,
             distance: fortressDist,
@@ -1385,6 +1590,19 @@ export class Game {
           : null;
     const vehicle = this.player.vehicle;
     return {
+      zombies: this.waves
+        ? {
+            wave: this.waves.wave,
+            nextWaveIn: this.waves.nextIn,
+            standing: this.troops.zombiesStanding + this.waves.waiting,
+            fortStrength: this.fortStrength,
+            fortMax: FORT_STRENGTH,
+            survived: this.survived,
+            downed: this.gameOverTime >= 0 ? this.finalDowned : this.troops.zombiesDowned,
+            atWall: this.wallAlarm > 0,
+            over: this.gameOverTime >= 0,
+          }
+        : null,
       health: this.player.health,
       maxHealth: this.player.maxHealth,
       reloadFraction: vehicle !== 'tank' ? 0 : this.player.fireCooldown / this.player.fireInterval,
@@ -1394,7 +1612,7 @@ export class Game {
           : null,
       cameraMode: this.cameraRig.mode,
       usingGamepad: input.usingGamepad,
-      insideBase: inside ? nearestFriendlyBase(this.player.position.x, this.player.position.z).name : null,
+      insideBase: inside ? (isInsideBase(this.player.position) ? nearestFriendlyBase(this.player.position.x, this.player.position.z).name : this.fortress.title) : null,
       map: this.mapView(),
       aimScreen: aim.screen,
       aimRange: aim.range,
@@ -1458,7 +1676,8 @@ export class Game {
       if (input.cameraTogglePressed) this.cameraRig.toggle();
       if (input.resetPressed) {
         const base = this.familyBases.find((b) => b.info === nearestFriendlyBase(this.player.position.x, this.player.position.z));
-        if (base) this.player.teleport(base.info.x, base.info.z, base.spawnYaw);
+        if (this.fortHome) this.player.teleport(this.fortHome.x, this.fortHome.z, this.fortHome.yaw);
+        else if (base) this.player.teleport(base.info.x, base.info.z, base.spawnYaw);
       }
       if (input.mapTogglePressed) this.hud.toggleBigMap();
       if (input.rocketPressed) {
@@ -1476,7 +1695,7 @@ export class Game {
     this.player.setRocketReady(this.rocketCharge >= 1 && !this.rocketSeq);
 
     // AA darts are only restocked back at a home base, one at a time.
-    if (this.aaLoaded < AA_CAPACITY && !this.aa.firing && isInsideBase(this.player.position)) {
+    if (this.aaLoaded < AA_CAPACITY && !this.aa.firing && this.atHome(this.player.position)) {
       this.aaRearm += dt;
       while (this.aaRearm >= AA_REARM_TIME && this.aaLoaded < AA_CAPACITY) {
         this.aaRearm -= AA_REARM_TIME;
@@ -1608,8 +1827,9 @@ export class Game {
       this.world,
       this.player.position,
       { enemy: enemyTargetPositions, player: playerSidePositions },
-      (shot, faction) => this.fireBullet(shot, undefined, faction),
+      (shot, faction) => (shot.melee ? this.zombieBlow(shot.origin, shot.melee) : this.fireBullet(shot, undefined, faction)),
     );
+    if (this.waves) this.updateLastStand(dt, rawInput.menu.confirm);
     this.addRocketCharge(this.troops.runOver(this.player.position, RUN_OVER_RADIUS, 'player') * CHARGE_PER_TROOP);
 
     // Trees go over when a tank reaches them (or the chopper comes down low over them).
@@ -1644,7 +1864,7 @@ export class Game {
     for (const building of this.buildings) building.update(dt);
     this.updateEnemyBases(dt);
 
-    const insideBase = isInsideBase(this.player.position);
+    const insideBase = this.atHome(this.player.position);
     if (insideBase) this.player.heal(BASE_HEAL_RATE * dt);
     const repairingAt = insideBase && this.player.health < this.player.maxHealth ? nearestFriendlyBase(this.player.position.x, this.player.position.z) : null;
     for (const fb of this.familyBases) fb.camp.update(dt, fb.info === repairingAt, this.camera.position, this.player.position);

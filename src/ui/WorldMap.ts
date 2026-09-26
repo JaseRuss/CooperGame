@@ -49,7 +49,8 @@ export interface MapView {
   markers: MapMarker[];
   /** Nearest enemy base still standing (or the Fortress once they're all down); the minimap points at it. */
   objective: MapBase | null;
-  fortress: MapBase & { title: string; locked: boolean; destroyed: boolean };
+  /** `friendly`: on the zombie mission it's everyone's stronghold. */
+  fortress: MapBase & { title: string; locked: boolean; destroyed: boolean; friendly: boolean };
   /** Changing stations that turn the tank into a jeep or a chopper. */
   stations: { x: number; z: number; kind: 'jeep' | 'chopper' }[];
 }
@@ -284,9 +285,17 @@ export class WorldMap {
       const fz = view.fortress;
       const r = Math.max(40, 9 / s);
       ctx.lineWidth = 3.5 / s;
-      ctx.strokeStyle = fz.destroyed ? '#9be27a' : fz.locked ? '#d8d2bd' : '#ff5a4a';
+      ctx.strokeStyle = fz.destroyed || fz.friendly ? '#9be27a' : fz.locked ? '#d8d2bd' : '#ff5a4a';
       ctx.beginPath();
-      if (fz.destroyed) {
+      if (fz.friendly) {
+        // A green shield: ours to defend.
+        ctx.moveTo(fz.x - r * 0.5, fz.z - r * 0.5);
+        ctx.lineTo(fz.x + r * 0.5, fz.z - r * 0.5);
+        ctx.lineTo(fz.x + r * 0.5, fz.z);
+        ctx.quadraticCurveTo(fz.x + r * 0.45, fz.z + r * 0.45, fz.x, fz.z + r * 0.65);
+        ctx.quadraticCurveTo(fz.x - r * 0.45, fz.z + r * 0.45, fz.x - r * 0.5, fz.z);
+        ctx.closePath();
+      } else if (fz.destroyed) {
         ctx.moveTo(fz.x - r * 0.5, fz.z);
         ctx.lineTo(fz.x - r * 0.1, fz.z + r * 0.45);
         ctx.lineTo(fz.x + r * 0.55, fz.z - r * 0.45);
@@ -376,7 +385,12 @@ export class WorldMap {
       for (const b of view.friendlyBases) label(b.x, b.z, b.name, '#ffe07a');
       for (const b of view.enemyBases) label(b.x, b.z, `${b.title}${b.destroyed ? ' ✓' : ''}`, b.destroyed ? '#9be27a' : '#ff8a7a');
       const fz = view.fortress;
-      label(fz.x, fz.z - 50, `${fz.title}${fz.destroyed ? ' ✓' : fz.locked ? ' (locked)' : ''}`, fz.destroyed ? '#9be27a' : fz.locked ? '#e8d9a4' : '#ff8a7a');
+      label(
+        fz.x,
+        fz.z - 50,
+        fz.friendly ? `${fz.title}: defend it!` : `${fz.title}${fz.destroyed ? ' ✓' : fz.locked ? ' (locked)' : ''}`,
+        fz.destroyed || fz.friendly ? '#9be27a' : fz.locked ? '#e8d9a4' : '#ff8a7a',
+      );
       ctx.font = '700 11px "Segoe UI", system-ui, sans-serif';
       for (const b of view.buddies) label(b.x, b.z + 2 / s, b.name, '#c8f5a8');
     }
