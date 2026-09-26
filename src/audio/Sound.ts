@@ -139,6 +139,16 @@ export class Sound {
   }
 
   play(name: SoundName, opts: PlayOptions = {}): void {
+    // Sound is decoration: a glitch here must never break the game code that asked for it
+    // (a throw would abort a rocket launch half way, leaving it hanging in the air).
+    try {
+      this.playSample(name, opts);
+    } catch (err) {
+      console.warn(`Sound "${name}" failed`, err);
+    }
+  }
+
+  private playSample(name: SoundName, opts: PlayOptions): void {
     const { at, volume = 1, rate = 1, fadeAfter, minGap = 0.03 } = opts;
     const buffers = this.buffers.get(name);
     if (!buffers || this.ctx.state !== 'running' || this.sfxLevel === 0 || this.voices >= MAX_VOICES) return;
@@ -162,11 +172,6 @@ export class Sound {
     src.playbackRate.value = rate * (0.94 + Math.random() * 0.12);
     const g = this.ctx.createGain();
     g.gain.value = gain;
-    if (fadeAfter !== undefined) {
-      g.gain.setValueAtTime(gain, now + fadeAfter);
-      g.gain.linearRampToValueAtTime(0, now + fadeAfter + 0.4);
-      src.stop(now + fadeAfter + 0.45);
-    }
     const panner = this.ctx.createStereoPanner();
     panner.pan.value = pan;
     src.connect(g).connect(panner).connect(this.sfxBus);
@@ -177,6 +182,12 @@ export class Sound {
       panner.disconnect();
     };
     src.start();
+    // Fade long samples (the rocket motor) out early; stop() is only allowed after start().
+    if (fadeAfter !== undefined) {
+      g.gain.setValueAtTime(gain, now + fadeAfter);
+      g.gain.linearRampToValueAtTime(0, now + fadeAfter + 0.4);
+      src.stop(now + fadeAfter + 0.45);
+    }
   }
 
   /**
