@@ -13,10 +13,16 @@ export interface Settings {
   buddyNames: string[];
   /** How long a jeep from a changing station lasts before it turns back into the tank. */
   jeepMinutes: JeepMinutes;
+  /** Off, Low, Medium or High. */
+  musicVolume: Volume;
+  sfxVolume: Volume;
 }
 
 export type JeepMinutes = 1 | 2 | 3 | 5;
 const JEEP_MINUTES: JeepMinutes[] = [1, 2, 3, 5];
+export type Volume = 0 | 1 | 2 | 3;
+const VOLUMES: Volume[] = [0, 1, 2, 3];
+const VOLUME_LABELS = ['Off', 'Low', 'Medium', 'High'];
 
 export const DEFAULT_BUDDY_NAMES = ['Keston', 'Max', 'Innes', 'Jason'];
 export const BUDDY_NAME_MAX = 10;
@@ -27,6 +33,8 @@ export const DEFAULT_SETTINGS: Settings = {
   nameTags: true,
   buddyNames: [...DEFAULT_BUDDY_NAMES],
   jeepMinutes: 3,
+  musicVolume: 2,
+  sfxVolume: 3,
 };
 
 /** Tidies a typed name: allowed characters only, trimmed, capped; blank falls back to `fallback`. */
@@ -48,7 +56,10 @@ export function loadSettings(): Settings {
       const names = Array.isArray(saved.buddyNames) ? saved.buddyNames : [];
       const buddyNames = DEFAULT_BUDDY_NAMES.map((d, i) => (typeof names[i] === 'string' ? cleanBuddyName(names[i], d) : d));
       const jeepMinutes = JEEP_MINUTES.includes(saved.jeepMinutes as JeepMinutes) ? (saved.jeepMinutes as JeepMinutes) : DEFAULT_SETTINGS.jeepMinutes;
-      return { ...DEFAULT_SETTINGS, ...saved, buddyNames, jeepMinutes };
+      const volume = (v: unknown, fallback: Volume) => (VOLUMES.includes(v as Volume) ? (v as Volume) : fallback);
+      const musicVolume = volume(saved.musicVolume, DEFAULT_SETTINGS.musicVolume);
+      const sfxVolume = volume(saved.sfxVolume, DEFAULT_SETTINGS.sfxVolume);
+      return { ...DEFAULT_SETTINGS, ...saved, buddyNames, jeepMinutes, musicVolume, sfxVolume };
     }
   } catch {
     // Storage can be blocked (private windows, embedded previews); defaults are fine.
@@ -104,6 +115,24 @@ export const OPTION_ROWS: OptionRow[] = [
       value: m,
       label: `${m} min`,
       hint: `Drive through a jeep station for a fast jeep that lasts ${m} minute${m > 1 ? 's' : ''}, then turns back into your tank.`,
+    })),
+  },
+  {
+    key: 'musicVolume',
+    label: 'Music',
+    values: VOLUMES.map((v) => ({
+      value: v,
+      label: VOLUME_LABELS[v],
+      hint: v === 0 ? 'No music.' : 'Each level has its own tune: a march by day, a sneaky tune at night and bongos in the jungle.',
+    })),
+  },
+  {
+    key: 'sfxVolume',
+    label: 'Sound effects',
+    values: VOLUMES.map((v) => ({
+      value: v,
+      label: VOLUME_LABELS[v],
+      hint: v === 0 ? 'No sound effects.' : 'Bangs, booms, jam splats and engine noise.',
     })),
   },
 ] as OptionRow[];

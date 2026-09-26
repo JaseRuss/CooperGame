@@ -5,12 +5,15 @@ import type { MenuInput } from '../input/InputManager';
 import { OPTION_ROWS, DEFAULT_BUDDY_NAMES, BUDDY_NAME_MAX, cleanBuddyName, type Settings } from '../core/Settings';
 import { WORLD_SIZE, MISSION, MISSIONS, type Mission } from '../core/config';
 
+/** The pause menu's clicks and beeps. */
+export type MenuSound = 'move' | 'change' | 'back' | 'open' | 'confirm';
+
 /** Where the ready-made models and the font came from, grouped by site, for the pause screen. */
 const CREDITS: { site: string; url: string; items: string }[] = [
   {
     site: 'kenney.nl',
     url: 'https://kenney.nl',
-    items: 'City Kit Suburban, Commercial, Industrial and Roads, Car Kit, Nature Kit (jungle trees and plants) · CC0',
+    items: 'City Kit Suburban, Commercial, Industrial and Roads, Car Kit, Nature Kit (jungle trees and plants); Sci-fi, Impact and Interface Sounds · CC0',
   },
   { site: 'poly.pizza', url: 'https://poly.pizza', items: 'Wooden huts and shacks by Quaternius · CC0' },
   { site: 'fonts.google.com', url: 'https://fonts.google.com/specimen/Black+Ops+One', items: 'Black Ops One font by James Grieshaber and Eben Sorkin · SIL Open Font License' },
@@ -65,6 +68,8 @@ export interface HUDState {
   driveStyle: Settings['driveStyle'];
   /** Remind the player to click so the browser hands over the mouse for aiming. */
   mouseCaptureHint: boolean;
+  /** The browser won't play sound until the player clicks or presses a key. */
+  soundLocked: boolean;
 }
 
 const HIT_MARKER_TEXT: Record<ArmorZone, { text: string; color: string }> = {
@@ -307,6 +312,8 @@ export class HUD {
   private readonly victoryText: HTMLDivElement;
   private readonly victoryFooter: HTMLDivElement;
   private onMissionStart: ((m: Mission) => void) | null = null;
+  /** Plays a menu click (see setSoundHook). */
+  private soundHook: ((kind: MenuSound) => void) | null = null;
   private readonly hudBits: HTMLElement[];
   private readonly html = new Map<HTMLElement, string>();
   private worldMap: WorldMap | null = null;
@@ -450,7 +457,7 @@ export class HUD {
 
     // Where the ready-made models and the font came from, grouped by site.
     const credits = el('div', 'panel credits shadow', this.overlay);
-    el('div', 'stencil head', credits, 'MODELS & FONT FROM');
+    el('div', 'stencil head', credits, 'MODELS, SOUNDS & FONT FROM');
     for (const c of CREDITS) {
       const line = el('div', '', credits);
       const link = el('a', '', line, c.site);
@@ -459,7 +466,7 @@ export class HUD {
       link.rel = 'noopener';
       line.append(`: ${c.items}`);
     }
-    el('div', 'subtle', credits, 'Tanks, soldiers, bases and everything else are made in code.');
+    el('div', 'subtle', credits, 'Tanks, soldiers, bases, the music and everything else are made in code.');
 
     // --- crosshair: where the shell will land ---
     this.crosshair = el('div', 'crosshair', root);
@@ -518,10 +525,20 @@ export class HUD {
     return this.nameEdit !== null;
   }
 
+  /** Menu clicks and beeps: moving between rows, changing one, backing out, opening the pause screen. */
+  setSoundHook(play: (kind: MenuSound) => void): void {
+    this.soundHook = play;
+  }
+
+  private sfx(kind: MenuSound): void {
+    this.soundHook?.(kind);
+  }
+
   /** Opens or closes the pause screen (it always opens on the map). */
   toggleBigMap(): void {
     this.nameEdit = null;
     this.pausedOpen = !this.pausedOpen;
+    this.sfx(this.pausedOpen ? 'open' : 'back');
     this.overlay.style.display = this.pausedOpen ? 'flex' : 'none';
     this.showPage('map');
     // Free the mouse so the options can be clicked.
@@ -535,8 +552,10 @@ export class HUD {
   handleMenu(menu: MenuInput): void {
     if (!this.pausedOpen) return;
     if (this.page === 'map') {
-      if (menu.options || menu.right) this.showPage('options');
-      else if (menu.back) this.toggleBigMap();
+      if (menu.options || menu.right) {
+        this.showPage('options');
+        this.sfx('move');
+      } else if (menu.back) this.toggleBigMap();
       return;
     }
     if (this.nameEdit) {
@@ -545,11 +564,13 @@ export class HUD {
     }
     if (menu.back) {
       this.showPage('map');
+      this.sfx('back');
       return;
     }
     const rows = OPTION_ROWS.length + DEFAULT_BUDDY_NAMES.length + MISSIONS.length;
     if (menu.up) this.optionIndex = (this.optionIndex + rows - 1) % rows;
     if (menu.down) this.optionIndex = (this.optionIndex + 1) % rows;
+    if (menu.up || menu.down) this.sfx('move');
     const crew = this.optionIndex - OPTION_ROWS.length;
     if (crew >= DEFAULT_BUDDY_NAMES.length) {
       // Level select: A / Enter starts the chosen level.
@@ -571,6 +592,7 @@ export class HUD {
     if (!this.settings) return;
     const chars = [...this.settings.buddyNames[crew]];
     this.nameEdit = { crew, chars, cursor: Math.min(chars.length, BUDDY_NAME_MAX - 1) };
+    this.sfx('change');
     this.showPage('options');
   }
 
@@ -579,6 +601,7 @@ export class HUD {
     if (!edit) return;
     if (menu.back) {
       this.nameEdit = null;
+      this.sfx('back');
     } else if (menu.confirm) {
       this.saveNameEdit();
     } else {
@@ -588,6 +611,7 @@ export class HUD {
       if (menu.options && edit.cursor < edit.chars.length) {
         edit.chars.splice(edit.cursor, 1);
       }
+      if (menu.up || menu.down || menu.left || menu.right || menu.options) this.sfx('move');
     }
     this.showPage('options');
   }
@@ -638,6 +662,7 @@ export class HUD {
     this.nameEdit = null;
     this.settings = { ...this.settings, buddyNames };
     this.onSettingsChange?.(this.settings);
+    this.sfx('confirm');
   }
 
   private showPage(page: 'map' | 'options'): void {
@@ -662,11 +687,14 @@ export class HUD {
     const next = row.values[(current + dir + row.values.length) % row.values.length];
     this.settings = { ...this.settings, [row.key]: next.value };
     this.onSettingsChange?.(this.settings);
+    this.sfx('change'); // after the change, so a new volume is heard straight away
     this.renderOptions();
   }
 
   private startLevel(mission: Mission): void {
-    if (mission !== MISSION) this.onMissionStart?.(mission);
+    if (mission === MISSION) return;
+    this.sfx('confirm');
+    this.onMissionStart?.(mission);
   }
 
   private renderOptions(): void {
@@ -884,10 +912,12 @@ export class HUD {
     const rocket = jeep ? 'missile' : 'rocket';
     this.setHTML(
       this.keys,
-      state.usingGamepad
+      (state.usingGamepad
         ? `${k('LS', 'drive')}${k('RS', 'aim')}${k('RT', fire)}${k('LT', 'jam')}${k('LB', rocket)}${k('RB', 'AA')}<br>${k('X', 'mega jam')}${k('Y', 'camera')}${k('Start', 'pause · options')}${k('Back', 'home')}`
         : `${k('WASD', 'drive')}${k('Mouse', 'aim')}${k('Click', fire)}${k('E', 'jam')}${k('F', rocket)}${k('Q', 'AA')}<br>${k('X', 'mega jam')}${k('C', 'camera')}${k('M', 'pause · options')}${k('R', 'home')}` +
-            (state.mouseCaptureHint ? '<br><span style="color:#ffd24a">Click the game to capture the mouse for aiming</span>' : ''),
+            (state.mouseCaptureHint ? '<br><span style="color:#ffd24a">Click the game to capture the mouse for aiming</span>' : '')) +
+        // A gamepad press doesn't count for the browser's "user has interacted" rule, so say so.
+        (state.soundLocked ? '<br><span style="color:#8fe0ff">Sound is off until you click or press a key</span>' : ''),
     );
 
     if (state.rocketLockScreen) {

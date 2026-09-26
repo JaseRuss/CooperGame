@@ -15,6 +15,10 @@ shipped once so it doesn't ship again.
   importing new GLB files. The GLBs in `public/models/` are only for the town scenery, cars and
   the jungle mission's trees, plants and huts (`src/world/AssetLibrary.ts`). If you add one, also
   credit it in `CREDITS` in `src/ui/HUD.ts` (shown on the pause screen) and in the README.
+- Sound effects are Kenney CC0 samples in `public/sounds/`, played through `src/audio/Sound.ts`
+  (credit new ones the same way). The music is synthesised live in `src/audio/Music.ts`; there are
+  no music files. Browsers block audio until a click or key press (not a gamepad button), which
+  the HUD tells the player.
 - The Nature Kit and Quaternius GLBs leave metalness unset, which glTF treats as fully metallic
   and renders nearly black; `AssetLibrary` sets their materials to matte on load.
 - Friendly armies are green (player) and red; enemies are tan and blue.

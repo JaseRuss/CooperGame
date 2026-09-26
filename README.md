@@ -88,10 +88,17 @@ Driving works like the Warthog in Halo by default: push the stick the way you
 want to go relative to the camera. Pull back to reverse. Let go and the tank
 turns to face where you're aiming. Prefer the old way? Pause, open **Options**
 (X or O) and switch **Tank controls** to **Classic**. Options also has aim speed,
-buddy name tags, how long the **jeep** lasts, and the **buddy names**: pick a
-buddy and press A or Enter, then type a new name, or on a controller use up and
-down to pick each letter, left and right to move, and X to delete. Your choices
-are remembered.
+buddy name tags, how long the **jeep** lasts, **music** and **sound effects**
+volume (Off, Low, Medium or High), and the **buddy names**: pick a buddy and
+press A or Enter, then type a new name, or on a controller use up and down to
+pick each letter, left and right to move, and X to delete. Your choices are
+remembered.
+
+**Sound:** each level has its own music: a march for the day battle, a sneaky
+tune for the night raid and bongos in the jungle. Browsers keep a page quiet
+until you click or press a key, and a controller button doesn't count, so if
+you're playing on a controller, click the game or press a key once to turn the
+sound on.
 
 ## Playing
 
@@ -186,12 +193,14 @@ You can also open the game with `?mission=2` or `?mission=3`.
 
 ## Credits
 
-The tanks, soldiers, bases and nearly everything else are built in code. The
-ready-made pieces are all free to use, and the pause screen lists them too:
+The tanks, soldiers, bases, the music and nearly everything else are made in
+code. The ready-made pieces are all free to use, and the pause screen lists them
+too:
 
 - **[kenney.nl](https://kenney.nl/)**: City Kit Suburban, City Kit Commercial,
   City Kit Industrial, City Kit Roads, Car Kit and Nature Kit (the jungle trees
-  and plants). CC0.
+  and plants); the sound effects from Sci-fi Sounds, Impact Sounds and
+  Interface Sounds. CC0.
 - **[poly.pizza](https://poly.pizza/)**: wooden huts and shacks by
   [Quaternius](https://quaternius.com/). CC0. Links to each model are in
   `public/models/huts/LICENSE-quaternius-huts.txt`.

@@ -38,6 +38,7 @@ import { AimGuide, type AimTarget } from '../ui/AimGuide';
 import { FRIENDLY_BASES, nearestFriendlyBase, BASE_RADIUS, MISSION, MISSIONS, NIGHT, JUNGLE, startMission, type FriendlyBase, type Mission } from '../core/config';
 import { NightSky, MOON_DIRECTION } from '../world/NightSky';
 import { ARMY_GREEN, ARMY_RED, shade } from '../utils/plastic';
+import { Sound } from '../audio/Sound';
 import { loadSettings, saveSettings, AIM_SPEED_SCALE, DEFAULT_BUDDY_NAMES, type Settings } from './Settings';
 
 const RESPAWN_DELAY = 25;
@@ -194,6 +195,9 @@ export class Game {
   private readonly hitRegistry = new HitRegistry();
   private readonly cameraRig: CameraRig;
   private readonly hud: HUD;
+  private readonly sound = new Sound(MISSION);
+  /** Where the player was last frame, for the engine note's speed. */
+  private readonly lastPlayerPosition = new THREE.Vector3();
   private readonly loadingLabel: HTMLDivElement;
   private readonly sun: THREE.DirectionalLight;
 
@@ -266,6 +270,7 @@ export class Game {
     this.cameraRig = new CameraRig(this.camera);
     this.input = new InputManager(this.renderer.domElement);
     this.hud = new HUD(container);
+    this.hud.setSoundHook((kind) => this.sound.play(kind === 'move' ? 'uiMove' : kind === 'change' ? 'uiChange' : kind === 'back' ? 'uiBack' : kind === 'open' ? 'uiOpen' : 'uiConfirm', { volume: 0.5, minGap: 0 }));
 
     this.loadingLabel = document.createElement('div');
     this.loadingLabel.style.cssText =
@@ -325,6 +330,7 @@ export class Game {
     this.hitRegistry.register(terrainCollider, { kind: 'terrain' });
 
     this.assets = new AssetLibrary();
+    void this.sound.load(); // in the background: each sound plays once it has loaded
     await this.assets.load((loaded, total) => {
       this.loadingLabel.textContent = `Loading world… ${loaded}/${total}`;
     });
@@ -413,6 +419,8 @@ export class Game {
     else if (MISSION === 3) this.hud.showBanner('MISSION 3: JUNGLE STRIKE', 'The enemy is hiding in the jungle. Drive or blast through the trees to find their bases!');
     else this.hud.showBanner('GREEN & RED ARE FRIENDS', 'Tan and blue are the enemy. Knock out their bases!');
     if (import.meta.env.DEV) (window as unknown as { game: Game }).game = this;
+    this.lastPlayerPosition.copy(this.player.position);
+    this.sound.music.start();
     this.clock.start();
     requestAnimationFrame(this.animate);
   }
@@ -510,6 +518,7 @@ export class Game {
   private applySettings(): void {
     this.player.driveStyle = this.settings.driveStyle;
     this.input.setAimScale(AIM_SPEED_SCALE[this.settings.aimSpeed]);
+    this.sound.setVolumes(this.settings.sfxVolume, this.settings.musicVolume);
     for (const b of this.buddies) {
       b.setNameTagVisible(this.settings.nameTags);
       b.rename(this.settings.buddyNames[b.crew]);
@@ -534,6 +543,8 @@ export class Game {
   /** A blast knocks over the other side's soldiers (`attacker` null = everyone's). */
   private explode(point: THREE.Vector3, size: number, attacker: Faction | null): void {
     this.impacts.explode(point, size);
+    this.sound.play('explosion', { at: point, volume: Math.min(1, 0.35 + size * 0.22), rate: size < 1 ? 1.25 : 1, minGap: 0.05 });
+    if (size >= 2.3) this.sound.play('boom', { at: point, volume: 0.9, minGap: 0.1 });
     const knocked = this.troops.blast(point, BLAST_RADIUS * size, attacker);
     if (attacker === 'player') this.addRocketCharge(knocked * CHARGE_PER_TROOP);
     // During rocket cam the camera is near the blast, not the tank.
@@ -582,6 +593,10 @@ export class Game {
   private fire(tank: Tank, shot: Shot): void {
     this.impacts.muzzleFlash(shot.origin, shot.direction);
     if (tank === this.player) this.cameraRig.addShake(0.35);
+    // A deep boom and a sharp crack; your own gun is right in your ears.
+    const at = tank === this.player ? undefined : shot.origin;
+    this.sound.play('cannon', { at, volume: 0.9, minGap: 0.02 });
+    this.sound.play('crack', { at, volume: 0.35, rate: 1.6, minGap: 0.02 });
     this.projectiles.spawn(
       shot.origin,
       shot.direction,
@@ -597,7 +612,10 @@ export class Game {
           this.impacts.dustPuff(point);
         }
         else this.explode(point, 1, tank.faction);
-        if (tank === this.player && result.tankHit) this.hud.showHitMarker(result.tankHit.zone);
+        if (tank === this.player && result.tankHit) {
+          this.hud.showHitMarker(result.tankHit.zone);
+          this.sound.play('clang', { volume: 0.55 });
+        }
         if (result.critical) this.onCriticalHit(result.critical, point, tank === this.player);
       },
       1,
@@ -792,6 +810,7 @@ export class Game {
       this.player.physicsCollider,
     );
     this.impacts.muzzleFlash(origin, launchDir.clone().normalize());
+    this.sound.play('launch', { volume: 0.75, fadeAfter: 1.4 });
     this.rocketCharge = 0;
     this.player.setRocketReady(false);
     this.player.invulnerable = true;
@@ -983,6 +1002,8 @@ export class Game {
   /** A puff of smoke, and the vehicle swaps once it's thick enough to hide the change. */
   private changeVehicle(to: Vehicle): void {
     this.impacts.changePuff(this.player.position.clone());
+    this.sound.play('poof', { volume: 0.6 });
+    this.sound.play('thud', { volume: 0.7 });
     this.cameraRig.addShake(0.3);
     this.pendingSwap = { to, delay: CHANGE_SWAP_DELAY };
     if (to === 'jeep') {
@@ -1022,6 +1043,7 @@ export class Game {
     missile.mesh.scale.setScalar(JEEP_MISSILE_SCALE);
     this.jeepMissiles.push(missile);
     this.impacts.muzzleFlash(origin, direction);
+    this.sound.play('launch', { volume: 0.55, rate: 1.25, fadeAfter: 0.9 });
     this.jeepMissileCharge = 0;
   }
 
@@ -1046,6 +1068,7 @@ export class Game {
       this.addRocketCharge(CHARGE_PER_ENEMY_BASE);
       this.garrison(base);
       const station = this.addBaseStation(base);
+      this.sound.music.stinger();
       const left = this.enemyBases.length - this.announcedBases.size;
       if (left === 0) {
         this.startFinalAssault();
@@ -1066,6 +1089,7 @@ export class Game {
         3: 'Jungle strike complete! Every enemy base in the jungle is yours.',
       };
       this.hud.showVictory(message[MISSION], nextMission ? '' : 'Keep driving around and enjoy it!');
+      this.sound.music.fanfare();
       this.victoryTimer = nextMission ? NEXT_MISSION_DELAY : VICTORY_SCREEN_TIME;
     }
     if (this.victoryTimer > 0) {
@@ -1300,6 +1324,7 @@ export class Game {
       buddyOut: this.settings.buddyNames.map((_, i) => this.buddies.some((b) => b.crew === i)),
       driveStyle: this.settings.driveStyle,
       mouseCaptureHint: !input.usingGamepad && !input.pointerLocked && input.pointerLockAvailable,
+      soundLocked: this.sound.locked && (this.settings.sfxVolume > 0 || this.settings.musicVolume > 0),
       buddyMax: MAX_BUDDIES,
       cinematic,
       enemyBasesLeft: this.enemyBases.filter((b) => !b.isDestroyed).length,
@@ -1329,6 +1354,7 @@ export class Game {
     if (this.hud.paused) {
       this.hud.handleMenu(rawInput.menu);
       if (rawInput.mapTogglePressed && this.hud.paused) this.hud.toggleBigMap();
+      this.sound.updateEngine(0, this.player.isJeep, false);
       this.hud.update(this.hudState(rawInput, false, { screen: null, range: null, target: 'none' }, null));
       this.renderer.render(this.scene, this.camera);
       return;
@@ -1380,6 +1406,7 @@ export class Game {
       (origin) => {
         this.aaLoaded = Math.max(0, this.aaLoaded - 1);
         this.impacts.trailPuff(origin);
+        this.sound.play('launch', { volume: 0.3, rate: 1.7, fadeAfter: 0.35, minGap: 0.05 });
       },
       (point) => this.aaBurst(point),
     );
@@ -1395,15 +1422,22 @@ export class Game {
     // The jeep has no cannon: its trigger fires a stream of jam rounds.
     if (input.firing && this.player.isJeep) {
       const round = this.player.tryJeepJam();
-      if (round) this.jam.shoot(round.origin, round.direction, JEEP_JAM_SPEED);
+      if (round) {
+        this.jam.shoot(round.origin, round.direction, JEEP_JAM_SPEED);
+        this.sound.play('jamShot', { volume: 0.35, rate: 0.85, minGap: 0.07 });
+      }
     }
     this.updateJeep(dt);
     if (input.jamFiring) {
       const glob = this.player.tryJam();
-      if (glob) this.jam.fire(glob.origin, glob.direction, JAM_SPEED * glob.speedScale);
+      if (glob) {
+        this.jam.fire(glob.origin, glob.direction, JAM_SPEED * glob.speedScale);
+        this.sound.play('jamShot', { volume: 0.22, rate: 1.1, minGap: 0.09 });
+      }
     }
     this.jam.update(dt, this.world, this.player.physicsCollider, (point, hit, velocity) => {
       if (hit) this.jamBunkerSlit(hit, point, velocity);
+      this.sound.play('splat', { at: point, volume: 0.9, minGap: 0.1 });
       this.jamEnemies(point, JAM_RADIUS);
       // Jam on your own side doesn't hurt, but it gums up their guns for a bit.
       const fumbled = this.troops.jamGuns(point, JAM_RADIUS, 'player', GUN_JAM_TIME);
@@ -1549,6 +1583,12 @@ export class Game {
     this.nightSky?.update(dt, this.camera, this.player.position);
     this.sun.target.position.copy(this.player.position);
     this.sun.target.updateMatrixWorld();
+
+    // The engine note follows how fast the player is really going.
+    const speed = dt > 0 ? this.player.position.distanceTo(this.lastPlayerPosition) / dt : 0;
+    this.lastPlayerPosition.copy(this.player.position);
+    this.sound.updateEngine(speed < 80 ? speed : 0, this.player.isJeep, !cinematic);
+    this.sound.setListener(this.camera);
 
     this.hud.update(this.hudState(input, cinematic, aim, lockScreen, aaLockScreen));
     this.renderer.render(this.scene, this.camera);

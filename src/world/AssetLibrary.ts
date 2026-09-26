@@ -24,7 +24,7 @@ const letters = (s: string) => s.split('');
 const BUILD_SHA = import.meta.env.VITE_BUILD_SHA as string | undefined;
 
 /** Give stable public model/texture paths a deploy-specific URL for CDN cache busting. */
-function versionAssetURL(url: string): string {
+export function versionAssetURL(url: string): string {
   if (!BUILD_SHA || BUILD_SHA === 'local' || url.startsWith('data:') || url.startsWith('blob:')) return url;
   const resolved = new URL(url, window.location.href);
   if (resolved.origin !== window.location.origin) return url;
