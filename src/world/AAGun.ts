@@ -98,6 +98,11 @@ export class AAGun {
     return this.muzzlePoint.getWorldPosition(new THREE.Vector3());
   }
 
+  /** Which way the barrels point right now, in world space. */
+  get barrelDirection(): THREE.Vector3 {
+    return new THREE.Vector3(0, 0, -1).applyQuaternion(this.cradle.getWorldQuaternion(new THREE.Quaternion()));
+  }
+
   /** Swings the barrels round to fire along `dir`. */
   aimAlong(dir: THREE.Vector3): void {
     this.targetYaw = Math.atan2(-dir.x, -dir.z);

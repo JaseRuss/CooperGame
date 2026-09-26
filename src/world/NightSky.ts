@@ -36,6 +36,8 @@ const FLARE_FRIENDLY = 0x9dff8a;
 export interface FlakGun {
   readonly alive: boolean;
   readonly muzzle: THREE.Vector3;
+  /** Which way the barrels point right now. */
+  readonly barrelDirection: THREE.Vector3;
   aimAlong(dir: THREE.Vector3): void;
 }
 
@@ -284,7 +286,8 @@ export class NightSky {
         b.timer += ROUND_GAP;
         b.left--;
         if (this.rounds.length >= MAX_ROUNDS) break;
-        const dir = b.dir.clone();
+        // A gun's rounds leave along its barrels, wherever they've got to.
+        const dir = b.gun ? b.gun.barrelDirection : b.dir.clone();
         dir.x += rand(-0.03, 0.03);
         dir.y += rand(-0.02, 0.02);
         dir.z += rand(-0.03, 0.03);
