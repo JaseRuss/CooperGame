@@ -25,15 +25,43 @@ export const ZOMBIE_COLOR: Record<ZombieKind, number> = { walker: 0xa9d38e, runn
 
 const zombieMaterials = new Map<number, THREE.MeshPhysicalMaterial>();
 
-/** Glow-in-the-dark plastic: the zombies shine faintly, so they stand out in the dusk. */
+/** Glow-in-the-dark plastic: the zombies shine in the moonlight, so they're easy to pick out. */
 function zombiePlastic(color: number): THREE.MeshPhysicalMaterial {
   let m = zombieMaterials.get(color);
   if (!m) {
     m = plastic(color).clone();
-    m.emissive = new THREE.Color(color).multiplyScalar(0.28);
+    m.emissive = new THREE.Color(color).multiplyScalar(0.7);
     zombieMaterials.set(color, m);
   }
   return m;
+}
+
+let haloTexture: THREE.CanvasTexture | null = null;
+const haloMaterials = new Map<number, THREE.SpriteMaterial>();
+
+/** A soft glow round a zombie, in its own colour, that shows up from a long way off at night. */
+function zombieHalo(color: number): THREE.Sprite {
+  if (!haloTexture) {
+    const c = document.createElement('canvas');
+    c.width = c.height = 64;
+    const ctx = c.getContext('2d') as CanvasRenderingContext2D;
+    const g = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+    g.addColorStop(0, 'rgba(255,255,255,0.55)');
+    g.addColorStop(0.4, 'rgba(255,255,255,0.22)');
+    g.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, 64, 64);
+    haloTexture = new THREE.CanvasTexture(c);
+  }
+  let mat = haloMaterials.get(color);
+  if (!mat) {
+    mat = new THREE.SpriteMaterial({ map: haloTexture, color, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+    haloMaterials.set(color, mat);
+  }
+  const halo = new THREE.Sprite(mat);
+  halo.scale.set(2.6, 3, 1);
+  halo.position.y = 0.95;
+  return halo;
 }
 const ZOMBIE_STATS: Record<ZombieKind, { speed: number; hp: number; bite: number; scale: number }> = {
   walker: { speed: 2.6, hp: 1, bite: 1, scale: 1 },
@@ -341,6 +369,8 @@ export class Soldier {
   private attackTimer = 0;
   /** Counted once toward the zombies knocked over. */
   counted = false;
+  /** A zombie's glow; it goes out when it's knocked over. */
+  private halo: THREE.Sprite | null = null;
   private state: 'active' | 'flying' | 'down' = 'active';
   private readonly pos = new THREE.Vector3();
   private heading: number;
@@ -382,6 +412,8 @@ export class Soldier {
       this.hp = ZOMBIE_STATS[zombie].hp;
       this.mesh.scale.setScalar(ZOMBIE_STATS[zombie].scale * (0.95 + rng() * 0.1));
       this.attackTimer = rng() * ZOMBIE_ATTACK_TIME;
+      this.halo = zombieHalo(color);
+      this.mesh.add(this.halo);
     }
     this.pos.set(x, surfaceHeightAt(x, z), z);
     this.heading = rng() * Math.PI * 2;
@@ -451,6 +483,7 @@ export class Soldier {
       this.tipAngle = 0;
       return;
     }
+    if (this.halo) this.halo.visible = false;
     this.jamTime = 0;
     this.clearGunJam();
     const away = new THREE.Vector3(this.pos.x - from.x, 0, this.pos.z - from.z);

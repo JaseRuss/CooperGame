@@ -38,6 +38,8 @@ import { WorldMap, type MapMarker, type MapView } from '../ui/WorldMap';
 import { AimGuide, type AimTarget } from '../ui/AimGuide';
 import { FRIENDLY_BASES, nearestFriendlyBase, BASE_RADIUS, MISSION, MISSIONS, NIGHT, JUNGLE, KNIGHTS, ZOMBIES, startMission, type FriendlyBase, type Mission } from '../core/config';
 import { ZombieWaves } from '../world/ZombieWaves';
+import { OverrunTowns } from '../world/OverrunTowns';
+import { FlamePit, FLAME_RANGE, FLAME_HALF_ANGLE } from '../world/FlamePit';
 import type { ShotStyle } from '../combat/Projectile';
 import { NightSky, MOON_DIRECTION } from '../world/NightSky';
 import { ARMY_GREEN, ARMY_RED, ARMY_TAN, ARMY_BLUE, shade } from '../utils/plastic';
@@ -129,6 +131,8 @@ const NEXT_MISSION_DELAY = 12; // after winning a mission, the next one starts t
 const nextMission = MISSIONS.find((m) => m.mission === MISSION + 1);
 /** Where the jungle haze turns fully opaque. */
 const JUNGLE_FOG_FAR = 950;
+/** The night raid and the zombie attack are both played by moonlight. */
+const DARK = NIGHT || ZOMBIES;
 
 // The zombie mission: every army holds the Fortress while waves of zombies come at it. Zombies
 // that reach the wall batter it; when the wall's strength runs out, the zombies are in and the
@@ -154,6 +158,10 @@ const WALL_STOP = 1.5;
 const LAST_STAND_COLORS = [ARMY_GREEN, ARMY_RED, ARMY_TAN, ARMY_BLUE];
 /** After the zombies get in, how long before a button press starts again (so a held trigger doesn't). */
 const RETRY_DELAY = 4;
+/** Zombies hanging about in each overrun town. */
+const TOWN_ZOMBIES = 6;
+/** How often a flamethrower's jet burns what's in it. */
+const BURN_INTERVAL = 0.2;
 
 interface RocketSequence {
   rocket: HomingRocket;
@@ -313,6 +321,10 @@ export class Game {
   private gameOverTime = -1;
   /** The score when the wall fell (the defenders keep knocking zombies over after). */
   private finalDowned = 0;
+  /** The zombie mission's burning towns, and the flamethrower pits round the Fortress. */
+  private overrun: OverrunTowns | null = null;
+  private flamePits: FlamePit[] = [];
+  private burnTimer = 0;
   /** Where the player starts and goes home to on the zombie mission: just outside the Fortress gate. */
   private fortHome: { x: number; z: number; yaw: number } | null = null;
 
@@ -340,33 +352,27 @@ export class Game {
 
     // Daylight, or moonlight on the night raid (dark enough for the flares to show, light enough to play).
     // The jungle is a steamy haze: close green-grey fog and warm, filtered sun.
-    // The zombies come at dusk: a bruised purple sky and a low orange sun.
-    const sky = NIGHT ? 0x0d1733 : JUNGLE ? 0xa9c4a2 : ZOMBIES ? 0xa7a2c2 : KNIGHTS ? 0xa8d9f4 : 0x9fd3f0;
+    // The zombies come at night too, under a slightly greener, spookier sky, glowing as they come.
+    const sky = NIGHT ? 0x0d1733 : ZOMBIES ? 0x101a2c : JUNGLE ? 0xa9c4a2 : KNIGHTS ? 0xa8d9f4 : 0x9fd3f0;
     this.scene.background = new THREE.Color(sky);
-    this.scene.fog = NIGHT
+    this.scene.fog = DARK
       ? new THREE.Fog(sky, 280, 1250)
       : JUNGLE
         ? new THREE.Fog(sky, 180, JUNGLE_FOG_FAR)
-        : ZOMBIES
-          ? new THREE.Fog(sky, 240, 1250)
-          : new THREE.Fog(sky, 500, 1700);
+        : new THREE.Fog(sky, 500, 1700);
 
     this.scene.add(
-      NIGHT
-        ? new THREE.HemisphereLight(0x7088c4, 0x1d1b26, 0.5)
+      DARK
+        ? new THREE.HemisphereLight(ZOMBIES ? 0x7898c0 : 0x7088c4, 0x1d1b26, 0.5)
         : JUNGLE
           ? new THREE.HemisphereLight(0xd8ecc8, 0x2e3a1c, 0.95)
-          : ZOMBIES
-            ? new THREE.HemisphereLight(0xe2dcf2, 0x4a4250, 1.05)
-            : new THREE.HemisphereLight(0xbfd9ff, 0x3a3226, 0.9),
+          : new THREE.HemisphereLight(0xbfd9ff, 0x3a3226, 0.9),
     );
-    this.sun = NIGHT
+    this.sun = DARK
       ? new THREE.DirectionalLight(0xaec4ff, 0.55)
       : JUNGLE
         ? new THREE.DirectionalLight(0xffe7b8, 1.5)
-        : ZOMBIES
-          ? new THREE.DirectionalLight(0xffc9a0, 1.6)
-          : new THREE.DirectionalLight(0xfff2d9, 1.7);
+        : new THREE.DirectionalLight(0xfff2d9, 1.7);
     this.sun.castShadow = true;
     this.sun.shadow.mapSize.set(2048, 2048);
     this.sun.shadow.camera.left = -180;
@@ -456,7 +462,13 @@ export class Game {
     }));
     this.redSlots.forEach((slot, i) => this.spawnRed(slot, i % slot.route.length));
 
-    if (ZOMBIES) this.setupLastStand(content.highways);
+    if (ZOMBIES) {
+      this.setupLastStand(content.highways);
+      this.overrun = new OverrunTowns(this.scene, content.buildings);
+      for (const c of this.overrun.centres) {
+        this.troops.addZombies(c.x, c.y, c, Array(TOWN_ZOMBIES).fill('walker'), (k) => ZOMBIE_COLOR[k]);
+      }
+    }
     const home = this.familyBases[0];
     const start = this.fortHome ?? { x: home.info.x, z: home.info.z, yaw: home.spawnYaw };
     this.player = new PlayerTank(this.world, start.x, start.z, start.yaw);
@@ -469,10 +481,11 @@ export class Game {
     });
     this.applySettings();
     this.hud.setMissionStart((m) => startMission(m));
-    if (NIGHT) {
+    if (DARK) {
       this.nightSky = new NightSky(this.scene, {
         // Tracer marks every standing enemy base (and the Fortress); flares go up over the troops.
-        bases: () => [
+        // On the zombie mission the Fortress is ours, so there's no tracer, just the flares.
+        bases: () => ZOMBIES ? [] : [
           ...this.enemyBases.filter((b) => !b.isDestroyed).map((b) => ({ position: b.center, gun: b.aaGun })),
           ...(this.fortress.isDestroyed ? [] : [{ position: this.fortress.center, gun: null }]),
         ],
@@ -831,6 +844,7 @@ export class Game {
       ...this.redTanks,
       ...this.troops.activeSoldiers('player'),
       ...this.friendlyBunkers.filter((b) => b.alive),
+      ...this.flamePits.filter((p) => p.alive),
     ];
   }
 
@@ -1367,13 +1381,23 @@ export class Game {
       this.friendlyBunkers.push(bunker);
       this.buildings.push(bunker.building);
     }
+    // Flamethrower pits just outside the wall, facing out, clear of the gates.
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2;
+      if (Math.abs(Math.cos(a)) < 0.2) continue;
+      // The walls are square, so push the corner pits out past the corner towers.
+      const p = around(118 / Math.max(Math.abs(Math.cos(a)), Math.abs(Math.sin(a))), a);
+      const pit = new FlamePit(this.world, this.scene, this.hitRegistry, p.x, p.z, Math.atan2(-Math.cos(a), -Math.sin(a)));
+      this.flamePits.push(pit);
+      this.buildings.push(pit.building);
+    }
     for (let i = 0; i < 8; i++) {
       const p = around(125, ((i + 0.5) / 8) * Math.PI * 2); // between the gates
       this.troops.addSquad({ anchor: new THREE.Vector2(p.x, p.z), count: GARRISON_SQUAD_SIZE, wanderRadius: 12, faction: 'player', color: LAST_STAND_COLORS[i % 4], holdWhile: null });
     }
     // Tanks of every army on a loop round the walls.
     const loop = Array.from({ length: 8 }, (_, i) => {
-      const p = around(175, (i / 8) * Math.PI * 2);
+      const p = around(200, (i / 8) * Math.PI * 2);
       p.y = surfaceHeightAt(p.x, p.z);
       return p;
     });
@@ -1416,7 +1440,7 @@ export class Game {
     }
     this.troops.shoot(at, 1.6, 'enemy');
     const closest = new THREE.Vector3();
-    for (const b of this.friendlyBunkers) {
+    for (const b of [...this.friendlyBunkers, ...this.flamePits]) {
       if (!b.alive) continue;
       const box = new THREE.Box3().setFromCenterAndSize(b.building.center, b.building.halfExtents.clone().multiplyScalar(2));
       if (box.clampPoint(at, closest).distanceTo(at) > 2) continue;
@@ -1424,6 +1448,21 @@ export class Game {
       if (b.building.destroyed) this.collapseBuilding(b.building, 'enemy');
     }
     this.sound.play('thud', { at, volume: 0.25, rate: 1.6, minGap: 0.2 });
+  }
+
+  /** The flamethrower pits hose any zombies in front of them; every so often the jet knocks them over. */
+  private updateFlamePits(dt: number): void {
+    if (this.flamePits.length === 0) return;
+    const zombies = this.troops.activeSoldiers('enemy').map((s) => s.position);
+    this.burnTimer -= dt;
+    const burn = this.burnTimer <= 0;
+    if (burn) this.burnTimer = BURN_INTERVAL;
+    for (const pit of this.flamePits) {
+      const jet = pit.update(dt, zombies);
+      if (!jet) continue;
+      this.sound.play('launch', { at: pit.nozzle, volume: 0.35, rate: 0.5, fadeAfter: 0.4, minGap: 0.5 });
+      if (burn) this.troops.burn(pit.nozzle, jet, FLAME_RANGE, FLAME_HALF_ANGLE, 'player');
+    }
   }
 
   /** Runs the waves, the wall's strength and the clock; the game ends when the wall gives way. */
@@ -1830,6 +1869,8 @@ export class Game {
       (shot, faction) => (shot.melee ? this.zombieBlow(shot.origin, shot.melee) : this.fireBullet(shot, undefined, faction)),
     );
     if (this.waves) this.updateLastStand(dt, rawInput.menu.confirm);
+    this.updateFlamePits(dt);
+    this.overrun?.update(dt, this.player.position, (p, r) => this.impacts.chimneyPuff(p, r));
     this.addRocketCharge(this.troops.runOver(this.player.position, RUN_OVER_RADIUS, 'player') * CHARGE_PER_TROOP);
 
     // Trees go over when a tank reaches them (or the chopper comes down low over them).
@@ -1902,7 +1943,7 @@ export class Game {
     }
 
     // The shadow-casting light: the sun by day, the moon by night.
-    const sunOffset = NIGHT ? MOON_DIRECTION.clone().multiplyScalar(266) : new THREE.Vector3(120, 220, 90);
+    const sunOffset = DARK ? MOON_DIRECTION.clone().multiplyScalar(266) : new THREE.Vector3(120, 220, 90);
     this.sun.position.copy(this.player.position).add(sunOffset);
     this.nightSky?.update(dt, this.camera, this.player.position);
     this.sun.target.position.copy(this.player.position);

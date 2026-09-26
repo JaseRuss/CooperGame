@@ -180,6 +180,25 @@ export class TroopManager {
     return fumbled;
   }
 
+  /**
+   * A jet of fire from `origin` along `dir` (flat): the other side's soldiers within `range` and
+   * `halfAngle` of it are bowled over. Returns how many.
+   */
+  burn(origin: THREE.Vector3, dir: THREE.Vector3, range: number, halfAngle: number, attacker: Faction): number {
+    const minCos = Math.cos(halfAngle);
+    let burnt = 0;
+    for (const s of this.activeSoldiers()) {
+      if (s.faction === attacker) continue;
+      const dx = s.position.x - origin.x;
+      const dz = s.position.z - origin.z;
+      const d = Math.hypot(dx, dz);
+      if (d > range || (dx * dir.x + dz * dir.z) / Math.max(d, 0.01) < minCos) continue;
+      s.knockDown(origin, 0.5);
+      burnt++;
+    }
+    return burnt;
+  }
+
   /** A rifle round landing at `point` drops the nearest of the other side's soldiers within `radius`. */
   shoot(point: THREE.Vector3, radius: number, attacker: Faction): void {
     let victim: Soldier | null = null;

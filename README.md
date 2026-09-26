@@ -231,13 +231,16 @@ cottages on dirt tracks, and the Fortress in the middle is the **Great Castle**.
 
 ## Mission 5: Zombie Attack
 
-The last level. Green, red, tan and blue have all joined up to defend the
-**Fortress**, and waves of plastic **zombies** are coming. A new wave comes every
-minute, from more sides and bigger each time: walkers, then speedy runners, then
-big purple brutes that take several hits. Pillboxes, squads and tanks from every
-army hold a ring round the walls, and there's a jeep station and a chopper
-station by the gates. Drive into the Fortress to repair and rearm, and press
-Back / R to get back there.
+The last level, at night. Green, red, tan and blue have all joined up to defend
+the **Fortress**, and waves of glow-in-the-dark plastic **zombies** are coming. A
+new wave comes every minute, from more sides and bigger each time: walkers, then
+speedy runners, then big purple brutes that take several hits. Pillboxes, squads
+and tanks from every army hold a ring round the walls, green soldiers man
+**flamethrower pits** just outside the wall that hose any zombie that gets close,
+and there's a jeep station and a chopper station by the gates. Some of the towns
+have already been overrun: houses knocked down, fires burning and zombies still
+hanging about. Drive into the Fortress to repair and rearm, and press Back / R to
+get back there.
 
 Zombies that reach the Fortress wall batter it, and the wall's strength bar at
 the top of the screen goes down (it mends slowly while they're kept off). When it
