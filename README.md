@@ -7,8 +7,8 @@ around a big open world, flatten the five tan enemy bases, and head back to a
 family base to repair. You can't be destroyed, so there's no game over.
 
 Built with [Three.js](https://threejs.org/), [Rapier](https://rapier.rs/) physics,
-TypeScript and [Vite](https://vite.dev/). 3D models are from
-[Kenney](https://kenney.nl/) (CC0).
+TypeScript and [Vite](https://vite.dev/). See [Credits](#credits) for where the ready-made
+models and font came from.
 
 ## Play it online
 
@@ -126,7 +126,7 @@ and right to move, and X to delete. Your choices are remembered.
 - **Mega jam** (X): lobs rings of jam all round the tank. It takes 20 seconds to
   refill.
 - Your tank (and your buddies) go a bit faster on **roads**.
-- Drive into trees and lamp posts to knock them flat.
+- Drive into trees and lamp posts, or shoot them, to knock them flat.
 - **Rear hits** do double damage to enemy tanks. Front armour takes half damage.
 - Knocked-out enemy tanks usually just blow up, but sometimes the turret pops
   off like a cork, the tank flips onto its back like a stuck turtle, the crew
@@ -150,5 +150,31 @@ under the stars. Every enemy base has a flak gun hosing tracer into the sky, so
 you can see where the bases are from across the map. Knocking out the flak gun
 is one of the base's targets. Flares go up over troops in the distance: red over
 the enemy, green over your side. Your tank has a headlight. To jump between
-missions at any time, pause and change **Mission** at the bottom of **Options**
-(it starts that mission from the beginning), or open the game with `?mission=2`.
+missions at any time, use **Level select** (see below).
+
+## Mission 3: Jungle Strike
+
+Win the night raid and the jungle is next: thick jungle on a fresh battlefield,
+with villages of wooden huts and shacks joined by dirt tracks. The trees hide
+the enemy until you're close, so drive through them or blast them over with the
+main gun to clear a path.
+
+## Level select
+
+Pause, open **Options** and pick a level under **Level select** at the bottom,
+then press A or Enter (or click it). It starts that mission from the beginning.
+You can also open the game with `?mission=2` or `?mission=3`.
+
+## Credits
+
+The tanks, soldiers, bases and nearly everything else are built in code. The
+ready-made pieces are all free to use, and the pause screen lists them too:
+
+- **[kenney.nl](https://kenney.nl/)**: City Kit Suburban, City Kit Commercial,
+  City Kit Industrial, City Kit Roads, Car Kit and Nature Kit (the jungle trees
+  and plants). CC0.
+- **[poly.pizza](https://poly.pizza/)**: wooden huts and shacks by
+  [Quaternius](https://quaternius.com/). CC0. Links to each model are in
+  `public/models/huts/LICENSE-quaternius-huts.txt`.
+- **[fonts.google.com](https://fonts.google.com/specimen/Black+Ops+One)**: the
+  Black Ops One font by James Grieshaber and Eben Sorkin. SIL Open Font License.

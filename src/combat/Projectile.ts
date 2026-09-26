@@ -3,6 +3,7 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import type { HitRegistry } from './HitRegistry';
 import { isUnderwater } from '../world/Terrain';
 import type { Building } from '../world/Building';
+import type { Tree } from '../world/Tree';
 import type { Tank, ArmorZone, Faction } from '../entities/Tank';
 
 export interface ImpactResult {
@@ -12,8 +13,8 @@ export interface ImpactResult {
   tankHit: { tank: Tank; zone: ArmorZone } | null;
   /** The shot landed in a lake. */
   water: boolean;
-  /** The shot struck a tree trunk. */
-  treeHit: boolean;
+  /** The tree (or lamp post) whose trunk the shot struck. */
+  tree: Tree | null;
   /** Name of the weak point hit ("Gun slit", "Missile"), when it was a critical hit. */
   critical: string | null;
 }
@@ -136,7 +137,7 @@ export class Projectile {
   private resolveHit(collider: RAPIER.Collider, hitRegistry: HitRegistry, point: THREE.Vector3): void {
     const target = hitRegistry.lookup(collider);
     const water = target?.kind === 'water' || (target?.kind !== 'tank' && isUnderwater(point.x, point.y, point.z));
-    const result: ImpactResult = { collapsedBuilding: null, tankHit: null, water, treeHit: target?.kind === 'tree', critical: null };
+    const result: ImpactResult = { collapsedBuilding: null, tankHit: null, water, tree: target?.kind === 'tree' ? target.tree : null, critical: null };
     if (target?.kind === 'tank') {
       // No friendly fire: shells just bounce off their own side's tanks.
       if (target.tank.faction !== this.faction) {

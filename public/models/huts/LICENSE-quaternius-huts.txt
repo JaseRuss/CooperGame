@@ -1,0 +1,13 @@
+Huts and shacks by Quaternius (https://quaternius.com), downloaded from Poly Pizza.
+
+License: Creative Commons Zero (CC0) / public domain
+http://creativecommons.org/publicdomain/zero/1.0/
+
+hut-open.glb       Hut           https://poly.pizza/m/I0IzdnH2iN
+hut-open-long.glb  Hut           https://poly.pizza/m/4MJWbyd6vw
+shack-open.glb     Shack         https://poly.pizza/m/dlMcSexDWI
+shack-porch.glb    Shack         https://poly.pizza/m/HuzLJcbUd2
+hut-walled.glb     Hut           https://poly.pizza/m/wxi3kAu5ey
+huts-pair.glb      Huts          https://poly.pizza/m/j9uMWazOBh
+storage-hut.glb    Storage Hut   https://poly.pizza/m/BsTn4bKSGb
+storage-shed.glb   Storage shed  https://poly.pizza/m/TvXpjtD2nk

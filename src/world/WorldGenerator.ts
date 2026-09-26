@@ -10,7 +10,7 @@ import { Fortress } from './Fortress';
 import { plantBuilding, fitScale } from './placeModel';
 import { instanceTemplate, placement } from '../utils/instancing';
 import { PartBuilder } from '../utils/modelKit';
-import { planHighways, buildHighwayMeshes, distanceToPolyline, setSurfaceRoads, HIGHWAY_WIDTH, type Polyline } from './RoadNetwork';
+import { planHighways, buildHighwayMeshes, distanceToPolyline, setSurfaceRoads, HIGHWAY_WIDTH, ROAD_COLOR, type Polyline } from './RoadNetwork';
 import { Bunker } from './Bunker';
 import { LandmarkSet } from './LandmarkBuilders';
 import { SITES, isInLandmark, siteToWorld, siteLocalHalf, enemyArmyAt, type Site } from './Landmarks';
@@ -18,7 +18,7 @@ import type { SquadSpawn } from '../entities/TroopManager';
 import { mulberry32 } from '../utils/rng';
 import { randRange } from '../utils/math';
 import { ENEMY_ARMY_COLOR, ARMY_RED, ARMY_TAN, ARMY_BLUE, plastic } from '../utils/plastic';
-import { WORLD_HALF, WORLD_SEED, BASE_RADIUS, MAX_ENEMIES, FORTRESS_HALF, distanceToFriendlyBase } from '../core/config';
+import { WORLD_HALF, WORLD_SEED, BASE_RADIUS, MAX_ENEMIES, FORTRESS_HALF, JUNGLE, distanceToFriendlyBase } from '../core/config';
 import { Tree, TREE_SIZE, LAMP_SIZE, type ToppleSize } from './Tree';
 
 export interface EnemySpawnPoint {
@@ -68,11 +68,24 @@ const MAX_HOUSE_DEPTH = 18;
 const TREE_SCALE_MIN = 11;
 const TREE_SCALE_MAX = 16;
 
+// Jungle mission. The huts (Quaternius) are ~0.76 units tall, so ~12x makes a 9 m hut next to a
+// 2.3 x 3.8 m tank. Nature Kit trees are ~1.1-1.7 units tall with wide crowns.
+const HUT_SCALE_MIN = 11;
+const HUT_SCALE_MAX = 13.5;
+const HUT_DEBRIS_COLOR = 0x7a5a3a;
+const JUNGLE_TREE_SCALE_MIN = 11;
+const JUNGLE_TREE_SCALE_MAX = 17;
+/** Chance a tree grows in each open-country grid cell (the jungle is far thicker). */
+const SCATTER_CHANCE = JUNGLE ? 0.55 : 0.12;
+/** Forest floor area per tree, in square metres. */
+const FOREST_AREA_PER_TREE = JUNGLE ? 75 : 90;
+
 // Kenney road props and cars are authored at different scales than the houses.
 const PROP_SCALE = 12;
 const LIGHT_SCALE = 12;
 const CAR_SCALE = 1.7;
 const PARKED_CAR_CHANCE = 0.22;
+const JUNGLE_CARS = ['truck', 'suv', 'van', 'delivery'];
 const POLE_SPACING = 70;
 const POLE_OFFSET = HIGHWAY_WIDTH / 2 + 5;
 
@@ -92,7 +105,7 @@ export function generateWorld(
   const highways = planHighways();
   setSurfaceRoads(highways);
   scene.add(buildHighwayMeshes(highways));
-  placePowerLines(scene, assets, highways);
+  if (!JUNGLE) placePowerLines(scene, assets, highways);
   const landmarks = new LandmarkSet(world, scene, hitRegistry, assets);
   const town = dressTowns(world, scene, hitRegistry, assets);
   const enemyBases = SITES.filter((s) => s.kind === 'enemyBase').map((s) => new EnemyBase(world, scene, hitRegistry, assets, s));
@@ -108,6 +121,7 @@ export function generateWorld(
   const forests = planForests(highways, bunkers);
   // Everything that topples when a tank drives into it: trees and lamp posts.
   const trees = [...placeTrees(world, scene, hitRegistry, assets, highways, bunkers, forests), ...town.lamps, ...landmarks.lampPosts];
+  if (JUNGLE) placeUndergrowth(scene, assets, highways, bunkers, forests);
   const holds = (site: Site) => whileBaseHolds(site, enemyBases, fortress);
   const enemySpawns = placeEnemySpawns(holds);
   const squads = [...planSquads(bunkers, holds), ...planRedSquads()];
@@ -222,7 +236,7 @@ function planSquads(bunkers: Bunker[], holds: HoldFor): SquadSpawn[] {
 
 function placeRoads(scene: THREE.Scene): void {
   const material = new THREE.MeshStandardMaterial({
-    color: 0x45484d,
+    color: ROAD_COLOR,
     roughness: 0.95,
     polygonOffset: true,
     polygonOffsetFactor: -2,
@@ -246,6 +260,7 @@ function placeRoads(scene: THREE.Scene): void {
       mesh.position.set(road.x, y, road.z);
       mesh.receiveShadow = true;
       scene.add(mesh);
+      if (JUNGLE) continue; // village tracks are bare earth
 
       const line = new THREE.Mesh(
         new THREE.PlaneGeometry(road.alongX ? road.length - ROAD_WIDTH : 0.35, road.alongX ? 0.35 : road.length - ROAD_WIDTH),
@@ -258,7 +273,10 @@ function placeRoads(scene: THREE.Scene): void {
   }
 }
 
-/** Houses on residential streets; Kenney commercial buildings on each town's high street. */
+/**
+ * Houses on residential streets; Kenney commercial buildings on each town's high street. Jungle
+ * villages are wooden huts and shacks instead, with big storage huts along the main track.
+ */
 function placeHouses(world: RAPIER.World, scene: THREE.Scene, hitRegistry: HitRegistry, assets: AssetLibrary): Building[] {
   const rng = mulberry32(WORLD_SEED + 7);
   const buildings: Building[] = [];
@@ -266,6 +284,13 @@ function placeHouses(world: RAPIER.World, scene: THREE.Scene, hitRegistry: HitRe
   for (const town of TOWNS) {
     for (const lot of town.lots) {
       const shop = lot.kind === 'shop';
+      if (JUNGLE) {
+        const group = shop ? 'bigHut' : 'hut';
+        const model = assets.clone(group, assets.random(group, rng));
+        const scale = fitScale(model, lot.facing, randRange(rng, HUT_SCALE_MIN, HUT_SCALE_MAX), MAX_HOUSE_WIDTH, MAX_HOUSE_DEPTH);
+        buildings.push(plantBuilding(world, scene, hitRegistry, model, lot.x, lot.z, lot.facing, scale, shop ? 130 : 80, HUT_DEBRIS_COLOR));
+        continue;
+      }
       // A few skyscrapers give each high street a skyline; otherwise regular shop fronts.
       const name = shop
         ? assets.random('commercial', rng, (n) => n.startsWith('building-') && (rng() < 0.15 || !n.includes('skyscraper')))
@@ -289,6 +314,18 @@ function dressTowns(world: RAPIER.World, scene: THREE.Scene, hitRegistry: HitReg
   const kerb = ROAD_WIDTH / 2 + 1.5;
 
   for (const town of TOWNS) {
+    // Jungle villages have no street lights and only the odd truck or jeep.
+    if (JUNGLE) {
+      for (const lot of town.lots) {
+        if (rng() > PARKED_CAR_CHANCE * 0.5) continue;
+        const side = lot.z > lot.streetZ ? 1 : -1;
+        const x = lot.x + randRange(rng, -6, 6);
+        const z = lot.streetZ + side * (ROAD_WIDTH / 2 - 1.6);
+        const model = assets.clone('car', JUNGLE_CARS[Math.floor(rng() * JUNGLE_CARS.length)]);
+        cars.push(plantBuilding(world, scene, hitRegistry, model, x, z, rng() < 0.5 ? Math.PI / 2 : -Math.PI / 2, CAR_SCALE, 26, 0x555555));
+      }
+      continue;
+    }
     for (const z of town.streetZs) {
       for (let x = town.cx - town.halfLen + 13; x < town.cx + town.halfLen - 6; x += 26) {
         if (town.crossXs.some((cx) => Math.abs(cx - x) < 10)) continue;
@@ -374,21 +411,22 @@ function placePowerLines(scene: THREE.Scene, assets: AssetLibrary, highways: Pol
 }
 
 /** Trees, drawn as one instanced batch per tree model. */
-const FOREST_COUNT = 16;
+const FOREST_COUNT = JUNGLE ? 28 : 16;
+const FOREST_RADIUS = JUNGLE ? { min: 60, max: 150, gap: 30 } : { min: 55, max: 130, gap: 60 };
 
 /** Patches of woodland in open country, clear of roads, towns, landmarks and bases. */
 function planForests(highways: Polyline[], bunkers: Bunker[]): Forest[] {
   const rng = mulberry32(WORLD_SEED + 1447);
   const forests: Forest[] = [];
   for (let attempt = 0; attempt < 3000 && forests.length < FOREST_COUNT; attempt++) {
-    const radius = randRange(rng, 55, 130);
+    const radius = randRange(rng, FOREST_RADIUS.min, FOREST_RADIUS.max);
     const x = randRange(rng, -WORLD_HALF + radius + 40, WORLD_HALF - radius - 40);
     const z = randRange(rng, -WORLD_HALF + radius + 40, WORLD_HALF - radius - 40);
     if (distanceToFriendlyBase(x, z) < BASE_CLEAR_RADIUS + radius) continue;
     if (isOccupied(x, z, radius + 30)) continue;
     if (highways.some((h) => distanceToPolyline(x, z, h) < radius + 12)) continue;
     if (bunkers.some((b) => Math.hypot(b.position.x - x, b.position.z - z) < radius + 20)) continue;
-    if (forests.some((f) => Math.hypot(f.x - x, f.z - z) < f.radius + radius + 60)) continue;
+    if (forests.some((f) => Math.hypot(f.x - x, f.z - z) < f.radius + radius + FOREST_RADIUS.gap)) continue;
     forests.push({ x, z, radius });
   }
   return forests;
@@ -396,7 +434,9 @@ function planForests(highways: Polyline[], bunkers: Bunker[]): Forest[] {
 
 function placeTrees(world: RAPIER.World, scene: THREE.Scene, hitRegistry: HitRegistry, assets: AssetLibrary, highways: Polyline[], bunkers: Bunker[], forests: Forest[]): Tree[] {
   const rng = mulberry32(WORLD_SEED + 41);
-  const names = assets.names('tree');
+  const group = JUNGLE ? 'jungleTree' : 'tree';
+  const names = assets.names(group);
+  const [scaleMin, scaleMax] = JUNGLE ? [JUNGLE_TREE_SCALE_MIN, JUNGLE_TREE_SCALE_MAX] : [TREE_SCALE_MIN, TREE_SCALE_MAX];
   const trees: Tree[] = [];
   const placements: { name: string; x: number; y: number; z: number; yaw: number; scale: number }[] = [];
 
@@ -404,7 +444,7 @@ function placeTrees(world: RAPIER.World, scene: THREE.Scene, hitRegistry: HitReg
   const steps = Math.floor((WORLD_HALF * 2) / gridStep);
 
   for (let i = 0; i < steps * steps; i++) {
-    if (rng() > 0.12) continue;
+    if (rng() > SCATTER_CHANCE) continue;
     const x = randRange(rng, -WORLD_HALF, WORLD_HALF);
     const z = randRange(rng, -WORLD_HALF, WORLD_HALF);
     if (distanceToFriendlyBase(x, z) < BASE_CLEAR_RADIUS) continue;
@@ -413,13 +453,13 @@ function placeTrees(world: RAPIER.World, scene: THREE.Scene, hitRegistry: HitReg
     if (bunkers.some((b) => Math.hypot(b.position.x - x, b.position.z - z) < 20)) continue;
 
     const name = names[Math.floor(rng() * names.length)];
-    const scale = randRange(rng, TREE_SCALE_MIN, TREE_SCALE_MAX);
+    const scale = randRange(rng, scaleMin, scaleMax);
     placements.push({ name, x, y: surfaceHeightAt(x, z), z, yaw: randRange(rng, 0, Math.PI * 2), scale });
   }
 
   // Forests: trees packed close, thinning out toward a ragged edge.
   for (const f of forests) {
-    const count = Math.floor((Math.PI * f.radius * f.radius) / 90);
+    const count = Math.floor((Math.PI * f.radius * f.radius) / FOREST_AREA_PER_TREE);
     for (let i = 0; i < count; i++) {
       const a = rng() * Math.PI * 2;
       const r = Math.sqrt(rng()) * f.radius;
@@ -428,18 +468,85 @@ function placeTrees(world: RAPIER.World, scene: THREE.Scene, hitRegistry: HitReg
       const x = f.x + Math.cos(a) * r;
       const z = f.z + Math.sin(a) * r;
       const name = names[Math.floor(rng() * names.length)];
-      const scale = randRange(rng, TREE_SCALE_MIN, TREE_SCALE_MAX) * (1.1 - (0.3 * r) / f.radius);
+      const scale = randRange(rng, scaleMin, scaleMax) * (1.1 - (0.3 * r) / f.radius);
       placements.push({ name, x, y: surfaceHeightAt(x, z), z, yaw: randRange(rng, 0, Math.PI * 2), scale });
     }
   }
 
   const staticBody = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
   for (const name of names) {
-    const modelPlacements = placements.filter((p) => p.name === name);
-    trees.push(...toppleInstances(world, scene, hitRegistry, staticBody, assets.template('tree', name), modelPlacements, TREE_SIZE));
+    for (const chunk of byChunk(placements.filter((p) => p.name === name))) {
+      trees.push(...toppleInstances(world, scene, hitRegistry, staticBody, assets.template(group, name), chunk, TREE_SIZE));
+    }
   }
 
   return trees;
+}
+
+const UNDERGROWTH_SCALE_MIN = 9;
+const UNDERGROWTH_SCALE_MAX = 16;
+/** Forest floor area per bush or bamboo clump, in square metres. */
+const UNDERGROWTH_AREA = 80;
+const UNDERGROWTH_SCATTER = 3500;
+
+/**
+ * Jungle floor: bushes, ferns and bamboo under the trees and dotted over open ground. Purely for
+ * looks (tanks drive straight through), drawn as one instanced batch per plant.
+ */
+function placeUndergrowth(scene: THREE.Scene, assets: AssetLibrary, highways: Polyline[], bunkers: Bunker[], forests: Forest[]): void {
+  const rng = mulberry32(WORLD_SEED + 1553);
+  const names = assets.names('undergrowth');
+  const spots = new Map<string, { x: number; z: number; m: THREE.Matrix4 }[]>(names.map((n) => [n, []]));
+  const plant = (x: number, z: number) => {
+    if (distanceToFriendlyBase(x, z) < BASE_CLEAR_RADIUS) return;
+    if (isOccupied(x, z, 2)) return;
+    if (highways.some((h) => distanceToPolyline(x, z, h) < HIGHWAY_WIDTH / 2 + 2)) return;
+    if (bunkers.some((b) => Math.hypot(b.position.x - x, b.position.z - z) < 14)) return;
+    const name = names[Math.floor(rng() * names.length)];
+    const scale = randRange(rng, UNDERGROWTH_SCALE_MIN, UNDERGROWTH_SCALE_MAX);
+    spots.get(name)?.push({ x, z, m: placement(x, surfaceHeightAt(x, z), z, rng() * Math.PI * 2, scale) });
+  };
+
+  for (const f of forests) {
+    const count = Math.floor((Math.PI * f.radius * f.radius) / UNDERGROWTH_AREA);
+    for (let i = 0; i < count; i++) {
+      const a = rng() * Math.PI * 2;
+      const r = Math.sqrt(rng()) * f.radius * 1.1;
+      plant(f.x + Math.cos(a) * r, f.z + Math.sin(a) * r);
+    }
+  }
+  for (let i = 0; i < UNDERGROWTH_SCATTER; i++) {
+    plant(randRange(rng, -WORLD_HALF, WORLD_HALF), randRange(rng, -WORLD_HALF, WORLD_HALF));
+  }
+
+  for (const [name, placements] of spots) {
+    for (const chunk of byChunk(placements)) {
+      const group = instanceTemplate(assets.template('undergrowth', name), chunk.map((p) => p.m));
+      // Low plants: they catch shadows but casting them costs more than it shows.
+      group.traverse((child) => {
+        if (child instanceof THREE.InstancedMesh) child.castShadow = false;
+      });
+      scene.add(group);
+    }
+  }
+}
+
+/** Side of the square map chunks that instanced scenery is split into. */
+const CHUNK_SIZE = 400;
+
+/**
+ * Splits placements into map chunks, one instanced batch each, so the renderer can skip the
+ * batches that are behind the camera or out past the fog (a batch is culled as a whole).
+ */
+function byChunk<T extends { x: number; z: number }>(items: T[]): T[][] {
+  const chunks = new Map<string, T[]>();
+  for (const item of items) {
+    const key = `${Math.floor(item.x / CHUNK_SIZE)},${Math.floor(item.z / CHUNK_SIZE)}`;
+    const chunk = chunks.get(key);
+    if (chunk) chunk.push(item);
+    else chunks.set(key, [item]);
+  }
+  return [...chunks.values()];
 }
 
 /**

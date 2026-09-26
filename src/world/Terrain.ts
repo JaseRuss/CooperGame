@@ -11,6 +11,7 @@ import {
   WORLD_SEED,
   FRIENDLY_BASES,
   BASE_RADIUS,
+  JUNGLE,
 } from '../core/config';
 
 const noise2D = createNoise2D(mulberry32(WORLD_SEED));
@@ -185,11 +186,12 @@ export function buildTerrain(): TerrainBuild {
   const position = geometry.attributes.position;
   const colors = new Float32Array(position.count * 3);
   // Light, sunny "playmat" greens so the darker army-green plastic stands out.
-  const grass = new THREE.Color('#8dbb55');
-  const grassHigh = new THREE.Color('#b2c26a');
-  const dirt = new THREE.Color('#bda673');
-  const sand = new THREE.Color('#e3d29a');
-  const lakeBed = new THREE.Color('#8a8a5c');
+  // The jungle floor is deeper and muddier, but still lighter than the green plastic.
+  const grass = new THREE.Color(JUNGLE ? '#6f9c3e' : '#8dbb55');
+  const grassHigh = new THREE.Color(JUNGLE ? '#8aa748' : '#b2c26a');
+  const dirt = new THREE.Color(JUNGLE ? '#9a7a4e' : '#bda673');
+  const sand = new THREE.Color(JUNGLE ? '#c9b27a' : '#e3d29a');
+  const lakeBed = new THREE.Color(JUNGLE ? '#6b6a3e' : '#8a8a5c');
   const tmp = new THREE.Color();
 
   for (let i = 0; i < position.count; i++) {

@@ -1,13 +1,14 @@
 import type RAPIER from '@dimforge/rapier3d-compat';
 import type { Tank } from '../entities/Tank';
 import type { Building } from '../world/Building';
+import type { Tree } from '../world/Tree';
 
 export type HitTarget =
   | { kind: 'tank'; tank: Tank }
   | { kind: 'building'; building: Building }
   | { kind: 'terrain' }
   | { kind: 'water' }
-  | { kind: 'tree' };
+  | { kind: 'tree'; tree: Tree };
 
 /** Maps Rapier collider handles to the game entity they belong to, for raycast hit resolution. */
 export class HitRegistry {

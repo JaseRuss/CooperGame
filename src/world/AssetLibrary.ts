@@ -1,8 +1,24 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { JUNGLE } from '../core/config';
 
-/** Kenney CC0 kits in public/models/<dir>; each kit keeps its own Textures/colormap.png. */
-export type AssetGroup = 'house' | 'tree' | 'commercial' | 'industrial' | 'prop' | 'car';
+/**
+ * CC0 models in public/models/<dir>. The Kenney city kits keep their own Textures/colormap.png;
+ * the jungle (Kenney Nature Kit) and huts (Quaternius) use plain colours and are only loaded on
+ * the jungle mission.
+ */
+export type AssetGroup = 'house' | 'tree' | 'commercial' | 'industrial' | 'prop' | 'car' | 'jungleTree' | 'undergrowth' | 'hut' | 'bigHut';
+
+const JUNGLE_GROUPS: AssetGroup[] = ['jungleTree', 'undergrowth', 'hut', 'bigHut'];
+
+/** Deep jungle greens and brown bark in place of the Nature Kit's minty leaves and pink trunks. */
+const JUNGLE_TINT: Record<string, number> = {
+  leafsGreen: 0x3f8f35,
+  leafsDark: 0x2c7030,
+  grass: 0x4c9a38,
+  woodBark: 0x8a5d3b,
+  woodBarkDark: 0x6e4a32,
+};
 
 const letters = (s: string) => s.split('');
 const BUILD_SHA = import.meta.env.VITE_BUILD_SHA as string | undefined;
@@ -83,6 +99,26 @@ const MANIFEST: Record<AssetGroup, { dir: string; names: string[] }> = {
       'garbage-truck',
     ],
   },
+  jungleTree: {
+    dir: 'jungle',
+    names: [
+      'tree_palmTall',
+      'tree_palmBend',
+      'tree_palmDetailedTall',
+      'tree_palm',
+      'tree_default_dark',
+      'tree_detailed_dark',
+      'tree_plateau_dark',
+      'tree_fat_darkh',
+      'tree_oak_dark',
+    ],
+  },
+  undergrowth: {
+    dir: 'jungle',
+    names: ['plant_bushLarge', 'plant_bushLargeTriangle', 'plant_flatTall', 'crops_bambooStageB', 'grass_leafsLarge'],
+  },
+  hut: { dir: 'huts', names: ['hut-open', 'hut-open-long', 'shack-open', 'shack-porch', 'hut-walled', 'huts-pair'] },
+  bigHut: { dir: 'huts', names: ['storage-hut', 'storage-shed'] },
 };
 
 function enableShadows(obj: THREE.Object3D): void {
@@ -94,7 +130,27 @@ function enableShadows(obj: THREE.Object3D): void {
   });
 }
 
-/** Loads and caches every Kenney GLB model used to populate the world. */
+/**
+ * Makes the plain-colour (non-Kenney-city) models matte and gives the jungle its own colours.
+ * Their files leave metalness unset, which glTF reads as fully metallic: with no environment map
+ * that renders nearly black. The materials belong to this one loaded template and every copy
+ * shares them, so they're changed in place: nothing is cloned, and each mesh keeps its single,
+ * non-array material.
+ */
+function prepareMaterials(obj: THREE.Object3D): void {
+  obj.traverse((child) => {
+    if (!(child instanceof THREE.Mesh)) return;
+    const materials: THREE.Material[] = Array.isArray(child.material) ? child.material : [child.material];
+    for (const mat of materials) {
+      if (!(mat instanceof THREE.MeshStandardMaterial)) continue;
+      mat.metalness = 0;
+      const tint = JUNGLE_TINT[mat.name];
+      if (tint !== undefined) mat.color.set(tint);
+    }
+  });
+}
+
+/** Loads and caches every GLB model used to populate the world. */
 export class AssetLibrary {
   private readonly models = new Map<string, THREE.Object3D>();
 
@@ -102,7 +158,8 @@ export class AssetLibrary {
     const manager = new THREE.LoadingManager();
     manager.setURLModifier(versionAssetURL);
     const loader = new GLTFLoader(manager);
-    const jobs = (Object.keys(MANIFEST) as AssetGroup[]).flatMap((group) =>
+    const groups = (Object.keys(MANIFEST) as AssetGroup[]).filter((g) => JUNGLE || !JUNGLE_GROUPS.includes(g));
+    const jobs = groups.flatMap((group) =>
       MANIFEST[group].names.map((name) => ({ group, name, url: `${import.meta.env.BASE_URL}models/${MANIFEST[group].dir}/${name}.glb` })),
     );
     let loaded = 0;
@@ -111,6 +168,7 @@ export class AssetLibrary {
     const requests = jobs.map((job) => new Promise<void>((resolve, reject) => {
       loader.load(job.url, (gltf) => {
         enableShadows(gltf.scene);
+        if (JUNGLE_GROUPS.includes(job.group)) prepareMaterials(gltf.scene);
         this.models.set(`${job.group}/${job.name}`, gltf.scene);
         loaded += 1;
         onProgress?.(loaded, total);

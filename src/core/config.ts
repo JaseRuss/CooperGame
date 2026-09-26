@@ -10,13 +10,25 @@ export const TERRAIN_HEIGHT = 18;
 
 /**
  * Which mission is playing, from the page's `?mission=` parameter. Mission 1 is the daytime
- * battle; mission 2 is the night raid, on a fresh battlefield (its own seed) under flares.
+ * battle; mission 2 is the night raid, on a fresh battlefield (its own seed) under flares;
+ * mission 3 is a steamy jungle of thick trees and villages of wooden huts.
  */
-export type Mission = 1 | 2;
-export const MISSION: Mission = new URLSearchParams(window.location.search).get('mission') === '2' ? 2 : 1;
-export const NIGHT = MISSION === 2;
+export type Mission = 1 | 2 | 3;
 
-export const WORLD_SEED = MISSION === 2 ? 2468 : 1337;
+/** Every mission in play order, as the level select lists them. */
+export const MISSIONS: { mission: Mission; title: string; blurb: string }[] = [
+  { mission: 1, title: 'Day Battle', blurb: 'Sunny fields and towns. Knock out five enemy bases, then storm the Fortress.' },
+  { mission: 2, title: 'Night Raid', blurb: 'New ground under the moon. Flares light up the enemy and flak guns guard their bases.' },
+  { mission: 3, title: 'Jungle Strike', blurb: 'Thick jungle and wooden hut villages. Smash through the trees to find the enemy bases.' },
+];
+
+const missionParam = Number(new URLSearchParams(window.location.search).get('mission'));
+export const MISSION: Mission = MISSIONS.find((m) => m.mission === missionParam)?.mission ?? 1;
+export const NIGHT = MISSION === 2;
+export const JUNGLE = MISSION === 3;
+
+const SEEDS: Record<Mission, number> = { 1: 1337, 2: 2468, 3: 3579 };
+export const WORLD_SEED = SEEDS[MISSION];
 
 /** Reloads the page into another mission (a fresh world, from the start). */
 export function startMission(mission: Mission): void {

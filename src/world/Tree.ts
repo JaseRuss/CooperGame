@@ -19,7 +19,7 @@ export const LAMP_SIZE: ToppleSize = { colliderRadius: 0.35, colliderHalfHeight:
 
 /**
  * A tree (or lamp post) with a trunk collider that falls over, away from the tank, when a tank
- * drives into it.
+ * drives into it or a tank shell hits it.
  */
 export class Tree {
   private readonly pivot = new THREE.Group();
@@ -57,7 +57,7 @@ export class Tree {
       RAPIER.ColliderDesc.cylinder(size.colliderHalfHeight, size.colliderRadius).setTranslation(x, y + size.colliderHalfHeight, z),
       staticBody,
     );
-    hitRegistry.register(this.collider, { kind: 'tree' });
+    hitRegistry.register(this.collider, { kind: 'tree', tree: this });
     this.syncInstance(0);
   }
 
@@ -68,9 +68,7 @@ export class Tree {
         const dx = tank.x - this.pivot.position.x;
         const dz = tank.z - this.pivot.position.z;
         if (dx * dx + dz * dz > this.size.triggerRadius * this.size.triggerRadius) continue;
-        this.falling = true;
-        if (Math.hypot(dx, dz) < 1e-4) this.fallAxis.set(1, 0, 0);
-        else this.fallAxis.set(-dz, 0, dx).normalize();
+        this.fallAwayFrom(dx, dz);
         break;
       }
     }
@@ -86,6 +84,18 @@ export class Tree {
       this.world.removeCollider(this.collider, false);
       this.collider = null;
     }
+  }
+
+  /** A shell hit: the tree goes over the way the shell was flying. */
+  knockDown(shellDirection: THREE.Vector3): void {
+    if (!this.falling) this.fallAwayFrom(-shellDirection.x, -shellDirection.z);
+  }
+
+  /** Topple away from a push that comes from (dx, dz) relative to the trunk. */
+  private fallAwayFrom(dx: number, dz: number): void {
+    this.falling = true;
+    if (Math.hypot(dx, dz) < 1e-4) this.fallAxis.set(1, 0, 0);
+    else this.fallAxis.set(-dz, 0, dx).normalize();
   }
 
   private syncInstance(progress: number): void {

@@ -34,7 +34,7 @@ import { CameraRig } from '../camera/CameraRig';
 import { HUD, type HUDState } from '../ui/HUD';
 import { WorldMap, type MapMarker, type MapView } from '../ui/WorldMap';
 import { AimGuide, type AimTarget } from '../ui/AimGuide';
-import { FRIENDLY_BASES, nearestFriendlyBase, BASE_RADIUS, MISSION, NIGHT, startMission, type FriendlyBase } from '../core/config';
+import { FRIENDLY_BASES, nearestFriendlyBase, BASE_RADIUS, MISSION, MISSIONS, NIGHT, JUNGLE, startMission, type FriendlyBase, type Mission } from '../core/config';
 import { NightSky, MOON_DIRECTION } from '../world/NightSky';
 import { ARMY_GREEN, ARMY_RED, shade } from '../utils/plastic';
 import { loadSettings, saveSettings, AIM_SPEED_SCALE, DEFAULT_BUDDY_NAMES, type Settings } from './Settings';
@@ -95,7 +95,11 @@ const MAX_BUDDIES = DEFAULT_BUDDY_NAMES.length;
 // Enemy base objectives.
 const CHECKLIST_RANGE = 350; // show the target list when this close to an enemy base
 const VICTORY_SCREEN_TIME = 9;
-const NEXT_MISSION_DELAY = 12; // after winning mission 1, the night raid starts this long after the victory screen
+const NEXT_MISSION_DELAY = 12; // after winning a mission, the next one starts this long after the victory screen
+/** The mission that follows this one, if any. */
+const nextMission = MISSIONS.find((m) => m.mission === MISSION + 1);
+/** Where the jungle haze turns fully opaque. */
+const JUNGLE_FOG_FAR = 950;
 
 interface RocketSequence {
   rocket: HomingRocket;
@@ -228,7 +232,8 @@ export class Game {
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     container.appendChild(this.renderer.domElement);
 
-    this.camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 4000);
+    // In the jungle haze nothing shows past the fog, so don't draw the thousands of trees out there.
+    this.camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, JUNGLE ? JUNGLE_FOG_FAR + 60 : 4000);
     this.cameraRig = new CameraRig(this.camera);
     this.input = new InputManager(this.renderer.domElement);
     this.hud = new HUD(container);
@@ -241,12 +246,23 @@ export class Game {
     container.appendChild(this.loadingLabel);
 
     // Daylight, or moonlight on the night raid (dark enough for the flares to show, light enough to play).
-    const sky = NIGHT ? 0x0d1733 : 0x9fd3f0;
+    // The jungle is a steamy haze: close green-grey fog and warm, filtered sun.
+    const sky = NIGHT ? 0x0d1733 : JUNGLE ? 0xa9c4a2 : 0x9fd3f0;
     this.scene.background = new THREE.Color(sky);
-    this.scene.fog = NIGHT ? new THREE.Fog(sky, 280, 1250) : new THREE.Fog(sky, 500, 1700);
+    this.scene.fog = NIGHT ? new THREE.Fog(sky, 280, 1250) : JUNGLE ? new THREE.Fog(sky, 180, JUNGLE_FOG_FAR) : new THREE.Fog(sky, 500, 1700);
 
-    this.scene.add(NIGHT ? new THREE.HemisphereLight(0x7088c4, 0x1d1b26, 0.5) : new THREE.HemisphereLight(0xbfd9ff, 0x3a3226, 0.9));
-    this.sun = NIGHT ? new THREE.DirectionalLight(0xaec4ff, 0.55) : new THREE.DirectionalLight(0xfff2d9, 1.7);
+    this.scene.add(
+      NIGHT
+        ? new THREE.HemisphereLight(0x7088c4, 0x1d1b26, 0.5)
+        : JUNGLE
+          ? new THREE.HemisphereLight(0xd8ecc8, 0x2e3a1c, 0.95)
+          : new THREE.HemisphereLight(0xbfd9ff, 0x3a3226, 0.9),
+    );
+    this.sun = NIGHT
+      ? new THREE.DirectionalLight(0xaec4ff, 0.55)
+      : JUNGLE
+        ? new THREE.DirectionalLight(0xffe7b8, 1.5)
+        : new THREE.DirectionalLight(0xfff2d9, 1.7);
     this.sun.castShadow = true;
     this.sun.shadow.mapSize.set(2048, 2048);
     this.sun.shadow.camera.left = -180;
@@ -360,6 +376,7 @@ export class Game {
     this.loadingLabel.remove();
     this.ready = true;
     if (MISSION === 2) this.hud.showBanner('MISSION 2: NIGHT RAID', 'The enemy has dug in on new ground. Knock out their bases under the flares!');
+    else if (MISSION === 3) this.hud.showBanner('MISSION 3: JUNGLE STRIKE', 'The enemy is hiding in the jungle. Drive or blast through the trees to find their bases!');
     else this.hud.showBanner('GREEN & RED ARE FRIENDS', 'Tan and blue are the enemy. Knock out their bases!');
     if (import.meta.env.DEV) (window as unknown as { game: Game }).game = this;
     this.clock.start();
@@ -540,7 +557,11 @@ export class Game {
       (point, result) => {
         if (result.collapsedBuilding) this.collapseBuilding(result.collapsedBuilding, tank.faction);
         else if (result.water) this.impacts.splash(point, 1);
-        else if (result.treeHit) this.impacts.dustPuff(point);
+        else if (result.tree) {
+          // Tank shells fell trees (and lamp posts), so you can blast a way through the jungle.
+          result.tree.knockDown(shot.direction);
+          this.impacts.dustPuff(point);
+        }
         else this.explode(point, 1, tank.faction);
         if (tank === this.player && result.tankHit) this.hud.showHitMarker(result.tankHit.zone);
         if (result.critical) this.onCriticalHit(result.critical, point, tank === this.player);
@@ -894,19 +915,23 @@ export class Game {
     if (!this.fortressAnnounced && this.fortress.isDestroyed) {
       this.fortressAnnounced = true;
       this.troops.blast(this.fortress.center, 150, 'player'); // the last defenders scatter
-      if (MISSION === 1) {
-        this.hud.showVictory('The Fortress has fallen and every enemy base is yours. The toy box is saved!', '');
-        this.victoryTimer = NEXT_MISSION_DELAY;
-      } else {
-        this.hud.showVictory('Night raid complete! The flares are out and every enemy base is yours.', 'Keep driving around and enjoy it!');
-        this.victoryTimer = VICTORY_SCREEN_TIME;
-      }
+      const message: Record<Mission, string> = {
+        1: 'The Fortress has fallen and every enemy base is yours. The toy box is saved!',
+        2: 'Night raid complete! The flares are out and every enemy base is yours.',
+        3: 'Jungle strike complete! Every enemy base in the jungle is yours.',
+      };
+      this.hud.showVictory(message[MISSION], nextMission ? '' : 'Keep driving around and enjoy it!');
+      this.victoryTimer = nextMission ? NEXT_MISSION_DELAY : VICTORY_SCREEN_TIME;
     }
     if (this.victoryTimer > 0) {
       this.victoryTimer -= dt;
-      if (MISSION === 1) this.hud.setVictoryFooter(`Get ready for Mission 2: the Night Raid! Starting in ${Math.max(1, Math.ceil(this.victoryTimer))}…`);
+      if (nextMission) {
+        this.hud.setVictoryFooter(
+          `Get ready for Mission ${nextMission.mission}: the ${nextMission.title}! Starting in ${Math.max(1, Math.ceil(this.victoryTimer))}…`,
+        );
+      }
       if (this.victoryTimer <= 0) {
-        if (MISSION === 1) startMission(2);
+        if (nextMission) startMission(nextMission.mission);
         else this.hud.hideVictory();
       }
     }

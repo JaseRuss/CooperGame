@@ -12,8 +12,11 @@ shipped once so it doesn't ship again.
   model file while the loader still requests it leaves the game stuck on "Loading world".
 - Nearly every model in the game is procedural: built from primitives with `PartBuilder`
   (`src/utils/modelKit.ts`), which merges parts into one geometry per material. Prefer that over
-  importing new GLB files. The Kenney GLBs in `public/models/` are only for the town scenery and
-  cars (`src/world/AssetLibrary.ts`).
+  importing new GLB files. The GLBs in `public/models/` are only for the town scenery, cars and
+  the jungle mission's trees, plants and huts (`src/world/AssetLibrary.ts`). If you add one, also
+  credit it in `CREDITS` in `src/ui/HUD.ts` (shown on the pause screen) and in the README.
+- The Nature Kit and Quaternius GLBs leave metalness unset, which glTF treats as fully metallic
+  and renders nearly black; `AssetLibrary` sets their materials to matte on load.
 - Friendly armies are green (player) and red; enemies are tan and blue.
 
 ## Case study: the invisible enemy helicopter

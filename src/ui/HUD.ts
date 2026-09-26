@@ -3,12 +3,17 @@ import type { AimTarget } from './AimGuide';
 import type { ArmorZone } from '../entities/Tank';
 import type { MenuInput } from '../input/InputManager';
 import { OPTION_ROWS, DEFAULT_BUDDY_NAMES, BUDDY_NAME_MAX, cleanBuddyName, type Settings } from '../core/Settings';
-import { WORLD_SIZE, MISSION, type Mission } from '../core/config';
+import { WORLD_SIZE, MISSION, MISSIONS, type Mission } from '../core/config';
 
-/** The missions, as the options screen lists them. */
-const MISSIONS: { mission: Mission; label: string }[] = [
-  { mission: 1, label: '1 · Day battle' },
-  { mission: 2, label: '2 · Night raid' },
+/** Where the ready-made models and the font came from, grouped by site, for the pause screen. */
+const CREDITS: { site: string; url: string; items: string }[] = [
+  {
+    site: 'kenney.nl',
+    url: 'https://kenney.nl',
+    items: 'City Kit Suburban, Commercial, Industrial and Roads, Car Kit, Nature Kit (jungle trees and plants) · CC0',
+  },
+  { site: 'poly.pizza', url: 'https://poly.pizza', items: 'Wooden huts and shacks by Quaternius · CC0' },
+  { site: 'fonts.google.com', url: 'https://fonts.google.com/specimen/Black+Ops+One', items: 'Black Ops One font by James Grieshaber and Eben Sorkin · SIL Open Font License' },
 ];
 
 export interface ObjectiveLine {
@@ -175,7 +180,7 @@ const STYLE = `
 .hud .page.on { display:flex; flex-direction:column; align-items:center; gap:8px; }
 .hud .legend { font-size:12.5px; opacity:0.9; display:flex; gap:14px; flex-wrap:wrap; justify-content:center; max-width:760px; }
 .hud .legend i { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:5px; vertical-align:-1px; }
-.hud .options { width:min(560px, 92vw); padding:10px; }
+.hud .options { width:min(560px, 92vw); padding:10px; max-height:calc(100vh - 340px); overflow-y:auto; }
 .hud .opt { display:flex; align-items:center; justify-content:space-between; padding:12px 14px; border-radius:6px; cursor:pointer; border:1px solid transparent; }
 .hud .opt.sel { background:rgba(214,196,138,0.16); border-color:rgba(214,196,138,0.6); }
 .hud .opt .name { font-size:16px; font-weight:700; }
@@ -183,7 +188,12 @@ const STYLE = `
 .hud .opt .val b { font-family:"Black Ops One", Impact, sans-serif; font-weight:400; letter-spacing:1px; color:#ffd24a; min-width:92px; text-align:center; }
 .hud .opt .arrow { opacity:0.5; font-size:13px; }
 .hud .opt.sel .arrow { opacity:1; }
-.hud .opt.first-name, .hud .opt.mission { margin-top:8px; border-top-color:rgba(214,196,138,0.25); }
+.hud .opt.first-name { margin-top:8px; border-top-color:rgba(214,196,138,0.25); }
+.hud .options .section { margin:12px 14px 2px; padding-top:8px; border-top:1px solid rgba(214,196,138,0.25); font-size:13px; color:#e8d9a4; }
+.hud .opt.level { padding:8px 14px; }
+.hud .credits { max-width:min(780px, 94vw); padding:5px 14px 6px; font-size:11px; line-height:1.5; text-align:center; opacity:0.85; }
+.hud .credits .head { font-size:11.5px; color:#e8d9a4; }
+.hud .credits a { color:#ffd24a; font-weight:700; text-decoration:none; }
 .hud .opt .val b.pen { color:#9be27a; }
 .hud .letters { display:flex; gap:3px; }
 .hud .letters span { width:17px; height:26px; display:flex; align-items:center; justify-content:center; font-family:"Black Ops One", Impact, sans-serif;
@@ -283,8 +293,6 @@ export class HUD {
   private readonly victory: HTMLDivElement;
   private readonly victoryText: HTMLDivElement;
   private readonly victoryFooter: HTMLDivElement;
-  /** The mission chosen on the options screen; it starts when confirmed. */
-  private missionPick: Mission = MISSION;
   private onMissionStart: ((m: Mission) => void) | null = null;
   private readonly hudBits: HTMLElement[];
   private readonly html = new Map<HTMLElement, string>();
@@ -427,6 +435,19 @@ export class HUD {
     window.addEventListener('keydown', (e) => this.onNameKey(e));
     this.footer = el('div', 'footer shadow', this.overlay);
 
+    // Where the ready-made models and the font came from, grouped by site.
+    const credits = el('div', 'panel credits shadow', this.overlay);
+    el('div', 'stencil head', credits, 'MODELS & FONT FROM');
+    for (const c of CREDITS) {
+      const line = el('div', '', credits);
+      const link = el('a', '', line, c.site);
+      link.href = c.url;
+      link.target = '_blank';
+      link.rel = 'noopener';
+      line.append(`: ${c.items}`);
+    }
+    el('div', 'subtle', credits, 'Tanks, soldiers, bases and everything else are made in code.');
+
     // --- crosshair: where the shell will land ---
     this.crosshair = el('div', 'crosshair', root);
     el('div', 'dot', this.crosshair);
@@ -504,15 +525,13 @@ export class HUD {
       this.showPage('map');
       return;
     }
-    const rows = OPTION_ROWS.length + DEFAULT_BUDDY_NAMES.length + 1;
+    const rows = OPTION_ROWS.length + DEFAULT_BUDDY_NAMES.length + MISSIONS.length;
     if (menu.up) this.optionIndex = (this.optionIndex + rows - 1) % rows;
     if (menu.down) this.optionIndex = (this.optionIndex + 1) % rows;
     const crew = this.optionIndex - OPTION_ROWS.length;
     if (crew >= DEFAULT_BUDDY_NAMES.length) {
-      // The mission row: left/right picks, A / Enter starts it.
-      if (menu.left) this.cycleMission(-1);
-      if (menu.right) this.cycleMission(1);
-      if (menu.confirm) this.confirmMission();
+      // Level select: A / Enter starts the chosen level.
+      if (menu.confirm) this.startLevel(MISSIONS[crew - DEFAULT_BUDDY_NAMES.length].mission);
     } else if (crew >= 0) {
       if (menu.confirm || menu.right) this.startNameEdit(crew);
     } else {
@@ -624,13 +643,8 @@ export class HUD {
     this.renderOptions();
   }
 
-  private cycleMission(dir: 1 | -1): void {
-    const i = MISSIONS.findIndex((m) => m.mission === this.missionPick);
-    this.missionPick = MISSIONS[(i + dir + MISSIONS.length) % MISSIONS.length].mission;
-  }
-
-  private confirmMission(): void {
-    if (this.missionPick !== MISSION) this.onMissionStart?.(this.missionPick);
+  private startLevel(mission: Mission): void {
+    if (mission !== MISSION) this.onMissionStart?.(mission);
   }
 
   private renderOptions(): void {
@@ -697,36 +711,27 @@ export class HUD {
       }
     });
 
-    // Last row: jump to another mission (it starts from the beginning).
-    const mi = OPTION_ROWS.length + settings.buddyNames.length;
-    const pick = MISSIONS.find((m) => m.mission === this.missionPick) ?? MISSIONS[0];
-    const line = el('div', `opt mission${mi === this.optionIndex ? ' sel' : ''}`, this.optionList);
-    el('div', 'name', line, 'Mission');
-    const val = el('div', 'val', line);
-    const left = el('span', 'arrow', val, '◀');
-    const label = el('b', '', val, pick.label);
-    label.style.minWidth = '150px';
-    const right = el('span', 'arrow', val, '▶');
-    if (pick.mission !== MISSION) el('b', 'pen', val, 'START');
-    line.addEventListener('mouseenter', () => {
-      if (this.optionIndex === mi || this.nameEdit) return;
-      this.optionIndex = mi;
-      this.renderOptions();
-    });
-    for (const [arrow, dir] of [[left, -1], [right, 1]] as const) {
-      arrow.addEventListener('click', (e) => {
-        e.stopPropagation();
-        this.cycleMission(dir);
+    // Level select: one row per mission; picking another starts it from the beginning.
+    el('div', 'stencil section', this.optionList, 'LEVEL SELECT');
+    MISSIONS.forEach((level, n) => {
+      const i = OPTION_ROWS.length + settings.buddyNames.length + n;
+      const playing = level.mission === MISSION;
+      const line = el('div', `opt level${i === this.optionIndex ? ' sel' : ''}`, this.optionList);
+      el('div', 'name', line, `${level.mission} · ${level.title}`);
+      el('b', playing ? 'pen' : '', el('div', 'val', line), playing ? 'PLAYING' : 'START ▶');
+      line.addEventListener('mouseenter', () => {
+        if (this.optionIndex === i || this.nameEdit) return;
+        this.optionIndex = i;
         this.renderOptions();
       });
-    }
-    line.addEventListener('click', () => this.confirmMission());
-    if (mi === this.optionIndex) {
-      this.optionHint.textContent =
-        pick.mission === MISSION
-          ? "The mission you're playing now. Pick another with ◀ ▶."
-          : 'Press A / Enter to start this mission from the beginning (this one starts over next time).';
-    }
+      line.addEventListener('click', () => this.startLevel(level.mission));
+      if (i === this.optionIndex) {
+        this.optionHint.textContent = playing
+          ? `${level.blurb} (You're playing this one now.)`
+          : `${level.blurb} Press A / Enter to start it from the beginning.`;
+      }
+    });
+    this.optionList.querySelector('.sel')?.scrollIntoView({ block: 'nearest' });
   }
 
   showHitMarker(zone: ArmorZone): void {
@@ -936,7 +941,7 @@ export class HUD {
     });
 
     if (this.pausedOpen && this.page === 'map') {
-      const size = Math.floor(Math.min(window.innerWidth * 0.9, window.innerHeight - 230));
+      const size = Math.floor(Math.min(window.innerWidth * 0.9, window.innerHeight - 310));
       if (this.bigMapCanvas.width !== size) {
         this.bigMapCanvas.width = size;
         this.bigMapCanvas.height = size;

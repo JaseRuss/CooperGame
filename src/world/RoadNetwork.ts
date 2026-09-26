@@ -2,7 +2,10 @@ import * as THREE from 'three';
 import { TOWNS, ROAD_WIDTH, type Town } from './TownPlan';
 import { SITES, LAKES, siteEntries, distanceToSite, type Site } from './Landmarks';
 import { surfaceHeightAt } from './Terrain';
-import { FRIENDLY_BASES, BASE_RADIUS } from '../core/config';
+import { FRIENDLY_BASES, BASE_RADIUS, JUNGLE } from '../core/config';
+
+/** Road surface colour: asphalt, or packed red-brown earth on the jungle mission. */
+export const ROAD_COLOR = JUNGLE ? 0x7a5634 : 0x45484d;
 
 export const HIGHWAY_WIDTH = 11;
 const SAMPLE_STEP = 5;
@@ -231,7 +234,7 @@ export function buildHighwayMeshes(roads: Polyline[]): THREE.Object3D {
   const asphalt = new THREE.Mesh(
     ribbonGeometry(roads, HIGHWAY_WIDTH, 0.14, ASPHALT_COLUMNS),
     new THREE.MeshStandardMaterial({
-      color: 0x45484d,
+      color: ROAD_COLOR,
       roughness: 0.95,
       polygonOffset: true,
       polygonOffsetFactor: -2,
@@ -240,6 +243,8 @@ export function buildHighwayMeshes(roads: Polyline[]): THREE.Object3D {
   );
   asphalt.receiveShadow = true;
   group.add(asphalt);
+
+  if (JUNGLE) return group; // dirt tracks have no centre line
 
   const dashes: Polyline[] = [];
   for (const road of roads) {
