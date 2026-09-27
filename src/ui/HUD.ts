@@ -123,6 +123,7 @@ const HIT_MARKER_TEXT: Record<ArmorZone, { text: string; color: string }> = {
 const HIT_MARKER_TIME = 1.1;
 const BANNER_TIME = 4;
 const HULL_SEGMENTS = 20;
+const FULLSCREEN_ROW_INDEX = OPTION_ROWS.length + DEFAULT_BUDDY_NAMES.length + MISSIONS.length;
 
 const RETICLE_COLORS: Record<AimTarget, string> = {
   enemy: '#ff6a5a',
@@ -352,6 +353,7 @@ export class HUD {
   private readonly buddyChips: HTMLDivElement;
   private readonly modeText: HTMLSpanElement;
   private readonly keys: HTMLDivElement;
+  private readonly fullscreenTarget: HTMLElement;
   private readonly minimapCtx: CanvasRenderingContext2D;
   private readonly overlay: HTMLDivElement;
   private readonly tabs: Record<'map' | 'options', HTMLDivElement>;
@@ -402,6 +404,7 @@ export class HUD {
     style.textContent = STYLE;
     document.head.appendChild(style);
     const root = el('div', 'hud', container);
+    this.fullscreenTarget = container;
 
     // --- tank status card (bottom-left) ---
     const card = el('div', 'panel card', root);
@@ -524,6 +527,9 @@ export class HUD {
 
     this.optionList = el('div', 'panel options', this.pages.options);
     this.optionHint = el('div', 'hint shadow', this.pages.options);
+    document.addEventListener('fullscreenchange', () => {
+      if (this.page === 'options') this.renderOptions();
+    });
     window.addEventListener('keydown', (e) => this.onNameKey(e));
     this.footer = el('div', 'footer shadow', this.overlay);
 
@@ -601,6 +607,16 @@ export class HUD {
     return this.pausedOpen;
   }
 
+  private toggleFullscreen(): void {
+    const action = document.fullscreenElement === this.fullscreenTarget
+      ? document.exitFullscreen()
+      : this.fullscreenTarget.requestFullscreen();
+    void action.catch(() => {
+      this.optionHint.textContent = 'Fullscreen is unavailable in this browser.';
+    });
+    this.sfx('change');
+  }
+
   /** True while a buddy's name is being edited, so typed letters are text rather than controls. */
   get editingText(): boolean {
     return this.nameEdit !== null;
@@ -648,12 +664,14 @@ export class HUD {
       this.sfx('back');
       return;
     }
-    const rows = OPTION_ROWS.length + DEFAULT_BUDDY_NAMES.length + MISSIONS.length;
+    const rows = FULLSCREEN_ROW_INDEX + 1;
     if (menu.up) this.optionIndex = (this.optionIndex + rows - 1) % rows;
     if (menu.down) this.optionIndex = (this.optionIndex + 1) % rows;
     if (menu.up || menu.down) this.sfx('move');
     const crew = this.optionIndex - OPTION_ROWS.length;
-    if (crew >= DEFAULT_BUDDY_NAMES.length) {
+    if (this.optionIndex === FULLSCREEN_ROW_INDEX) {
+      if (menu.left || menu.right || menu.confirm) this.toggleFullscreen();
+    } else if (crew >= DEFAULT_BUDDY_NAMES.length) {
       // Level select: A / Enter starts the chosen level.
       if (menu.confirm) this.startLevel(MISSIONS[crew - DEFAULT_BUDDY_NAMES.length].mission);
     } else if (crew >= 0) {
@@ -862,6 +880,22 @@ export class HUD {
           : `${level.blurb} Press A / Enter to start it from the beginning.`;
       }
     });
+
+    const fullscreenLine = el('div', `opt${this.optionIndex === FULLSCREEN_ROW_INDEX ? ' sel' : ''}`, this.optionList);
+    el('div', 'name', fullscreenLine, 'Fullscreen');
+    const fullscreenValue = el('div', 'val', fullscreenLine);
+    el('span', 'arrow', fullscreenValue, '◀');
+    el('b', '', fullscreenValue, document.fullscreenElement === this.fullscreenTarget ? 'ON' : 'OFF');
+    el('span', 'arrow', fullscreenValue, '▶');
+    fullscreenLine.addEventListener('mouseenter', () => {
+      if (this.optionIndex === FULLSCREEN_ROW_INDEX) return;
+      this.optionIndex = FULLSCREEN_ROW_INDEX;
+      this.renderOptions();
+    });
+    fullscreenLine.addEventListener('click', () => this.toggleFullscreen());
+    if (this.optionIndex === FULLSCREEN_ROW_INDEX) {
+      this.optionHint.textContent = 'Play the game in fullscreen. Select again to exit fullscreen.';
+    }
     this.optionList.querySelector('.sel')?.scrollIntoView({ block: 'nearest' });
   }
 
