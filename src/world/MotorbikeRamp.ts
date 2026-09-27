@@ -1,10 +1,9 @@
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { heightAt } from './Terrain';
-import { PartBuilder } from '../utils/modelKit';
 import { plastic } from '../utils/plastic';
 
-/** A freestanding dirt kicker for bikes, placed beside (clear of) the road and the vehicle bay. */
+/** A broad, ground-level dirt kicker with a smooth approach and a proper launch lip. */
 export class MotorbikeRamp {
   constructor(world: RAPIER.World, scene: THREE.Scene, x: number, z: number, yaw: number) {
     const ground = heightAt(x, z);
@@ -13,28 +12,45 @@ export class MotorbikeRamp {
     root.rotation.y = yaw;
     scene.add(root);
 
-    const dirt = plastic(0x9a7044);
-    const dark = plastic(0x654b31);
-    const yellow = plastic(0xffcc33);
-    const parts = new PartBuilder();
-    // A long, broad kicker: the launch lip is high, facing bikes riding toward local -Z.
-    parts.add(new THREE.BoxGeometry(8, 1.15, 13), dirt, 0, 0.88, 0, 0.27);
-    parts.add(new THREE.BoxGeometry(8.1, 0.16, 1.3), dark, 0, 1.48, -5.55, 0.27);
-    parts.add(new THREE.BoxGeometry(8.25, 0.12, 0.55), yellow, 0, 1.5, -5.9, 0.27);
-    for (const side of [-1, 1]) {
-      parts.add(new THREE.BoxGeometry(0.28, 0.55, 12), dark, side * 4.1, 0.38, 0);
-      for (let i = 0; i < 5; i++) parts.add(new THREE.BoxGeometry(0.3, 0.08, 0.5), yellow, side * 4.1, 0.68, -4.5 + i * 2.1);
-    }
-    parts.buildInto(root);
+    // The wedge starts flush with ground at local +Z and rises toward the launch at -Z.
+    const halfWidth = 5.5;
+    const length = 18;
+    const rise = 3.6;
+    const verts = new Float32Array([
+      -halfWidth, 0, length / 2,  halfWidth, 0, length / 2,
+      -halfWidth, 0, -length / 2, halfWidth, 0, -length / 2,
+      -halfWidth, rise, -length / 2, halfWidth, rise, -length / 2,
+    ]);
+    // Ground, sloped deck, back face and two sides form a solid wedge.
+    const indexList = [
+      0, 2, 1, 1, 2, 3,
+      0, 1, 5, 0, 5, 4,
+      2, 4, 5, 2, 5, 3,
+      0, 4, 2, 1, 3, 5,
+    ];
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(verts, 3));
+    geometry.setIndex(indexList);
+    geometry.computeVertexNormals();
+    const deck = new THREE.Mesh(geometry, plastic(0x9a7044));
+    deck.castShadow = true;
+    deck.receiveShadow = true;
+    root.add(deck);
 
-    const body = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
-    const rotation = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw)
-      .multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), 0.27));
-    world.createCollider(
-      RAPIER.ColliderDesc.cuboid(4, 0.575, 6.5)
-        .setTranslation(x, ground + 0.88, z)
-        .setRotation({ x: rotation.x, y: rotation.y, z: rotation.z, w: rotation.w }),
-      body,
-    );
+    // Bright stripes across the upper third make the launch lip easy to spot at speed.
+    const stripeMat = plastic(0xffcc33);
+    for (const zAt of [-6.5, -7.2]) {
+      const yAt = rise * ((length / 2 - zAt) / length) + 0.05;
+      const stripe = new THREE.Mesh(new THREE.BoxGeometry(halfWidth * 1.7, 0.12, 0.3), stripeMat);
+      stripe.position.set(0, yAt, zAt);
+      stripe.rotation.x = Math.atan2(rise, length);
+      stripe.castShadow = true;
+      root.add(stripe);
+    }
+
+    const body = world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(x, ground, z).setRotation(
+      new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw),
+    ));
+    world.createCollider(RAPIER.ColliderDesc.trimesh(verts, new Uint32Array(indexList)), body);
   }
 }

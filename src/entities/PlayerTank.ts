@@ -31,7 +31,10 @@ const AA_TUBES = [-0.15, 0, 0.15].flatMap((x) => [0.07, -0.08].map((y) => [x, y]
 export type Vehicle = 'tank' | 'jeep' | 'chopper' | 'motorbike';
 const JEEP_MAX_SPEED = 36; // m/s (the tank does 22)
 const MOTORBIKE_MAX_SPEED = 62;
+const MOTORBIKE_GUN_INTERVAL = 0.085;
+const MOTORBIKE_GUN_SPREAD = 0.028;
 const JEEP_TURN_RATE = 1.3; // × the tank's
+const MOTORBIKE_TURN_RATE = 2.5; // multiplier relative to the jeep's turn rate
 /** The toy jeep is ~3.9 m long; scaled to about the tank's footprint so it fills the same collider. */
 const JEEP_SCALE = 1.15;
 /** The model's wheel radius (before JEEP_SCALE), for rolling the wheels at the right speed. */
@@ -117,6 +120,7 @@ export class PlayerTank extends Tank {
   private bikeRollAction: THREE.AnimationAction | null = null;
   private bikeHandlebar: THREE.Object3D | null = null;
   private bikeHandlebarRest = 0;
+  private readonly bikeGunMuzzle = new THREE.Object3D();
   /** Leans the chopper into its travel (and bobs it while hovering). */
   private readonly chopperTilt = new THREE.Group();
   private chopperParts!: ChopperParts;
@@ -191,6 +195,20 @@ export class PlayerTank extends Tank {
     rider.scale.setScalar(0.7);
     rider.position.set(0, 0.32, 0.3);
     this.bikeRig.add(rider);
+    const gun = new THREE.Group();
+    gun.position.set(0.34, 0.9, -0.55);
+    const gunMat = plastic(shade(ARMY_GREEN, 0.72));
+    const receiver = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.24, 0.72), gunMat);
+    gun.add(receiver);
+    for (const side of [-1, 1]) {
+      const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.055, 0.82, 8), plastic(0x252a20));
+      barrel.rotation.x = -Math.PI / 2;
+      barrel.position.set(side * 0.09, 0, -0.64);
+      gun.add(barrel);
+    }
+    this.bikeGunMuzzle.position.set(0.34, 0.9, -1.12);
+    gun.add(this.bikeGunMuzzle);
+    this.bikeRig.add(gun);
     this.bikeRig.visible = false;
     this.root.add(this.bikeRig);
   }
@@ -408,7 +426,7 @@ export class PlayerTank extends Tank {
       this.bikeAirY = null;
       this.bikeAirVelocity = 0;
     }
-    this.turnRateScale = jeep || bike ? JEEP_TURN_RATE * (bike ? 1.25 : 1) : 1;
+    this.turnRateScale = jeep ? JEEP_TURN_RATE : bike ? JEEP_TURN_RATE * MOTORBIKE_TURN_RATE : 1;
     this.lastJeepPosition.copy(this.position);
     // The chin gun can look well down at the ground (and starts off looking at it); the tank's gun can't.
     this.barrelPitchMin = chopper ? CHOPPER_PITCH_MIN : this.groundPitchMin;
@@ -452,17 +470,14 @@ export class PlayerTank extends Tank {
 
   /** Where each missile leaves and which way: the jeep's pod fires one, the chopper one off each rail. */
   get missileLaunches(): { origin: THREE.Vector3; direction: THREE.Vector3 }[] {
-    if (this.vehicleMode === 'motorbike') {
-      const origin = this.root.localToWorld(new THREE.Vector3(0, 0.45, -1.1));
-      return [{ origin, direction: this.muzzleWorldDirection }];
-    }
+    if (this.vehicleMode === 'motorbike') return [];
     if (!this.isChopper) return [this.jeepMissileLaunch];
     return this.chopperParts.rails.map((rail) => ({ origin: rail.getWorldPosition(new THREE.Vector3()), direction: this.muzzleWorldDirection }));
   }
 
   /** Where the main gun's muzzle is: the tank's cannon, the jeep's jam gun or the chopper's chin gun. */
   get gunMuzzlePosition(): THREE.Vector3 {
-    const muzzle = this.isChopper ? this.chopperParts.chinMuzzle : this.isJeep ? this.jeepMuzzle : this.muzzle;
+    const muzzle = this.vehicleMode === 'motorbike' ? this.bikeGunMuzzle : this.isChopper ? this.chopperParts.chinMuzzle : this.isJeep ? this.jeepMuzzle : this.muzzle;
     return muzzle.getWorldPosition(new THREE.Vector3());
   }
 
@@ -472,8 +487,8 @@ export class PlayerTank extends Tank {
    */
   tryRapidFire(): { origin: THREE.Vector3; direction: THREE.Vector3 } | null {
     if (this.vehicleMode === 'tank' || this.rapidCooldown > 0 || this.isGunJammed) return null;
-    this.rapidCooldown = this.isChopper ? CHOPPER_GUN_INTERVAL : JEEP_JAM_INTERVAL;
-    const spread = this.isChopper ? CHOPPER_GUN_SPREAD : JEEP_JAM_SPREAD;
+    this.rapidCooldown = this.isChopper ? CHOPPER_GUN_INTERVAL : this.vehicleMode === 'motorbike' ? MOTORBIKE_GUN_INTERVAL : JEEP_JAM_INTERVAL;
+    const spread = this.isChopper ? CHOPPER_GUN_SPREAD : this.vehicleMode === 'motorbike' ? MOTORBIKE_GUN_SPREAD : JEEP_JAM_SPREAD;
     const direction = this.muzzleWorldDirection;
     direction.x += (Math.random() - 0.5) * spread;
     direction.y += (Math.random() - 0.5) * spread * 0.5;

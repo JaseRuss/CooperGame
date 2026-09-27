@@ -986,7 +986,7 @@ export class HUD {
     const ride = state.ride;
     const chopper = ride?.vehicle === 'chopper';
     const bike = ride?.vehicle === 'motorbike';
-    this.gunName.textContent = ride ? (chopper ? 'CHIN GUN' : bike ? 'BIKE' : 'JAM GUN') : 'MAIN GUN';
+    this.gunName.textContent = ride ? (chopper ? 'CHIN GUN' : bike ? 'MACHINE GUN' : 'JAM GUN') : 'MAIN GUN';
     this.reloadFill.style.width = `${(1 - state.reloadFraction) * 100}%`;
     this.reloadText.textContent = ride ? 'RAPID FIRE' : loaded ? 'LOADED' : 'RELOADING';
     this.reloadText.style.color = ride ? (chopper ? '#ffd24a' : '#ff8aa8') : loaded ? '#ffd24a' : '#eef3f8';
@@ -995,7 +995,7 @@ export class HUD {
     // The jeep and chopper swap the homing rocket for quick-reloading missiles.
     const charge = ride ? ride.missileCharge : state.rocketCharge;
     const rocketReady = charge >= 1 && !state.rocketDamaged;
-    this.rocketName.textContent = ride ? (chopper ? 'CHOPPER MISSILES' : bike ? 'BIKE MISSILES' : 'JEEP MISSILES') : 'HOMING ROCKET';
+    this.rocketName.textContent = ride ? (chopper ? 'CHOPPER MISSILES' : 'JEEP MISSILES') : 'HOMING ROCKET';
     this.rocketFill.style.width = `${Math.floor(charge * 100)}%`;
     this.rocketText.textContent = state.rocketDamaged
       ? 'DAMAGED · REPAIR AT BASE'
@@ -1015,6 +1015,7 @@ export class HUD {
     }
     this.rocketText.style.color = state.rocketDamaged ? '#ff6a5a' : rocketReady ? '#ff9a5a' : '#eef3f8';
     this.rocketSlot.classList.toggle('ready', rocketReady);
+    this.rocketSlot.style.display = bike ? 'none' : '';
 
     const aaLocked = state.aaLockScreen !== null;
     this.aaText.textContent = state.aaRearming
@@ -1028,6 +1029,7 @@ export class HUD {
             : `${state.aaLoaded} · NO LOCK`;
     this.aaText.style.color = state.aaLoaded === 0 ? '#ff8a7a' : aaLocked ? '#8fd3ff' : '#eef3f8';
     this.aaSlot.classList.toggle('ready', aaLocked);
+    this.aaSlot.style.display = bike ? 'none' : '';
     this.setHTML(
       this.aaPips,
       Array.from({ length: state.aaMax }, (_, i) => `<div class="pip${i < state.aaLoaded ? ' on' : ''}"></div>`).join(''),
@@ -1054,14 +1056,14 @@ export class HUD {
     );
 
     const k = (key: string, what: string) => `<span class="key">${key}</span>${what}`;
-    const fire = ride ? (chopper ? 'chin gun' : 'jam gun') : 'fire';
+    const fire = ride ? (chopper ? 'chin gun' : bike ? 'machine gun' : 'jam gun') : 'fire';
     const rocket = ride ? (chopper ? 'missiles' : 'missile') : 'rocket';
     const drive = chopper ? 'fly' : 'drive';
     this.setHTML(
       this.keys,
       (state.usingGamepad
-        ? `${k('LS', drive)}${k('RS', 'aim')}${k('RT', fire)}${k('LT', 'jam')}${k('LB', rocket)}${k('RB', 'AA')}<br>${k('X', 'mega jam')}${k('Y', 'camera')}${k('Start', 'pause · options')}${k('Back', 'home')}`
-        : `${k('WASD', drive)}${k('Mouse', 'aim')}${k('Click', fire)}${k('E', 'jam')}${k('F', rocket)}${k('Q', 'AA')}<br>${k('X', 'mega jam')}${k('C', 'camera')}${k('M', 'pause · options')}${k('R', 'home')}` +
+        ? `${k('LS', drive)}${k('RS', 'aim')}${k('RT', fire)}${bike ? '' : k('LT', 'jam')}${bike ? '' : k('LB', rocket)}${bike ? '' : k('RB', 'AA')}<br>${bike ? '' : k('X', 'mega jam')}${k('Y', 'camera')}${k('Start', 'pause · options')}${k('Back', 'home')}`
+        : `${k('WASD', drive)}${k('Mouse', 'aim')}${k('Click', fire)}${bike ? '' : k('E', 'jam')}${bike ? '' : k('F', rocket)}${bike ? '' : k('Q', 'AA')}<br>${bike ? '' : k('X', 'mega jam')}${k('C', 'camera')}${k('M', 'pause · options')}${k('R', 'home')}` +
             (state.mouseCaptureHint ? '<br><span style="color:#ffd24a">Click the game to capture the mouse for aiming</span>' : '')) +
         // A gamepad press doesn't count for the browser's "user has interacted" rule, so say so.
         (state.soundLocked ? '<br><span style="color:#8fe0ff">Sound is off until you click or press a key</span>' : ''),

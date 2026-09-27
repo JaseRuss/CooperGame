@@ -101,6 +101,7 @@ export class HomeBase {
     scene: THREE.Scene,
     private readonly center: FriendlyBase,
     private readonly gateAngle: number,
+    private readonly gateAngles: number[] = [gateAngle],
   ) {
     this.groundY = heightAt(center.x, center.z);
     this.root.position.set(center.x, this.groundY, center.z);
@@ -416,8 +417,7 @@ export class HomeBase {
     let n = 0;
     rows.forEach((h, row) => {
       for (let a = (row % 2) * step * 0.5; a < Math.PI * 2; a += step) {
-        const rel = Math.atan2(Math.sin(a - this.gateAngle), Math.cos(a - this.gateAngle));
-        if (Math.abs(rel) < gapHalf) continue;
+        if (this.gateAngles.some((gate) => Math.abs(Math.atan2(Math.sin(a - gate), Math.cos(a - gate))) < gapHalf)) continue;
         const p = this.polar(a, WALL_RADIUS);
         q.setFromAxisAngle(UP, -a - Math.PI / 2);
         m.compose(new THREE.Vector3(p.x, this.gy(p.x, p.y) + h, p.y), q, s);
@@ -431,8 +431,7 @@ export class HomeBase {
     const chunk = (10 * Math.PI) / 180;
     for (let a = 0; a < Math.PI * 2; a += chunk) {
       const mid = a + chunk / 2;
-      const rel = Math.atan2(Math.sin(mid - this.gateAngle), Math.cos(mid - this.gateAngle));
-      if (Math.abs(rel) < gapHalf + chunk / 2) continue;
+      if (this.gateAngles.some((gate) => Math.abs(Math.atan2(Math.sin(mid - gate), Math.cos(mid - gate))) < gapHalf + chunk / 2)) continue;
       const p = this.polar(mid, WALL_RADIUS);
       this.solid(p.x, this.gy(p.x, p.y) + 0.7, p.y, (chunk * WALL_RADIUS) / 2, 0.7, 0.5, -mid - Math.PI / 2);
     }
@@ -451,8 +450,8 @@ export class HomeBase {
       side: THREE.DoubleSide,
     });
 
-    for (const side of [-1, 1]) {
-      const a = this.gateAngle + side * (gapHalf + 0.07);
+    for (const gateAngle of this.gateAngles) for (const side of [-1, 1]) {
+      const a = gateAngle + side * (gapHalf + 0.07);
       const p = this.polar(a, WALL_RADIUS + 1);
       const tower = this.place(p.x, p.y, this.facingCenter(p.x, p.y) + Math.PI); // +Z faces outward
 
