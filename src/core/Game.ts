@@ -267,21 +267,25 @@ function nearestOf(points: THREE.Vector3[], from: THREE.Vector3): THREE.Vector3 
 }
 
 /** Direction (x = cos, z = sin) from a base centre to where its highway leaves. */
-function gateAngle(base: { x: number; z: number }, highways: Polyline[]): number {
-  let best: { x: number; y: number } | null = null;
-  let bestDist = Infinity;
+function gateAngles(base: { x: number; z: number }, highways: Polyline[]): number[] {
+  const candidates: { angle: number; dist: number }[] = [];
   for (const road of highways) {
     for (const end of [road[0], road[road.length - 1]]) {
       const d = Math.hypot(end.x - base.x, end.y - base.z);
-      if (d < bestDist) {
-        bestDist = d;
-        best = end;
-      }
+      if (d < BASE_RADIUS * 1.35) candidates.push({ angle: Math.atan2(end.y - base.z, end.x - base.x), dist: d });
+    }
+  }
+  // Keep one opening per distinct road approach; coincident road endpoints represent the
+  // same gateway. Prefer the endpoint closest to the base when approaches nearly overlap.
+  candidates.sort((a, b) => a.dist - b.dist);
+  const gates: number[] = [];
+  for (const candidate of candidates) {
+    if (gates.every((angle) => Math.abs(Math.atan2(Math.sin(angle - candidate.angle), Math.cos(angle - candidate.angle))) > 0.30)) {
+      gates.push(candidate.angle);
     }
   }
   // No road nearby: face the middle of the map.
-  if (!best || bestDist > BASE_RADIUS * 2) return Math.atan2(-base.z, -base.x);
-  return Math.atan2(best.y - base.z, best.x - base.x);
+  return gates.length ? gates : [Math.atan2(-base.z, -base.x)];
 }
 
 export class Game {
@@ -489,10 +493,11 @@ export class Game {
     this.highways = content.highways;
     this.trees = content.trees;
     this.familyBases = FRIENDLY_BASES.map((info) => {
-      const gate = gateAngle(info, content.highways);
+      const gates = gateAngles(info, content.highways);
+      const gate = gates[0];
       return {
         info,
-        camp: new HomeBase(this.world, this.scene, info, gate),
+        camp: new HomeBase(this.world, this.scene, info, gate, gates),
         gate,
         // Face the gate: hull forward (-sin, -cos) should equal (cos gate, sin gate).
         spawnYaw: Math.atan2(-Math.cos(gate), -Math.sin(gate)),
@@ -1113,6 +1118,7 @@ export class Game {
 
   /** AA only fires with a helicopter locked, and the pod only refills back at base. */
   private tryFireAA(): void {
+    if (this.player.vehicle === 'motorbike') return;
     if (this.aa.firing) return;
     if (this.aaLoaded === 0) {
       this.hud.showCallout('AA EMPTY! RETURN TO BASE', '#8fd3ff');
@@ -1220,10 +1226,10 @@ export class Game {
     return kind === 'chopper' ? new ChopperStation(this.world, this.scene, x, z, yaw) : new JeepStation(this.world, this.scene, x, z, yaw, kind);
   }
 
-  /** Put a bike kicker beside the station, offset clear of its lane and aimed along the roadside. */
+  /** Put a bike kicker well clear of the base and roads, while keeping the launch lane open. */
   private addRampBesideStation(x: number, z: number, stationYaw: number, highways: Polyline[] = []): void {
-    // Offset sideways from the station lane, along its tangent; the kicker faces out along the road.
-    const side = 25;
+    // Offset far to either side of the base; prefer the side with more highway clearance.
+    const side = 200;
     const candidates = [-1, 1].map((s) => ({
       x: x + Math.sin(stationYaw) * side * s,
       z: z + Math.cos(stationYaw) * side * s,
@@ -1235,7 +1241,8 @@ export class Game {
     const rampX = rampAt.x;
     const rampZ = rampAt.z;
     // Aim the kicker away from its vehicle bay so a jump cannot land in the spawn lane.
-    new MotorbikeRamp(this.world, this.scene, rampX, rampZ, stationYaw - Math.PI / 2);
+    const rampYaw = stationYaw - Math.PI / 2;
+    new MotorbikeRamp(this.world, this.scene, rampX, rampZ, rampYaw);
   }
 
   private rideMinutes(kind: Station['kind']): number {
@@ -1313,7 +1320,7 @@ export class Game {
     this.missileCharge = 1;
     const time = `${minutes} minute${minutes > 1 ? 's' : ''}`;
     if (to === 'jeep') this.hud.showBanner('JEEP TIME!', `Zoom about for ${time}. Fire shoots jam, the rocket button fires missiles`);
-    else if (to === 'motorbike') this.hud.showBanner('MOTORBIKE TIME!', `Hit the ramps and pull back for backflips. Ride fast for ${time}!`);
+    else if (to === 'motorbike') this.hud.showBanner('MOTORBIKE TIME!', `Machine gun only. Hit the kicker and pull back for backflips. Ride fast for ${time}!`);
     else this.hud.showBanner('CHOPPER TIME!', `Fly about for ${time}. Fire shoots the chin gun, the rocket button fires two missiles`);
   }
 
@@ -2088,7 +2095,9 @@ export class Game {
         else if (base) this.player.teleport(base.info.x, base.info.z, base.spawnYaw);
       }
       if (input.mapTogglePressed) this.hud.toggleBigMap();
-      if (input.rocketPressed) {
+      if (input.rocketPressed && this.player.vehicle === 'motorbike') {
+        this.hud.showCallout('MACHINE GUN ONLY', '#ffd24a');
+      } else if (input.rocketPressed) {
         if (this.rocketsDamaged) {
           this.hud.showCallout(`${this.player.vehicle === 'tank' ? 'ROCKET' : 'MISSILES'} DAMAGED! REPAIR AT A HOME BASE`, '#ff6a5a');
           this.sound.play('uiBack', { volume: 0.5, minGap: 0.3 });
@@ -2096,7 +2105,7 @@ export class Game {
         else if (this.rocketCharge >= 1) this.launchRocket();
       }
       if (input.aaPressed) this.tryFireAA();
-      if (input.megaJamPressed) this.tryMegaJam();
+      if (input.megaJamPressed && this.player.vehicle !== 'motorbike') this.tryMegaJam();
       this.megaJamCharge = Math.min(1, this.megaJamCharge + dt / MEGA_JAM_RECHARGE);
       // A buddy rolls in by themselves as soon as the meter's full.
       if (this.buddyCharge >= 1 && this.buddies.length < MAX_BUDDIES) this.spawnBuddy();
@@ -2153,7 +2162,11 @@ export class Game {
     // The jeep and chopper have no cannon: the trigger fires a stream of jam rounds or chin gun rounds.
     if (input.firing && this.player.vehicle !== 'tank') {
       const round = this.player.tryRapidFire();
-      if (round && this.player.isChopper) {
+      if (round && this.player.vehicle === 'motorbike') {
+        this.impacts.muzzleFlash(round.origin, round.direction, 0.3);
+        this.sound.play('crack', { at: round.origin, volume: 0.23, rate: 2.4, minGap: 0.05 });
+        this.fireBullet(round, this.player.physicsCollider, 'player');
+      } else if (round && this.player.isChopper) {
         this.fireChinGun(round);
       } else if (round) {
         this.jam.shoot(round.origin, round.direction, JEEP_JAM_SPEED);
@@ -2161,7 +2174,7 @@ export class Game {
       }
     }
     this.updateRide(dt);
-    if (input.jamFiring) {
+    if (input.jamFiring && this.player.vehicle !== 'motorbike') {
       const glob = this.player.tryJam();
       if (glob) {
         this.jam.fire(glob.origin, glob.direction, JAM_SPEED * glob.speedScale);
@@ -2318,11 +2331,11 @@ export class Game {
       this.cameraRig.setAerial(this.player.isChopper);
       this.cameraRig.update(this.player, dt);
       aim = this.updateAim();
-      if ((this.player.vehicle !== 'tank' ? this.missileCharge >= 1 : this.rocketCharge >= 1) && !this.rocketsDamaged) {
+      if (this.player.vehicle !== 'motorbike' && (this.player.vehicle !== 'tank' ? this.missileCharge >= 1 : this.rocketCharge >= 1) && !this.rocketsDamaged) {
         const lock = this.findLockTarget();
         if (lock) lockScreen = this.toScreen(lock.position.clone().add(new THREE.Vector3(0, 1.5, 0)));
       }
-      if (this.aaLoaded > 0 && !this.aa.firing) {
+      if (this.player.vehicle !== 'motorbike' && this.aaLoaded > 0 && !this.aa.firing) {
         const heli = this.findAirTarget();
         if (heli) aaLockScreen = this.toScreen(heli.position);
       }
