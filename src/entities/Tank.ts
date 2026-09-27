@@ -122,6 +122,15 @@ export class Tank {
    * (hull, turret, gun) is merged into one mesh per shade, so the detail costs few draw calls.
    */
   private buildVisuals(color: number): void {
+    Tank.mould(color, this.root, this.turretPivot, this.barrelPivot);
+    this.muzzle.position.set(0, 0, -2.4);
+    this.barrelPivot.add(this.muzzle);
+
+    this.applyAim();
+  }
+
+  /** Moulds the hull, turret and gun in an army's plastic onto a hull root and its two pivots. */
+  private static mould(color: number, root: THREE.Object3D, turretPivot: THREE.Object3D, barrelPivot: THREE.Object3D): void {
     // The shapes are the same for every army, so they're built once and shared; only the
     // plastic differs.
     const shapes = (Tank.shapes ??= {
@@ -143,20 +152,33 @@ export class Tank {
       }
     };
 
-    dress(shapes.hull, this.root);
+    dress(shapes.hull, root);
 
-    this.turretPivot.position.set(0, HULL_HALF_EXTENTS.y + 0.02, 0.15);
-    this.root.add(this.turretPivot);
-    dress(shapes.turret, this.turretPivot);
+    turretPivot.position.set(0, HULL_HALF_EXTENTS.y + 0.02, 0.15);
+    root.add(turretPivot);
+    dress(shapes.turret, turretPivot);
 
-    this.barrelPivot.position.set(0, 0.3, -0.95);
-    this.turretPivot.add(this.barrelPivot);
-    dress(shapes.gun, this.barrelPivot);
+    barrelPivot.position.set(0, 0.3, -0.95);
+    turretPivot.add(barrelPivot);
+    dress(shapes.gun, barrelPivot);
+  }
 
-    this.muzzle.position.set(0, 0, -2.4);
-    this.barrelPivot.add(this.muzzle);
-
-    this.applyAim();
+  /**
+   * A parked toy tank for scenery (the Moon base in the zombie mission's ending): tracks on the
+   * ground at y 0, nose toward -Z, turret turned by `turretYaw`, with its commander up in the hatch.
+   */
+  static displayModel(color: number, turretYaw = 0): THREE.Group {
+    const g = new THREE.Group();
+    const hull = new THREE.Group();
+    hull.position.y = HULL_HALF_EXTENTS.y;
+    g.add(hull);
+    const turret = new THREE.Group();
+    Tank.mould(color, hull, turret, new THREE.Group());
+    turret.rotation.y = turretYaw;
+    const figure = Tank.createCommander(color);
+    figure.position.set(0.3, 0.62 - 0.86 * figure.scale.y, 0.2);
+    turret.add(figure);
+    return g;
   }
 
   private static buildHull(body: THREE.Material, dark: THREE.Material, deep: THREE.Material): PartBuilder {

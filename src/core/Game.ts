@@ -13,7 +13,9 @@ import type { Building } from '../world/Building';
 import { Bunker } from '../world/Bunker';
 import type { EnemyBase } from '../world/EnemyBase';
 import type { Fortress } from '../world/Fortress';
-import { ENEMY_BASE_HALF } from '../world/Landmarks';
+import { ENEMY_BASE_HALF, siteToWorld, siteYaw } from '../world/Landmarks';
+import { LaunchPad } from '../world/MoonRocket';
+import { MoonBase } from '../world/MoonBase';
 import type { Tree } from '../world/Tree';
 import type { LandmarkSet } from '../world/LandmarkBuilders';
 import { TOWNS } from '../world/TownPlan';
@@ -23,7 +25,7 @@ import { EnemyTank } from '../entities/EnemyTank';
 import { HelicopterEnemy } from '../entities/HelicopterEnemy';
 import { BuddyTank, RedTank, type AllyTarget, type BuddyVehicle } from '../entities/AllyTank';
 import { TroopManager } from '../entities/TroopManager';
-import { ZOMBIE_COLOR, type Shot } from '../entities/Soldier';
+import { ZOMBIE_COLOR, type Shot, type ZombieKind } from '../entities/Soldier';
 import { HitRegistry } from '../combat/HitRegistry';
 import { ProjectileManager } from '../combat/ProjectileManager';
 import { ImpactEffects } from '../combat/ImpactEffects';
@@ -170,6 +172,39 @@ const RETRY_DELAY = 4;
 const TOWN_ZOMBIES = 6;
 /** How often a flamethrower's jet burns what's in it. */
 const BURN_INTERVAL = 0.2;
+// The way out: after holding this long the moon rocket in the middle of the Fortress is ready,
+// and there's a minute to get to its launch pad.
+const ESCAPE_AT = 16 * 60;
+const ESCAPE_TIME = 60;
+/** This close to the middle of the pad (across the ground, so the chopper counts too) is aboard. */
+const PAD_REACH = 18;
+/** The pad, in the Fortress's own frame: on the road between the HQ and the comms tower. */
+const PAD_LOCAL = { x: 0, z: -6 };
+/** Zombies that close in round the player when they don't make it. */
+const OVERRUN_ZOMBIES = 40;
+const OVERRUN_PACK: ZombieKind[] = ['walker', 'walker', 'runner', 'walker', 'brute', 'walker', 'runner', 'walker'];
+/** More keep coming, a pack this often, for this long. */
+const OVERRUN_EVERY = 1.5;
+const OVERRUN_FOR = 12;
+/** Happy ending: countdown, then the rocket climbs until the cut to the Moon. */
+const COUNTDOWN = 3.2;
+const LAUNCH_SHOT = 10.5;
+const FADE_TIME = 1.2;
+/** Unhappy ending: the words come up this long after the zombies close in. */
+const OVERRUN_WORDS = 5.5;
+
+/** How the zombie mission ended: onto the rocket, or not. */
+interface Ending {
+  happy: boolean;
+  /** Why it went wrong: out of time, or the wall fell before the rocket was ready. */
+  why: 'made-it' | 'late' | 'wall';
+  phase: 'launch' | 'moon' | 'overrun';
+  timer: number;
+  /** Which way the camera looks at the pad (happy), or which side of the player it sits (not). */
+  dir: THREE.Vector3;
+  words: boolean;
+  countdown: number;
+}
 
 interface RocketSequence {
   rocket: HomingRocket;
@@ -333,6 +368,11 @@ export class Game {
   private burnTimer = 0;
   /** Where the player starts and goes home to on the zombie mission: just outside the Fortress gate. */
   private fortHome: { x: number; z: number; yaw: number } | null = null;
+  /** The moon rocket, the seconds left to reach it once it's ready, and how it all ended. */
+  private launchPad: LaunchPad | null = null;
+  private escapeLeft: number | null = null;
+  private ending: Ending | null = null;
+  private moonBase: MoonBase | null = null;
 
   constructor(container: HTMLElement) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -1391,6 +1431,9 @@ export class Game {
     }
     const c = f.center;
     const around = (r: number, a: number) => new THREE.Vector3(c.x + Math.cos(a) * r, 0, c.z + Math.sin(a) * r);
+    // The way out: the moon rocket on its pad in the middle.
+    const pad = siteToWorld(f.site, PAD_LOCAL.x, PAD_LOCAL.z);
+    this.launchPad = new LaunchPad(this.world, this.scene, pad.x, surfaceHeightAt(pad.x, pad.z), pad.z, siteYaw(f.site));
     // Pillboxes round the outside, slits facing out, skipping the roads to the gates.
     for (let i = 0; i < 12; i++) {
       const a = (i / 12) * Math.PI * 2;
@@ -1489,21 +1532,25 @@ export class Game {
   private updateLastStand(dt: number, confirm: boolean): void {
     const waves = this.waves;
     if (!waves) return;
-    if (this.gameOverTime >= 0) {
+    this.updateLaunchPad(dt);
+    // The zombies keep on coming while it ends, but the clock and the wall are done with.
+    const { started, packs } = waves.update(dt, this.troops.zombiesStanding);
+    for (const p of packs) {
+      this.troops.addZombies(p.x, p.z, p.goal, p.kinds, (k) => ZOMBIE_COLOR[k]);
+    }
+    if (this.ending) {
       this.gameOverTime += dt;
-      this.hud.setVictoryFooter(this.gameOverTime > RETRY_DELAY ? 'Press A or Enter to try again · Start / M for the level select' : '');
-      if (confirm && this.gameOverTime > RETRY_DELAY) startMission(MISSION);
+      const retry = this.ending.happy ? 'Press A or Enter to play again' : 'Press A or Enter to try again';
+      const ready = this.ending.words && this.ending.timer > (this.ending.happy ? 5 : OVERRUN_WORDS + RETRY_DELAY);
+      this.hud.setVictoryFooter(ready ? `${retry} · Start / M for the level select` : '');
+      if (confirm && ready) startMission(MISSION);
       return;
     }
     this.survived += dt;
-    const { started, packs } = waves.update(dt, this.troops.zombiesStanding);
     if (started) {
       this.sound.music.alarm();
       const from = started.from.length > 1 ? `${started.from.slice(0, -1).join(', ')} and ${started.from[started.from.length - 1]}` : started.from[0];
       this.hud.showBanner(`WAVE ${started.wave}!`, `${started.count} zombies coming from the ${from}!`);
-    }
-    for (const p of packs) {
-      this.troops.addZombies(p.x, p.z, p.goal, p.kinds, (k) => ZOMBIE_COLOR[k]);
     }
     // The crowd at the wall shares out its damage; the wall mends a little while nobody's at it.
     this.wallCrowd = THREE.MathUtils.damp(this.wallCrowd, dt > 0 ? (this.wallBlows * BLOW_TIME) / dt : 0, 1.5, dt);
@@ -1517,18 +1564,220 @@ export class Game {
       if (this.wallAlarm <= 0) this.fortStrength = Math.min(FORT_STRENGTH, this.fortStrength + FORT_REPAIR * dt);
     }
     this.wallBlows = 0;
+
+    if (this.escapeLeft === null && this.survived >= ESCAPE_AT) this.startEscape();
     if (this.fortStrength <= 0) {
-      this.gameOverTime = 0;
-      this.finalDowned = this.troops.zombiesDowned;
-      this.sound.music.stop();
-      this.sound.music.alarm();
-      const mins = Math.floor(this.survived / 60);
-      const secs = Math.floor(this.survived % 60);
-      this.hud.showDefeat(
-        'THE ZOMBIES GOT IN!',
-        `You held the Fortress for ${mins}:${String(secs).padStart(2, '0')} and made it to wave ${waves.wave}. ${this.finalDowned} zombies knocked over!`,
-      );
+      if (this.escapeLeft === null) {
+        this.startEnding('wall');
+        return;
+      }
+      // In the last minute the wall giving way doesn't end it: the zombies pour in, so hurry!
+      if (this.troops.blocked) {
+        this.troops.blocked = null;
+        this.hud.showBanner("THE WALL'S DOWN!", 'The zombies are pouring in. Run for the rocket!');
+        this.sound.music.alarm();
+      }
     }
+    if (this.escapeLeft !== null && this.launchPad) {
+      this.escapeLeft = Math.max(0, this.escapeLeft - dt);
+      const pad = this.launchPad.position;
+      if (Math.hypot(this.player.position.x - pad.x, this.player.position.z - pad.z) < PAD_REACH) this.startEnding('made-it');
+      else if (this.escapeLeft <= 0) this.startEnding('late');
+    }
+  }
+
+  /** The rocket: blinking away all mission, and its countdown, ignition and lift-off at the end. */
+  private updateLaunchPad(dt: number): void {
+    const pad = this.launchPad;
+    if (!pad) return;
+    const event = pad.update(dt);
+    if (event === 'ignition') {
+      this.sound.play('boom', { at: pad.position, volume: 1, rate: 0.6 });
+    } else if (event === 'liftoff') {
+      this.sound.play('cannon', { at: pad.position, volume: 1, rate: 0.5 });
+      this.cameraRig.addShake(0.5);
+    }
+    // The engine roars as it lights and climbs, and shakes the ground nearby.
+    if (pad.burning && pad.altitude < 900) {
+      const at = pad.position.clone().setY(pad.position.y + pad.altitude);
+      this.sound.play('launch', { at, volume: 1, rate: 0.4 + Math.random() * 0.08, fadeAfter: 1.6, minGap: 1.1 });
+      if (pad.altitude < 150) this.cameraRig.addShake((1.2 * dt) / Math.max(1, at.distanceTo(this.camera.position) / 40));
+    }
+  }
+
+  /** Sixteen minutes held: the rocket's ready, and there's a minute to get to it. */
+  private startEscape(): void {
+    this.escapeLeft = ESCAPE_TIME;
+    this.launchPad?.setReady();
+    this.sound.music.alarm();
+    this.sound.play('uiOpen', { volume: 0.6 });
+    this.hud.showBanner("THE MOON ROCKET'S READY!", `Everyone to the launch pad in the middle of the Fortress. You've got ${ESCAPE_TIME} seconds!`);
+  }
+
+  /**
+   * The end of the zombie mission. Made it: everyone's aboard, the rocket blasts off and we cut to
+   * the party at the Moon base. Didn't: the zombies close in round the player while the rocket
+   * goes without them.
+   */
+  private startEnding(why: Ending['why']): void {
+    const pad = this.launchPad;
+    if (!pad) return;
+    const happy = why === 'made-it';
+    const p = this.player.position;
+    // Made it: watch from out on the tan side of the parade ground, clear of the comms tower.
+    // Didn't: from behind the player, looking back toward the rocket.
+    const f = this.fortress;
+    const view = siteToWorld(f.site, -0.55, 0.83);
+    const away = happy
+      ? new THREE.Vector3(view.x - f.site.cx, 0, view.z - f.site.cz)
+      : new THREE.Vector3(p.x - pad.position.x, 0, p.z - pad.position.z);
+    if (away.lengthSq() < 1e-4) away.set(0, 0, 1);
+    away.normalize();
+    this.ending = { happy, why, phase: happy ? 'launch' : 'overrun', timer: 0, dir: away, words: false, countdown: 4 };
+    this.gameOverTime = 0;
+    this.finalDowned = this.troops.zombiesDowned;
+    this.rocketSeq = null;
+    this.player.invulnerable = true;
+    this.sound.music.stop();
+    // Nobody's holding them back any more.
+    this.troops.blocked = null;
+    if (happy) {
+      // Aboard: the tank's parked up out of sight, and the countdown starts.
+      this.player.root.visible = false;
+      pad.launch(COUNTDOWN);
+      this.moonBase = new MoonBase();
+      return;
+    }
+    // Didn't make it. A chopper comes down to the ground so the zombies can get at it.
+    pad.setReady();
+    pad.launch(1.5);
+    this.sound.music.alarm();
+    if (this.player.isChopper) {
+      this.player.setVehicle('tank');
+      this.player.teleport(p.x, p.z);
+      this.impacts.changePuff(this.player.position.clone(), 1);
+    }
+    // Zombies close in from every side, some of the big ones too.
+    const packs = OVERRUN_ZOMBIES / OVERRUN_PACK.length;
+    for (let i = 0; i < packs; i++) this.overrunPack((i / packs) * Math.PI * 2 + Math.random() * 0.5);
+  }
+
+  /** A pack of zombies coming at the player from `angle`, for the unhappy ending. */
+  private overrunPack(angle: number): void {
+    const p = this.player.position;
+    const r = 14 + Math.random() * 14;
+    this.troops.addZombies(p.x + Math.cos(angle) * r, p.z + Math.sin(angle) * r, new THREE.Vector2(p.x, p.z), OVERRUN_PACK, (k) => ZOMBIE_COLOR[k]);
+  }
+
+  /** Runs the ending's cutscene in the world. Returns true while it has the camera. */
+  private updateEnding(dt: number): boolean {
+    const e = this.ending;
+    const pad = this.launchPad;
+    if (!e || !pad || e.phase === 'moon') return false;
+    e.timer += dt;
+    const t = e.timer;
+    const up = new THREE.Vector3(0, 1, 0);
+    if (e.phase === 'launch') {
+      // A countdown, then watch it go from out on the parade ground, tilting up as it climbs.
+      const left = Math.ceil(COUNTDOWN - t);
+      if (left < e.countdown && left >= 1) {
+        e.countdown = left;
+        this.hud.showBanner(`${left}…`, left === 3 ? 'Everybody aboard! Strap in!' : '');
+        this.sound.play('uiMove', { volume: 0.7, rate: 0.8 });
+      } else if (left <= 0 && e.countdown > 0) {
+        e.countdown = 0;
+        this.hud.showBanner('BLAST OFF!', 'Next stop: the Moon!');
+      }
+      const side = new THREE.Vector3().crossVectors(up, e.dir);
+      const cam = pad.position.clone().addScaledVector(e.dir, 56).addScaledVector(side, 6);
+      cam.y = pad.position.y + 7 - Math.min(4, t * 0.4);
+      const look = pad.flying ? pad.middle.lerp(pad.tip, 0.4) : pad.middle;
+      this.cameraRig.updateCinematic(cam, look, dt, pad.flying ? 6 : 2.5);
+      const fade = (t - LAUNCH_SHOT) / FADE_TIME;
+      this.hud.setFade(THREE.MathUtils.clamp(fade, 0, 1));
+      if (fade >= 1) {
+        e.phase = 'moon';
+        e.timer = 0;
+      }
+      return true;
+    }
+    // The zombies close in and the rocket goes without us: the camera starts low behind the tank
+    // with the rocket beyond it, then rises and pulls back to show the horde.
+    if (t < OVERRUN_FOR && Math.floor(t / OVERRUN_EVERY) !== Math.floor((t - dt) / OVERRUN_EVERY)) this.overrunPack(Math.random() * Math.PI * 2);
+    const p = this.player.position;
+    const toRocket = e.dir.clone().negate();
+    const side = new THREE.Vector3().crossVectors(up, toRocket);
+    const d = Math.min(26, 11 + t * 1.1);
+    const cam = p.clone().addScaledVector(toRocket, -d).addScaledVector(side, d * 0.45);
+    cam.y = Math.max(surfaceHeightAt(cam.x, cam.z) + 2, p.y + 3 + Math.min(10, t * 0.8));
+    const toPlayer = p.clone().addScaledVector(up, 1.2).sub(cam).normalize();
+    const toRocketCam = pad.middle.sub(cam).normalize();
+    const look = cam.clone().addScaledVector(toPlayer.multiplyScalar(0.55).addScaledVector(toRocketCam, 0.45).normalize(), 20);
+    this.cameraRig.updateCinematic(cam, look, dt, 3);
+    if (!e.words && t > OVERRUN_WORDS) {
+      e.words = true;
+      const clock = `${Math.floor(this.survived / 60)}:${String(Math.floor(this.survived % 60)).padStart(2, '0')}`;
+      if (e.why === 'wall') {
+        this.hud.showEnding(
+          false,
+          'THE ZOMBIES GOT IN!',
+          `The wall fell before the rocket was ready, and the last crew had to blast off without you… You held out for ${clock}, to wave ${this.waves?.wave ?? 0}, and knocked over ${this.finalDowned} zombies.`,
+        );
+      } else {
+        this.hud.showEnding(false, 'THE ZOMBIES GOT YOU!', `The rocket blasted off to the Moon without you… You held the Fortress for ${clock} and knocked over ${this.finalDowned} zombies.`);
+      }
+    }
+    return true;
+  }
+
+  /** The Moon base party, drawn instead of the world: fades in from white, then the words and a fanfare. */
+  private updateMoon(dt: number): void {
+    const e = this.ending;
+    const moon = this.moonBase;
+    if (!e || !moon) return;
+    e.timer += dt;
+    this.hud.setFade(Math.max(0, 1 - e.timer / 1.5));
+    if (!e.words && e.timer > 2) {
+      e.words = true;
+      const clock = `${Math.floor(this.survived / 60)}:${String(Math.floor(this.survived % 60)).padStart(2, '0')}`;
+      this.hud.showEnding(true, 'MISSION ACCOMPLISHED!', `Everyone made it to the Moon base! You held the Fortress for ${clock} and knocked over ${this.finalDowned} zombies.`);
+      this.sound.music.fanfare();
+    }
+    if (moon.update(dt, this.camera)) {
+      this.sound.play('crack', { volume: 0.25, rate: 1.3 + Math.random() * 0.4, minGap: 0.2 });
+      this.sound.play('boom', { volume: 0.2, rate: 1.6, minGap: 0.2 });
+    }
+  }
+
+  /** In the last minute: an arrow to the rocket, over it on screen or pinned to the edge pointing its way. */
+  private rocketWaypoint(): HUDState['waypoint'] {
+    const pad = this.launchPad;
+    if (!pad || this.escapeLeft === null || this.ending) return null;
+    const view = pad.middle.applyMatrix4(this.camera.matrixWorldInverse);
+    let x = view.x;
+    let y = view.y;
+    let onScreen = false;
+    if (view.z < -1) {
+      const ndc = pad.middle.project(this.camera);
+      x = ndc.x;
+      y = ndc.y;
+      onScreen = Math.abs(x) < 0.92 && Math.abs(y) < 0.8;
+    } else {
+      y = -Math.abs(y) - 0.2 * Math.abs(x) - 1e-3; // behind: point down and round, "turn around"
+    }
+    if (!onScreen) {
+      const k = Math.max(Math.abs(x) / 0.9, Math.abs(y) / 0.75);
+      x /= k;
+      y /= k;
+    }
+    const distance = Math.hypot(this.player.position.x - pad.position.x, this.player.position.z - pad.position.z);
+    return {
+      x: ((x + 1) / 2) * window.innerWidth,
+      y: ((1 - y) / 2) * window.innerHeight,
+      onScreen,
+      angle: Math.atan2(-y, x),
+      label: `ROCKET ${Math.round(distance)} m`,
+    };
   }
 
   // ---------- aiming / HUD helpers ----------
@@ -1660,6 +1909,11 @@ export class Game {
             downed: this.gameOverTime >= 0 ? this.finalDowned : this.troops.zombiesDowned,
             atWall: this.wallAlarm > 0,
             over: this.gameOverTime >= 0,
+            rocketIn: Math.max(0, ESCAPE_AT - this.survived),
+            escapeLeft: this.escapeLeft,
+            rocketDistance: this.launchPad
+              ? Math.hypot(this.player.position.x - this.launchPad.position.x, this.player.position.z - this.launchPad.position.z)
+              : 0,
           }
         : null,
       health: this.player.health,
@@ -1693,6 +1947,8 @@ export class Game {
       soundLocked: this.sound.locked && (this.settings.sfxVolume > 0 || this.settings.musicVolume > 0),
       buddyMax: MAX_BUDDIES,
       cinematic,
+      cinematicLabel: this.ending ? '' : '● ROCKET CAM',
+      waypoint: cinematic ? null : this.rocketWaypoint(),
       enemyBasesLeft: this.enemyBases.filter((b) => !b.isDestroyed).length,
       enemyBasesTotal: this.enemyBases.length,
       nearbyBase: checklist,
@@ -1722,12 +1978,24 @@ export class Game {
       if (rawInput.mapTogglePressed && this.hud.paused) this.hud.toggleBigMap();
       this.sound.updateEngine(0, this.player.vehicle, false);
       this.hud.update(this.hudState(rawInput, false, { screen: null, range: null, target: 'none' }, null));
-      this.renderer.render(this.scene, this.camera);
+      this.renderer.render(this.ending?.phase === 'moon' && this.moonBase ? this.moonBase.scene : this.scene, this.camera);
       return;
     }
 
-    const inSequence = this.rocketSeq !== null;
-    // The tank sits still (and can't be hurt) while the rocket cam plays.
+    // The zombie mission's happy ending: the world's left behind for the party on the Moon.
+    if (this.ending?.phase === 'moon' && this.moonBase) {
+      if (rawInput.mapTogglePressed) this.hud.toggleBigMap();
+      this.updateMoon(dt);
+      this.updateLastStand(dt, rawInput.menu.confirm);
+      this.sound.updateEngine(0, this.player.vehicle, false);
+      this.sound.setListener(this.camera);
+      this.hud.update(this.hudState(rawInput, true, { screen: null, range: null, target: 'none' }, null));
+      this.renderer.render(this.moonBase.scene, this.camera);
+      return;
+    }
+
+    // The tank sits still (and can't be hurt) while the rocket cam or the zombie mission's ending plays.
+    const inSequence = this.rocketSeq !== null || this.ending !== null;
     const input = inSequence
       ? { ...rawInput, throttle: 0, steer: 0, moveX: 0, moveY: 0, aimYawDelta: 0, aimPitchDelta: 0, firing: false, jamFiring: false }
       : rawInput;
@@ -1754,6 +2022,8 @@ export class Game {
       if (this.buddyCharge >= 1 && this.buddies.length < MAX_BUDDIES) this.spawnBuddy();
       this.addRocketCharge(dt / ROCKET_RECHARGE_TIME);
       this.buddyCharge = Math.min(1, this.buddyCharge + dt / BUDDY_RECHARGE_TIME);
+    } else if (this.ending && input.mapTogglePressed) {
+      this.hud.toggleBigMap(); // the level select, from the end screen
     }
     this.player.setRocketReady(this.rocketCharge >= 1 && !this.rocketSeq && !this.rocketsDamaged);
 
@@ -1945,7 +2215,7 @@ export class Game {
       this.impacts.splash(bow, 0.3);
     }
 
-    const cinematic = this.updateRocketSequence(dt);
+    const cinematic = this.updateEnding(dt) || this.updateRocketSequence(dt);
     let aim: ReturnType<Game['updateAim']> = { screen: null, range: null, target: 'none' };
     let lockScreen: { x: number; y: number } | null = null;
     let aaLockScreen: { x: number; y: number } | null = null;

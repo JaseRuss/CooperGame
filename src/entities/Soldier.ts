@@ -127,8 +127,8 @@ function rifle(x: number, y: number, z: number): THREE.BufferGeometry[] {
   ];
 }
 
-/** Everything from the hips up, with the hips at height y. */
-function upperBody(y: number): THREE.BufferGeometry[] {
+/** Everything from the hips up, with the hips at height y. `cheer` holds the rifle up overhead in both hands. */
+function upperBody(y: number, cheer = false): THREE.BufferGeometry[] {
   const v = (x: number, yy: number, z: number) => v3(x, y + yy, z);
   const helmet = new THREE.SphereGeometry(0.2, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2).scale(1, 0.9, 1.05);
   helmet.translate(0, y + 0.72, 0);
@@ -157,12 +157,27 @@ function upperBody(y: number): THREE.BufferGeometry[] {
     helmet,
     new THREE.CylinderGeometry(0.23, 0.25, 0.035, 16).translate(0, y + 0.72, 0.01), // flared brim
     new THREE.TorusGeometry(0.2, 0.014, 4, 18).rotateX(Math.PI / 2).translate(0, y + 0.78, 0), // net band
-    // Arms bent to hold the rifle: right hand on the grip, left under the fore-end.
-    ...jointed(v(0.25, 0.53, 0.01), v(0.33, 0.36, -0.05), v(0.14, 0.44, -0.2), 0.065),
-    ...jointed(v(-0.25, 0.53, 0.01), v(-0.18, 0.37, -0.34), v(0.1, 0.46, -0.58), 0.065),
-    ball(0.06, v(0.14, 0.44, -0.2)),
-    ball(0.06, v(0.1, 0.46, -0.58)),
-    ...rifle(0.12, y + 0.52, 0),
+    ...(cheer ? cheeringArms(y) : [
+      // Arms bent to hold the rifle: right hand on the grip, left under the fore-end.
+      ...jointed(v(0.25, 0.53, 0.01), v(0.33, 0.36, -0.05), v(0.14, 0.44, -0.2), 0.065),
+      ...jointed(v(-0.25, 0.53, 0.01), v(-0.18, 0.37, -0.34), v(0.1, 0.46, -0.58), 0.065),
+      ball(0.06, v(0.14, 0.44, -0.2)),
+      ball(0.06, v(0.1, 0.46, -0.58)),
+      ...rifle(0.12, y + 0.52, 0),
+    ]),
+  ];
+}
+
+/** Both arms flung up in a V, the rifle held high across the hands: hooray! */
+function cheeringArms(y: number): THREE.BufferGeometry[] {
+  const v = (x: number, yy: number, z: number) => v3(x, y + yy, z);
+  const gun = mergeGeometries(rifle(0, 0, 0.43)).rotateY(Math.PI / 2).translate(0.05, y + 1.1, -0.06);
+  return [
+    ...jointed(v(0.25, 0.53, 0.01), v(0.4, 0.8, -0.02), v(0.34, 1.06, -0.06), 0.065),
+    ...jointed(v(-0.25, 0.53, 0.01), v(-0.4, 0.8, -0.02), v(-0.34, 1.06, -0.06), 0.065),
+    ball(0.06, v(0.34, 1.06, -0.06)),
+    ball(0.06, v(-0.34, 1.06, -0.06)),
+    gun,
   ];
 }
 
@@ -183,6 +198,20 @@ function standingFigure(): THREE.BufferGeometry {
     ...jointed(frontAnkle, v3(-0.12, 0.52, -0.15), v3(-0.1, 0.93, -0.02), 0.095),
     ...jointed(backAnkle, v3(0.11, 0.53, 0.14), v3(0.1, 0.93, 0.02), 0.095),
     ...upperBody(0.95),
+  ]);
+}
+
+/** Standing, arms up, rifle held high over the head (the Moon base party at the end of the zombie mission). */
+function cheeringFigure(): THREE.BufferGeometry {
+  const frontAnkle = v3(-0.14, 0.13, -0.1);
+  const backAnkle = v3(0.14, 0.13, 0.08);
+  return mergeGeometries([
+    stand(),
+    ...boot(frontAnkle),
+    ...boot(backAnkle),
+    ...jointed(frontAnkle, v3(-0.13, 0.53, -0.08), v3(-0.1, 0.93, -0.01), 0.095),
+    ...jointed(backAnkle, v3(0.13, 0.53, 0.06), v3(0.1, 0.93, 0.01), 0.095),
+    ...upperBody(0.95, true),
   ]);
 }
 
@@ -339,6 +368,15 @@ const MUZZLE_HEIGHT = [1.49, 1.14];
 /** A static army-man figure (0 = standing, 1 = kneeling) in the given plastic colour, e.g. for base guards. */
 export function createFigureMesh(pose: 0 | 1, color: number): THREE.Mesh {
   const mesh = new THREE.Mesh(FIGURES[pose], plastic(color));
+  mesh.castShadow = true;
+  return mesh;
+}
+
+let cheering: THREE.BufferGeometry | null = null;
+
+/** A cheering army man (arms up, rifle overhead) in the given plastic colour, standing on his stand at y 0. */
+export function createCheeringFigure(color: number): THREE.Mesh {
+  const mesh = new THREE.Mesh((cheering ??= cheeringFigure()), plastic(color));
   mesh.castShadow = true;
   return mesh;
 }

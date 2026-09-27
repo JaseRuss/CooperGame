@@ -38,6 +38,22 @@ export interface ZombieHUD {
   /** Zombies are battering the wall right now. */
   atWall: boolean;
   over: boolean;
+  /** Seconds until the rocket's ready to go. */
+  rocketIn: number;
+  /** Once it's ready: seconds left to reach the launch pad (null before then). */
+  escapeLeft: number | null;
+  /** Metres from the player to the launch pad. */
+  rocketDistance: number;
+}
+
+/** A marker pointing the way to somewhere: on screen over it, or pinned to the edge toward it. */
+export interface Waypoint {
+  x: number;
+  y: number;
+  onScreen: boolean;
+  /** Direction to point when off screen (radians, screen space, 0 = right, clockwise). */
+  angle: number;
+  label: string;
 }
 
 export interface HUDState {
@@ -84,6 +100,10 @@ export interface HUDState {
   buddyMax: number;
   /** True while the rocket cam / explosion replay is playing. */
   cinematic: boolean;
+  /** The tag in the corner of a cinematic ("● ROCKET CAM"), or '' for none. */
+  cinematicLabel: string;
+  /** The way to the launch pad, in the zombie mission's last minute. */
+  waypoint: Waypoint | null;
   enemyBasesLeft: number;
   enemyBasesTotal: number;
   /** When close to an enemy base: what still needs destroying there. */
@@ -246,6 +266,19 @@ const STYLE = `
 .hud .victory .big { font-size:72px; color:#ffd24a; text-shadow:0 4px 14px #000, 0 0 30px rgba(255,200,60,0.7); }
 .hud .victory.defeat { background:radial-gradient(ellipse at center, rgba(60,90,40,0.55), rgba(20,0,30,0.7)); }
 .hud .victory.defeat .big { color:#c8ff7a; text-shadow:0 4px 14px #000, 0 0 30px rgba(120,255,80,0.6); }
+.hud .victory.ending { justify-content:flex-start; padding-top:12vh; gap:10px; background:linear-gradient(rgba(0,0,0,0.55), rgba(0,0,0,0) 38%); }
+.hud .victory.ending.defeat { background:radial-gradient(ellipse at center, rgba(0,0,0,0) 35%, rgba(40,90,20,0.55)), linear-gradient(rgba(0,0,0,0.6), rgba(0,0,0,0) 40%); }
+.hud .victory.ending .big { font-size:64px; }
+.hud .fade { position:absolute; inset:0; opacity:0; pointer-events:none; background:#fff; }
+.hud .zrocket { margin-top:4px; font-size:13px; letter-spacing:1px; color:#ffb36a; }
+.hud .zrocket b { color:#ffd24a; font-weight:400; }
+.hud .zrocket.go { font-size:17px; color:#ff6a5a; animation:hudPulse 0.4s ease-in-out infinite alternate; }
+.hud .waypoint { position:absolute; left:0; top:0; display:none; pointer-events:none; }
+.hud .waypoint .arrow { position:absolute; left:-13px; top:-30px; width:0; height:0; border-left:13px solid transparent; border-right:13px solid transparent;
+  border-top:22px solid #ff6a5a; filter:drop-shadow(0 2px 3px #000); animation:hudPulse 0.4s ease-in-out infinite alternate; }
+.hud .waypoint span { position:absolute; left:50%; top:-58px; transform:translateX(-50%); white-space:nowrap; font-size:15px; color:#ffd24a; letter-spacing:1px; }
+.hud .waypoint.off .arrow { left:-11px; top:-13px; border-left:22px solid #ff6a5a; border-top:13px solid transparent; border-bottom:13px solid transparent; border-right:0; transform-origin:11px 13px; }
+.hud .waypoint.off span { top:18px; }
 .hud .zwall { width:260px; margin:5px auto 0; }
 .hud .zwall .bar { height:10px; }
 .hud .zstats { display:flex; gap:14px; justify-content:center; margin-top:5px; font-size:11.5px; font-weight:800; letter-spacing:0.5px; }
@@ -344,6 +377,9 @@ export class HUD {
   private readonly victoryBig: HTMLDivElement;
   private readonly victoryText: HTMLDivElement;
   private readonly victoryFooter: HTMLDivElement;
+  private readonly waypoint: HTMLDivElement;
+  private readonly waypointLabel: HTMLSpanElement;
+  private readonly fade: HTMLDivElement;
   private onMissionStart: ((m: Mission) => void) | null = null;
   /** Plays a menu click (see setSoundHook). */
   private soundHook: ((kind: MenuSound) => void) | null = null;
@@ -514,6 +550,15 @@ export class HUD {
     this.heliTagText = this.heliTag.querySelector('span') as HTMLSpanElement;
 
     this.promptLabel = el('div', 'prompt shadow', root);
+
+    // --- the way to the launch pad (zombie mission's last minute) ---
+    this.waypoint = el('div', 'waypoint');
+    root.insertBefore(this.waypoint, this.overlay);
+    el('div', 'arrow', this.waypoint);
+    this.waypointLabel = el('span', 'stencil shadow', this.waypoint);
+
+    // --- a full-screen fade, for cutting between cutscene shots ---
+    this.fade = el('div', 'fade', root);
 
     // --- victory screen ---
     this.victory = el('div', 'victory', root);
@@ -855,6 +900,23 @@ export class HUD {
     this.showVictory(message, '');
   }
 
+  /**
+   * The zombie mission's cutscene endings: the words sit at the top so the scene shows through.
+   * `happy` is the Moon base; otherwise the zombies got you.
+   */
+  showEnding(happy: boolean, title: string, message: string): void {
+    this.victoryBig.textContent = title;
+    this.victory.classList.add('ending');
+    this.victory.classList.toggle('defeat', !happy);
+    this.showVictory(message, '');
+  }
+
+  /** Covers the screen in `color` (0 = clear, 1 = solid), for fading between cutscene shots. */
+  setFade(opacity: number, color = '#ffffff'): void {
+    this.fade.style.opacity = `${opacity}`;
+    this.fade.style.background = color;
+  }
+
   setVictoryFooter(text: string): void {
     this.victoryFooter.textContent = text;
   }
@@ -994,8 +1056,18 @@ export class HUD {
 
     // Rocket cam: letterbox, hide the regular HUD.
     for (const bar of this.letterbox) bar.style.height = state.cinematic ? '9vh' : '0';
-    this.cinematicLabel.style.display = state.cinematic ? 'block' : 'none';
+    this.cinematicLabel.style.display = state.cinematic && state.cinematicLabel ? 'block' : 'none';
+    this.cinematicLabel.textContent = state.cinematicLabel;
     for (const bit of this.hudBits) bit.style.visibility = state.cinematic ? 'hidden' : 'visible';
+
+    const way = state.cinematic || this.pausedOpen ? null : state.waypoint;
+    this.waypoint.style.display = way ? 'block' : 'none';
+    if (way) {
+      this.waypoint.classList.toggle('off', !way.onScreen);
+      this.waypoint.style.transform = `translate(${way.x}px, ${way.y}px)`;
+      (this.waypoint.firstChild as HTMLDivElement).style.transform = way.onScreen ? '' : `rotate(${way.angle}rad)`;
+      this.waypointLabel.textContent = way.label;
+    }
 
     if (state.cinematic || this.pausedOpen) {
       this.crosshair.style.display = 'none';
@@ -1089,8 +1161,13 @@ export class HUD {
         ? `ZOMBIES COMING IN <span style="color:#c8ff7a">${Math.ceil(z.nextWaveIn)}</span>`
         : `WAVE <span style="color:#c8ff7a">${z.wave}</span> · NEXT IN ${Math.ceil(z.nextWaveIn)}`;
     const wall = z.atWall && !z.over ? '<span class="zalarm">ZOMBIES AT THE WALL!</span>' : 'FORTRESS WALL';
+    const rocket =
+      z.escapeLeft !== null
+        ? `<div class="stencil zrocket go">GET TO THE ROCKET! <b>${clock(Math.ceil(z.escapeLeft))}</b> · ${Math.round(z.rocketDistance)} m</div>`
+        : `<div class="stencil zrocket">MOON ROCKET READY IN <b>${clock(Math.ceil(z.rocketIn))}</b></div>`;
     return (
       `<div class="stencil title">${title}</div>` +
+      (z.over ? '' : rocket) +
       `<div class="zwall"><div class="row-label" style="margin:0 0 3px">${wall}<span>${Math.ceil(frac * 100)}%</span></div>` +
       `<div class="bar"><div class="fill" style="width:${frac * 100}%; background:${color}"></div></div></div>` +
       `<div class="zstats"><span>HELD <b>${clock(z.survived)}</b></span><span>ZOMBIES <b>${z.standing}</b></span><span>KNOCKED OVER <b>${z.downed}</b></span></div>` +

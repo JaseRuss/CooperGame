@@ -5,7 +5,8 @@ A Claude Code project to build an army men game for Cooper.
 A toy-soldier tank sandbox that runs in the browser. Drive a green plastic tank
 around a big open world, flatten the five tan enemy bases, and head back to a
 family base to repair. You can't be destroyed, so there's no game over, except
-in the last level, where the zombies can break into the Fortress.
+in the last level, where the zombies can break into the Fortress before you
+escape to the Moon.
 
 Built with [Three.js](https://threejs.org/), [Rapier](https://rapier.rs/) physics,
 TypeScript and [Vite](https://vite.dev/). See [Credits](#credits) for where the ready-made
@@ -249,11 +250,19 @@ hanging about. Drive into the Fortress to repair and rearm, and press Back / R t
 get back there.
 
 Zombies that reach the Fortress wall batter it, and the wall's strength bar at
-the top of the screen goes down (it mends slowly while they're kept off). When it
-runs out, the zombies are in and the game is over. Nobody can hold them off
-forever: most games end somewhere around 15 minutes. The screen shows how long
-you held out, which wave you reached and how many zombies you knocked over. Press
-A or Enter to try again.
+the top of the screen goes down (it mends slowly while they're kept off). If it
+runs out, the zombies are in and the game is over.
+
+The way out is the big **moon rocket** on its launch pad in the middle of the
+Fortress. The panel at the top counts down until it's ready. Hold the wall for
+**16 minutes** and searchlights light up over the pad: you then have **one
+minute** to get onto it (an arrow on screen points the way). If the wall gives way
+in that last minute the zombies pour in, but you can still make it. Reach the pad
+and the rocket blasts off, and the ending shows everyone celebrating at a Moon base
+under a "MISSION ACCOMPLISHED" banner. Don't make it, or lose the wall before the
+rocket's ready, and the zombies close in round your tank while the rocket leaves
+without you. The end screen shows how long you held out and how many zombies you
+knocked over. Press A or Enter to play again.
 
 ## Level select
 
