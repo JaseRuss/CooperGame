@@ -61,6 +61,30 @@ function smoothstep(t: number): number {
   return t * t * (3 - 2 * t);
 }
 
+interface JumpHill {
+  x: number;
+  z: number;
+  height: number;
+  spread: number;
+}
+
+/** Broad, steep-sided natural mounds seeded per mission, placed clear of bases, towns, sites and lakes. */
+const JUMP_HILLS: JumpHill[] = (() => {
+  const rng = mulberry32(WORLD_SEED ^ 0x4a554d50);
+  const hills: JumpHill[] = [];
+  for (let tries = 0; tries < 1800 && hills.length < 28; tries++) {
+    const x = (rng() * 2 - 1) * (WORLD_SIZE / 2 - 220);
+    const z = (rng() * 2 - 1) * (WORLD_SIZE / 2 - 220);
+    if (FRIENDLY_BASES.some((b) => Math.hypot(x - b.x, z - b.z) < 240)) continue;
+    if (TOWNS.some((t) => Math.hypot(x - t.cx, z - t.cz) < 180)) continue;
+    if (SITES.some((s) => Math.hypot(x - s.cx, z - s.cz) < 180)) continue;
+    if (LAKES.some((l) => Math.hypot(x - l.cx, z - l.cz) < l.radius + 110)) continue;
+    if (hills.some((h) => Math.hypot(x - h.x, z - h.z) < 150)) continue;
+    hills.push({ x, z, height: 11 + rng() * 7, spread: 32 + rng() * 15 });
+  }
+  return hills;
+})();
+
 /** World-space terrain height (meters) at (x, z): flattened under towns/sites/base, carved for lakes. */
 export function heightAt(x: number, z: number): number {
   let h = rawHeight(x, z);
@@ -103,6 +127,12 @@ export function heightAt(x: number, z: number): number {
       const s = smoothstep(Math.max(0, d - BASE_FLAT_RADIUS) / BASE_BLEND);
       h = baseHeights[i] * (1 - s) + h * s;
     }
+  }
+
+  // Rounded but pronounced terrain shoulders give fast vehicles natural launch slopes.
+  for (const hill of JUMP_HILLS) {
+    const d = Math.hypot(x - hill.x, z - hill.z);
+    h += hill.height * Math.exp(-(d * d) / (2 * hill.spread * hill.spread));
   }
 
   return h;

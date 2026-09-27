@@ -199,7 +199,7 @@ export class Sound {
     if (this.ctx.state !== 'running') return;
     const e = (this.engine ??= this.buildEngine());
     const t = this.ctx.currentTime;
-    const jeep = vehicle === 'jeep';
+    const jeep = vehicle === 'jeep' || vehicle === 'motorbike';
     if (vehicle === 'chopper') {
       // The rotor: a deep note chopped up by the blades going round, a little quicker when flying fast.
       const pace = clamp(speed / 40, 0, 1.3);

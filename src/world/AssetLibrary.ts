@@ -153,6 +153,8 @@ function prepareMaterials(obj: THREE.Object3D): void {
 /** Loads and caches every GLB model used to populate the world. */
 export class AssetLibrary {
   private readonly models = new Map<string, THREE.Object3D>();
+  private motorbike: THREE.Object3D | null = null;
+  private motorbikeAnimations: THREE.AnimationClip[] = [];
 
   async load(onProgress?: (loaded: number, total: number) => void): Promise<void> {
     const manager = new THREE.LoadingManager();
@@ -163,7 +165,7 @@ export class AssetLibrary {
       MANIFEST[group].names.map((name) => ({ group, name, url: `${import.meta.env.BASE_URL}models/${MANIFEST[group].dir}/${name}.glb` })),
     );
     let loaded = 0;
-    const total = jobs.length;
+    const total = jobs.length + 1;
 
     const requests = jobs.map((job) => new Promise<void>((resolve, reject) => {
       loader.load(job.url, (gltf) => {
@@ -176,7 +178,24 @@ export class AssetLibrary {
       }, undefined, reject);
     }));
 
+    requests.push(new Promise<void>((resolve, reject) => {
+      loader.load(`${import.meta.env.BASE_URL}models/motorbike.glb`, (gltf) => {
+        enableShadows(gltf.scene);
+        prepareMaterials(gltf.scene);
+        this.motorbike = gltf.scene;
+        this.motorbikeAnimations = gltf.animations;
+        loaded += 1;
+        onProgress?.(loaded, total);
+        resolve();
+      }, undefined, reject);
+    }));
+
     await Promise.all(requests);
+  }
+
+  motorbikeAsset(): { model: THREE.Object3D; animations: THREE.AnimationClip[] } {
+    if (!this.motorbike) throw new Error('Motorbike model has not loaded');
+    return { model: this.motorbike, animations: this.motorbikeAnimations };
   }
 
   names(group: AssetGroup): string[] {

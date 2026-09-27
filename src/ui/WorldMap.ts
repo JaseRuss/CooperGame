@@ -52,7 +52,7 @@ export interface MapView {
   /** `friendly`: on the zombie mission it's everyone's stronghold. */
   fortress: MapBase & { title: string; locked: boolean; destroyed: boolean; friendly: boolean };
   /** Changing stations that turn the tank into a jeep or a chopper. */
-  stations: { x: number; z: number; kind: 'jeep' | 'chopper' }[];
+  stations: { x: number; z: number; kind: 'jeep' | 'chopper' | 'motorbike' }[];
 }
 
 export interface MapDrawOptions {
@@ -241,11 +241,12 @@ export class WorldMap {
     for (const st of view.stations) {
       const r = Math.max(14, 6 / s);
       const jeep = st.kind === 'jeep';
-      ctx.fillStyle = jeep ? '#2fb8ff' : '#ff9a2f';
-      ctx.strokeStyle = jeep ? '#0b2533' : '#331a05';
+      const bike = st.kind === 'motorbike';
+      ctx.fillStyle = jeep ? '#2fb8ff' : bike ? '#ed4fa3' : '#ff9a2f';
+      ctx.strokeStyle = jeep ? '#0b2533' : bike ? '#351126' : '#331a05';
       ctx.lineWidth = 2 / s;
       ctx.beginPath();
-      if (jeep) ctx.rect(st.x - r, st.z - r, r * 2, r * 2);
+      if (jeep || bike) ctx.rect(st.x - r, st.z - r, r * 2, r * 2);
       else ctx.arc(st.x, st.z, r * 1.1, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
@@ -253,7 +254,7 @@ export class WorldMap {
       ctx.font = `900 ${r * 1.6}px "Segoe UI", sans-serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(jeep ? 'J' : 'H', st.x, st.z + r * 0.1);
+      ctx.fillText(jeep ? 'J' : bike ? 'M' : 'H', st.x, st.z + r * 0.1);
     }
 
     // Enemy bases: red squares (green tick once destroyed).

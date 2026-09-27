@@ -16,6 +16,7 @@ const CREDITS: { site: string; url: string; items: string }[] = [
     items: 'City Kit Suburban, Commercial, Industrial and Roads, Car Kit, Nature Kit (jungle trees and plants); Sci-fi, Impact and Interface Sounds · CC0',
   },
   { site: 'poly.pizza', url: 'https://poly.pizza', items: 'Wooden huts and shacks by Quaternius · CC0' },
+  { site: '3dassets.dev', url: 'https://3dassets.dev/assets/motorcycle-racing-and-street-bikes-road-sportbike-e1418015', items: 'Road sportbike · CC0 1.0 Universal' },
   { site: 'fonts.google.com', url: 'https://fonts.google.com/specimen/Black+Ops+One', items: 'Black Ops One font by James Grieshaber and Eben Sorkin · SIL Open Font License' },
 ];
 
@@ -66,7 +67,7 @@ export interface HUDState {
    * Set while in the jeep or chopper from a changing station: seconds left of it, its missile
    * reload (0..1), and whether the chopper is coming in to land.
    */
-  ride: { vehicle: 'jeep' | 'chopper'; timeLeft: number; total: number; missileCharge: number; landing: boolean } | null;
+  ride: { vehicle: 'jeep' | 'chopper' | 'motorbike'; timeLeft: number; total: number; missileCharge: number; landing: boolean } | null;
   cameraMode: 'first' | 'third';
   usingGamepad: boolean;
   /** Name of the family base the player is parked in, or null. */
@@ -984,16 +985,17 @@ export class HUD {
     const loaded = state.reloadFraction <= 0;
     const ride = state.ride;
     const chopper = ride?.vehicle === 'chopper';
-    this.gunName.textContent = ride ? (chopper ? 'CHIN GUN' : 'JAM GUN') : 'MAIN GUN';
+    const bike = ride?.vehicle === 'motorbike';
+    this.gunName.textContent = ride ? (chopper ? 'CHIN GUN' : bike ? 'BIKE' : 'JAM GUN') : 'MAIN GUN';
     this.reloadFill.style.width = `${(1 - state.reloadFraction) * 100}%`;
     this.reloadText.textContent = ride ? 'RAPID FIRE' : loaded ? 'LOADED' : 'RELOADING';
     this.reloadText.style.color = ride ? (chopper ? '#ffd24a' : '#ff8aa8') : loaded ? '#ffd24a' : '#eef3f8';
-    this.modeText.textContent = `${state.cameraMode === 'first' ? '1st' : '3rd'} person · ${chopper ? 'Flying' : `${state.driveStyle === 'warthog' ? 'Warthog' : 'Classic'} drive`}`;
+    this.modeText.textContent = `${state.cameraMode === 'first' ? '1st' : '3rd'} person · ${chopper ? 'Flying' : bike ? 'Motorbike' : `${state.driveStyle === 'warthog' ? 'Warthog' : 'Classic'} drive`}`;
 
     // The jeep and chopper swap the homing rocket for quick-reloading missiles.
     const charge = ride ? ride.missileCharge : state.rocketCharge;
     const rocketReady = charge >= 1 && !state.rocketDamaged;
-    this.rocketName.textContent = ride ? (chopper ? 'CHOPPER MISSILES' : 'JEEP MISSILES') : 'HOMING ROCKET';
+    this.rocketName.textContent = ride ? (chopper ? 'CHOPPER MISSILES' : bike ? 'BIKE MISSILES' : 'JEEP MISSILES') : 'HOMING ROCKET';
     this.rocketFill.style.width = `${Math.floor(charge * 100)}%`;
     this.rocketText.textContent = state.rocketDamaged
       ? 'DAMAGED · REPAIR AT BASE'
@@ -1007,7 +1009,7 @@ export class HUD {
       const secs = Math.ceil(ride.timeLeft);
       const low = ride.timeLeft < 15 || ride.landing;
       this.jeepTimer.classList.toggle('low', low);
-      this.jeepWhat.textContent = ride.landing ? 'LANDING' : low ? 'BACK TO TANK IN' : chopper ? 'CHOPPER TIME' : 'JEEP TIME';
+      this.jeepWhat.textContent = ride.landing ? 'LANDING' : low ? 'BACK TO TANK IN' : chopper ? 'CHOPPER TIME' : bike ? 'MOTORBIKE TIME' : 'JEEP TIME';
       this.jeepClock.textContent = ride.landing ? '' : `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
       this.jeepFill.style.width = `${(ride.timeLeft / Math.max(1, ride.total)) * 100}%`;
     }

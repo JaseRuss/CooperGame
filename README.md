@@ -291,5 +291,6 @@ too:
 - **[poly.pizza](https://poly.pizza/)**: wooden huts and shacks by
   [Quaternius](https://quaternius.com/). CC0. Links to each model are in
   `public/models/huts/LICENSE-quaternius-huts.txt`.
+- **[3DAssets.dev](https://3dassets.dev/assets/motorcycle-racing-and-street-bikes-road-sportbike-e1418015)**: road sportbike model. CC0 1.0 Universal.
 - **[fonts.google.com](https://fonts.google.com/specimen/Black+Ops+One)**: the
   Black Ops One font by James Grieshaber and Eben Sorkin. SIL Open Font License.

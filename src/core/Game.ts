@@ -9,6 +9,7 @@ import { HomeBase, isInsideBase } from '../world/Base';
 import { distanceToPolyline, HIGHWAY_WIDTH, type Polyline } from '../world/RoadNetwork';
 import { JeepStation } from '../world/JeepStation';
 import { ChopperStation } from '../world/ChopperStation';
+import { MotorbikeRamp } from '../world/MotorbikeRamp';
 import type { Building } from '../world/Building';
 import { Bunker } from '../world/Bunker';
 import type { EnemyBase } from '../world/EnemyBase';
@@ -315,6 +316,7 @@ export class Game {
   private troops!: TroopManager;
   private player!: PlayerTank;
   private familyBases: FamilyBase[] = [];
+  private highways: Polyline[] = [];
   private enemyBases: EnemyBase[] = [];
   private announcedBases = new Set<EnemyBase>();
   private buildings: Building[] = [];
@@ -484,6 +486,7 @@ export class Game {
     });
 
     const content = generateWorld(this.world, this.scene, this.hitRegistry, this.assets);
+    this.highways = content.highways;
     this.trees = content.trees;
     this.familyBases = FRIENDLY_BASES.map((info) => {
       const gate = gateAngle(info, content.highways);
@@ -495,10 +498,11 @@ export class Game {
         spawnYaw: Math.atan2(-Math.cos(gate), -Math.sin(gate)),
       };
     });
-    // Every home base has a station, alternating round the map: a jeep station at the four in the
-    // middle of an edge, a chopper station at the four corners.
+    // Every home base has a changing station; Cooper's, Dad's and Auntie Claire's also have bikes.
     for (const fb of this.familyBases) {
-      this.addHomeStation(fb, content.highways, fb.info.x === 0 || fb.info.z === 0 ? 'jeep' : 'chopper');
+      const index = this.familyBases.indexOf(fb);
+      const kind = index === 0 || index === 2 || index === 6 ? 'motorbike' : fb.info.x === 0 || fb.info.z === 0 ? 'jeep' : 'chopper';
+      this.addHomeStation(fb, content.highways, kind);
     }
     this.bunkers = content.bunkers;
     this.enemyBases = content.enemyBases;
@@ -543,7 +547,8 @@ export class Game {
     }
     const home = this.familyBases[0];
     const start = this.fortHome ?? { x: home.info.x, z: home.info.z, yaw: home.spawnYaw };
-    this.player = new PlayerTank(this.world, start.x, start.z, start.yaw);
+    const bikeAsset = this.assets.motorbikeAsset();
+    this.player = new PlayerTank(this.world, start.x, start.z, start.yaw, bikeAsset.model, bikeAsset.animations);
     this.scene.add(this.player.root);
     this.hitRegistry.register(this.player.physicsCollider, { kind: 'tank', tank: this.player });
     this.hud.setSettings(this.settings, (s) => {
@@ -1206,16 +1211,35 @@ export class Game {
       if (highways.some((h) => distanceToPolyline(x, z, h) < STATION_ROAD_CLEARANCE)) continue;
       // The station's local Z becomes (sin yaw, cos yaw): along the wall, (-sin a, cos a).
       this.stations.push(this.buildStation(kind, x, z, -a));
+      this.addRampBesideStation(x, z, -a, highways);
       return;
     }
   }
 
-  private buildStation(kind: Station['kind'], x: number, z: number, yaw: number): Station {
-    return kind === 'jeep' ? new JeepStation(this.world, this.scene, x, z, yaw) : new ChopperStation(this.world, this.scene, x, z, yaw);
+  private buildStation(kind: Station['kind'] | 'motorbike', x: number, z: number, yaw: number): Station {
+    return kind === 'chopper' ? new ChopperStation(this.world, this.scene, x, z, yaw) : new JeepStation(this.world, this.scene, x, z, yaw, kind);
+  }
+
+  /** Put a bike kicker beside the station, offset clear of its lane and aimed along the roadside. */
+  private addRampBesideStation(x: number, z: number, stationYaw: number, highways: Polyline[] = []): void {
+    // Offset sideways from the station lane, along its tangent; the kicker faces out along the road.
+    const side = 25;
+    const candidates = [-1, 1].map((s) => ({
+      x: x + Math.sin(stationYaw) * side * s,
+      z: z + Math.cos(stationYaw) * side * s,
+    }));
+    const rampAt = candidates.sort((a, b) => {
+      const clearance = (p: { x: number; z: number }) => Math.min(...highways.map((road) => distanceToPolyline(p.x, p.z, road)), Infinity);
+      return clearance(b) - clearance(a);
+    })[0];
+    const rampX = rampAt.x;
+    const rampZ = rampAt.z;
+    // Aim the kicker away from its vehicle bay so a jump cannot land in the spawn lane.
+    new MotorbikeRamp(this.world, this.scene, rampX, rampZ, stationYaw - Math.PI / 2);
   }
 
   private rideMinutes(kind: Station['kind']): number {
-    return kind === 'jeep' ? this.settings.jeepMinutes : this.settings.chopperMinutes;
+    return kind === 'chopper' ? this.settings.chopperMinutes : this.settings.jeepMinutes;
   }
 
   /**
@@ -1289,6 +1313,7 @@ export class Game {
     this.missileCharge = 1;
     const time = `${minutes} minute${minutes > 1 ? 's' : ''}`;
     if (to === 'jeep') this.hud.showBanner('JEEP TIME!', `Zoom about for ${time}. Fire shoots jam, the rocket button fires missiles`);
+    else if (to === 'motorbike') this.hud.showBanner('MOTORBIKE TIME!', `Hit the ramps and pull back for backflips. Ride fast for ${time}!`);
     else this.hud.showBanner('CHOPPER TIME!', `Fly about for ${time}. Fire shoots the chin gun, the rocket button fires two missiles`);
   }
 
@@ -1319,10 +1344,12 @@ export class Game {
 
   /** A captured base gets a station as the garrison moves in: a jeep station at every other one, a chopper station at the rest. */
   private addBaseStation(base: EnemyBase): Station['kind'] {
-    const kind = this.enemyBases.indexOf(base) % 2 === 0 ? 'jeep' : 'chopper';
+    const index = this.enemyBases.indexOf(base);
+    const kind = index % 3 === 2 ? 'motorbike' : index % 2 === 0 ? 'jeep' : 'chopper';
     const spot = base.garrisonLayout().station;
     const station = this.buildStation(kind, spot.x, spot.z, spot.yaw);
     this.stations.push(station);
+    this.addRampBesideStation(spot.x, spot.z, spot.yaw, this.highways);
     this.impacts.splash(station.center.clone(), 1.4); // dust as it drops into place
     return kind;
   }
@@ -1345,7 +1372,7 @@ export class Game {
       } else {
         this.hud.showBanner(
           `${base.title.toUpperCase()} DESTROYED!`,
-          `Green troops are moving in · ${station === 'jeep' ? 'Jeep' : 'Chopper'} station set up! · ${left} enemy base${left > 1 ? 's' : ''} to go`,
+          `Green troops are moving in · ${station === 'motorbike' ? 'Motorbike' : station === 'jeep' ? 'Jeep' : 'Chopper'} station set up! · ${left} enemy base${left > 1 ? 's' : ''} to go`,
         );
       }
     }
