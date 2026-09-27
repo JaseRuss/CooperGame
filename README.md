@@ -156,7 +156,16 @@ sound on.
   fills (it starts full and refills over five minutes), up to all four at once.
   Who comes next is a surprise, and so is what they come in: a **tank**, a fast
   **jeep** with a machine gun that goes after soldiers, or a **chopper** that
-  flies out ahead of you where you can see it and shoots its chin gun.
+  flies out ahead of you where you can see it and shoots its chin gun. Only one
+  buddy can be in a chopper at a time.
+- **Anti-aircraft:** every enemy base (except the castles) has a **flak gun**
+  that fills the sky round your choppers with black bursts, and one soldier in
+  every enemy squad carries a **rocket launcher** (a longbow with fire arrows on
+  the knights mission) that he only fires at choppers. The rockets aren't
+  guided, so a moving chopper is harder to hit. They hit your own chopper too,
+  but it takes much less damage than a buddy's. The flak gun is one of the
+  base's targets and falls to two shells, so knock it out before sending
+  choppers in.
 - Hit a building and a health bar pops up over it for a few seconds.
 - The pause map shows where the enemy is gathered as a red glow.
 
@@ -211,9 +220,8 @@ a puff of smoke, it turns into an attack helicopter and takes off.
 ## Mission 2: Night Raid
 
 Win the first mission and the night raid starts on its own: a new battlefield
-under the stars. Every enemy base has a flak gun hosing tracer into the sky, so
-you can see where the bases are from across the map. Knocking out the flak gun
-is one of the base's targets. Flares go up over troops in the distance: red over
+under the stars. Every enemy base's flak gun hoses tracer into the sky, so
+you can see where the bases are from across the map. Flares go up over troops in the distance: red over
 the enemy, green over your side. Your tank has a headlight. To jump between
 missions at any time, use **Level select** (see below).
 

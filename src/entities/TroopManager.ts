@@ -3,6 +3,7 @@ import type RAPIER from '@dimforge/rapier3d-compat';
 import { Soldier, type Shot, type ZombieKind } from './Soldier';
 import type { Faction } from './Tank';
 import type { MapMarker } from '../ui/WorldMap';
+import type { AirTarget } from '../combat/AntiAir';
 
 const RESPAWN_DELAY = 45;
 /** Soldiers further than this from the player stand still, to save CPU. */
@@ -18,6 +19,8 @@ export interface SquadSpawn {
   holdWhile: (() => boolean) | null;
   /** A pack of zombies (never respawns; the anchor is where they're heading). */
   zombie?: ZombieKind;
+  /** How many of the squad carry rocket launchers (bows on the knights mission) for shooting at choppers. */
+  antiAir?: number;
 }
 
 interface Squad {
@@ -73,11 +76,11 @@ export class TroopManager {
   }
 
   private fillSquad(squad: Squad): void {
-    const { anchor, count, wanderRadius, faction, color, zombie } = squad.spawn;
+    const { anchor, count, wanderRadius, faction, color, zombie, antiAir = 0 } = squad.spawn;
     for (let i = 0; i < count; i++) {
       const a = (i / count) * Math.PI * 2 + this.rng();
       const r = 2 + this.rng() * wanderRadius * 0.6;
-      const soldier = new Soldier(anchor.x + Math.cos(a) * r, anchor.y + Math.sin(a) * r, anchor, wanderRadius, this.rng, faction, color, zombie ?? null);
+      const soldier = new Soldier(anchor.x + Math.cos(a) * r, anchor.y + Math.sin(a) * r, anchor, wanderRadius, this.rng, faction, color, zombie ?? null, i < antiAir);
       this.scene.add(soldier.mesh);
       squad.soldiers.push(soldier);
     }
@@ -85,7 +88,8 @@ export class TroopManager {
 
   /**
    * `targets[f]`: positions soldiers of faction `f` shoot at (the other side's tanks, troops and
-   * bunkers); each soldier picks the nearest.
+   * bunkers); each soldier picks the nearest. `air[f]`: the choppers faction `f`'s anti-aircraft
+   * troopers shoot at (and all they shoot at).
    */
   update(
     dt: number,
@@ -93,6 +97,7 @@ export class TroopManager {
     playerPos: THREE.Vector3,
     targets: Record<Faction, THREE.Vector3[]>,
     onShot: (shot: Shot, faction: Faction) => void,
+    air: Record<Faction, AirTarget[]> = { player: [], enemy: [] },
   ): void {
     const activeSq = ACTIVE_RANGE * ACTIVE_RANGE;
     // Backwards, since a zombie pack that's all been knocked over is dropped from the list.
@@ -104,15 +109,27 @@ export class TroopManager {
         // Far-off soldiers stand still to save time, but zombies never stop coming.
         if (s.isActive && !s.zombie && s.position.distanceToSquared(playerPos) > activeSq) continue;
         let target: THREE.Vector3 | null = null;
+        let velocity: THREE.Vector3 | undefined;
         let nearest = Infinity;
-        for (const f of foes) {
-          const d = f.distanceToSquared(s.position);
-          if (d < nearest) {
-            nearest = d;
-            target = f;
+        if (s.antiAir) {
+          for (const c of air[squad.spawn.faction]) {
+            const d = c.position.distanceToSquared(s.position);
+            if (d < nearest) {
+              nearest = d;
+              target = c.position;
+              velocity = c.velocity;
+            }
+          }
+        } else {
+          for (const f of foes) {
+            const d = f.distanceToSquared(s.position);
+            if (d < nearest) {
+              nearest = d;
+              target = f;
+            }
           }
         }
-        const shot = s.update(dt, world, target, this.blocked ?? undefined);
+        const shot = s.update(dt, world, target, this.blocked ?? undefined, velocity);
         if (shot) onShot(shot, squad.spawn.faction);
         if (s.zombie && !s.isActive && !s.counted) {
           s.counted = true;

@@ -335,6 +335,54 @@ export class ImpactEffects {
     });
   }
 
+  /** A flak shell bursting in the sky: a quick orange flash, a few sparks and a lingering puff of black smoke. */
+  flakBurst(point: THREE.Vector3): void {
+    this.add({
+      geometry: SPHERE,
+      position: point.clone(),
+      velocity: new THREE.Vector3(),
+      life: 0.18,
+      startScale: 0.6,
+      endScale: 2.2,
+      startOpacity: 1,
+      additive: true,
+      colorFrom: new THREE.Color(0xfff0a0),
+      colorTo: new THREE.Color(0xff5010),
+    });
+    for (let i = 0; i < 6; i++) {
+      this.add({
+        geometry: SPARK,
+        position: point.clone(),
+        velocity: randomInSphere(1).normalize().multiplyScalar(14 + Math.random() * 10),
+        life: 0.3 + Math.random() * 0.25,
+        startScale: 0.8,
+        endScale: 0.2,
+        startOpacity: 1,
+        additive: true,
+        colorFrom: new THREE.Color(0xffe080),
+        colorTo: new THREE.Color(0xff5010),
+        gravity: -12,
+        orientToVelocity: true,
+      });
+    }
+    for (let i = 0; i < 3; i++) {
+      const shade = 0.02 + Math.random() * 0.04;
+      this.add({
+        geometry: SMOKE_SPHERE,
+        position: point.clone().add(randomInSphere(0.9)),
+        velocity: randomInSphere(1.5),
+        life: 1.8 + Math.random() * 0.8,
+        startScale: 0.7,
+        endScale: 2 + Math.random() * 0.8,
+        startOpacity: 0.8,
+        additive: false,
+        colorFrom: new THREE.Color(shade, shade, shade),
+        colorTo: new THREE.Color(shade + 0.08, shade + 0.08, shade + 0.08),
+        drag: 1.2,
+      });
+    }
+  }
+
   /** A thin, short-lived smoke wisp: the trail of the little AA missiles. */
   wispPuff(point: THREE.Vector3): void {
     const shade = 0.75 + Math.random() * 0.15;

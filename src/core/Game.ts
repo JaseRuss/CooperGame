@@ -33,6 +33,7 @@ import { predictTrajectory, type Trajectory } from '../combat/Projectile';
 import { HomingRocket, type RocketTarget } from '../combat/HomingRocket';
 import { JamCannon } from '../combat/JamCannon';
 import { AAMissiles, AA_SALVO, AA_CAPACITY, type AirTrack } from '../combat/AAMissiles';
+import { AntiAir } from '../combat/AntiAir';
 import { Wrecks, pickWreckGag } from '../combat/Wrecks';
 import { CameraRig } from '../camera/CameraRig';
 import { HUD, type HUDState } from '../ui/HUD';
@@ -100,6 +101,12 @@ const ROCKET_LINGER_TIME = 3.2;
  * knocked out until the tank is repaired: a reason to head back to a home base.
  */
 const ROCKET_MIN_HEALTH = 0.3;
+
+// The enemy's anti-aircraft (flak guns in their bases, rocket troopers in their squads) only
+// shoots at choppers. Your own chopper takes this share of what it does to a buddy's.
+const PLAYER_AA_DAMAGE_SCALE = 0.35;
+/** Seconds between warnings that the player's chopper is under anti-aircraft fire. */
+const AA_WARNING_GAP = 20;
 
 // Changing stations: drive through a jeep station and the tank becomes a fast jeep for a while,
 // or onto a chopper station's pad and it takes off as a chopper (the times are in the options).
@@ -296,6 +303,8 @@ export class Game {
   private impacts!: ImpactEffects;
   private jam!: JamCannon;
   private aa!: AAMissiles;
+  private antiAir!: AntiAir;
+  private aaWarning = 0;
   /** Knocked-out tanks going out with a gag: flying turrets, turtles, surrenders, fireworks. */
   private wrecks!: Wrecks;
   /** AA darts left; they only come back by returning to a home base. */
@@ -442,6 +451,23 @@ export class Game {
     this.impacts = new ImpactEffects(this.scene);
     this.jam = new JamCannon(this.scene);
     this.aa = new AAMissiles(this.scene);
+    this.antiAir = new AntiAir(
+      this.scene,
+      {
+        flakFired: (muzzle, dir) => {
+          this.impacts.muzzleFlash(muzzle, dir, 0.6);
+          this.sound.play('crack', { at: muzzle, volume: 0.35, rate: 1.4, minGap: 0.12 });
+        },
+        flakBurst: (point) => {
+          this.impacts.flakBurst(point);
+          this.sound.play('explosion', { at: point, volume: 0.3, rate: 1.5, minGap: 0.06 });
+        },
+        rocketTrail: (point) => this.impacts.trailPuff(point),
+        rocketBurst: (point) => this.explode(point, 0.7, 'enemy'),
+        hit: (target, damage) => this.antiAirHit(target.tank, damage),
+      },
+      KNIGHTS,
+    );
     this.wrecks = new Wrecks(this.scene);
     this.aimGuide = new AimGuide(this.scene);
 
@@ -643,8 +669,10 @@ export class Game {
     const out = new Set(this.buddies.map((b) => b.crew));
     const free = Array.from({ length: MAX_BUDDIES }, (_, i) => i).filter((i) => !out.has(i));
     const pick = free[Math.floor(Math.random() * free.length)];
-    let roll = Math.random();
-    const vehicle = BUDDY_VEHICLES.find(([, share]) => (roll -= share) < 0)?.[0] ?? 'tank';
+    // Only one buddy in a chopper at a time: while one's up, the others come in tanks and jeeps.
+    const choices = this.buddies.some((b) => b.vehicle === 'chopper') ? BUDDY_VEHICLES.filter(([v]) => v !== 'chopper') : BUDDY_VEHICLES;
+    let roll = Math.random() * choices.reduce((sum, [, share]) => sum + share, 0);
+    const vehicle = choices.find(([, share]) => (roll -= share) < 0)?.[0] ?? 'tank';
     const name = this.settings.buddyNames[pick];
     const buddy = new BuddyTank(this.world, spot.x, spot.z, this.player.yaw, slot, pick, name, vehicle);
     this.scene.add(buddy.root);
@@ -668,7 +696,8 @@ export class Game {
 
   private removeBuddy(buddy: BuddyTank): void {
     this.explode(buddy.position.clone(), 2.5, null);
-    this.hud.showBanner(`${buddy.name.toUpperCase()}'S TANK IS KNOCKED OUT!`, 'A new buddy rolls in when the buddy meter is full');
+    const lost = buddy.vehicle === 'chopper' ? 'CHOPPER IS SHOT DOWN' : buddy.vehicle === 'jeep' ? 'JEEP IS KNOCKED OUT' : 'TANK IS KNOCKED OUT';
+    this.hud.showBanner(`${buddy.name.toUpperCase()}'S ${lost}!`, 'A new buddy rolls in when the buddy meter is full');
     this.hitRegistry.unregister(buddy.physicsCollider);
     this.scene.remove(buddy.root);
     buddy.dispose();
@@ -864,6 +893,30 @@ export class Game {
       0.55,
       'player',
     );
+  }
+
+  /** An AA trooper's unguided rocket (a fire arrow on the knights mission), launched at a chopper. */
+  private fireAntiAirRocket(origin: THREE.Vector3, direction: THREE.Vector3): void {
+    this.antiAir.fireRocket(origin, direction);
+    this.impacts.trailPuff(origin);
+    if (KNIGHTS) this.sound.play('jamShot', { at: origin, volume: 0.5, rate: 0.6, minGap: 0.1 });
+    else this.sound.play('launch', { at: origin, volume: 0.4, rate: 1.5, fadeAfter: 0.4, minGap: 0.1 });
+  }
+
+  /** Flak or an AA rocket caught one of your choppers. Yours takes less, and you get a warning. */
+  private antiAirHit(tank: Tank, damage: number): void {
+    // Shrapnel from all round: no armour sides in the air.
+    if (tank !== this.player) {
+      tank.takeDamage(damage);
+      return;
+    }
+    tank.takeDamage(damage * PLAYER_AA_DAMAGE_SCALE);
+    this.cameraRig.addShake(0.3);
+    this.sound.play('clang', { volume: 0.35, minGap: 0.15 });
+    if (this.aaWarning <= 0) {
+      this.aaWarning = AA_WARNING_GAP;
+      this.hud.showCallout(KNIGHTS ? 'FIRE ARROWS! WATCH OUT FOR THE ARCHERS' : 'ANTI-AIR FIRE! HIT THE AA GUNS AND ROCKET MEN', '#ff9a5a');
+    }
   }
 
   /** Small-arms fire from troops and bunker machine guns; a round landing by a soldier drops him. */
@@ -2155,13 +2208,25 @@ export class Game {
       const shot = bunker.update(dt, this.world, nearestOf(playerSidePositions, bunker.position));
       if (shot) this.fireBullet(shot, bunker.building.physicsCollider ?? undefined, 'player');
     }
+    // The enemy's anti-aircraft goes after your choppers: the buddy's, and yours once it's up.
+    const choppers: Tank[] = this.buddies.filter((b) => b.flying && !b.isDestroyed);
+    if (this.player.isChopper && this.player.heightAboveGround > CHOPPER_LOW * 2) choppers.push(this.player);
+    this.antiAir.track(choppers, dt);
+    this.antiAir.updateGuns(dt, this.enemyBases.flatMap((b) => (b.aaGun ? [b.aaGun] : [])));
     this.troops.update(
       dt,
       this.world,
       this.player.position,
       { enemy: enemyTargetPositions, player: playerSidePositions },
-      (shot, faction) => (shot.melee ? this.zombieBlow(shot.origin, shot.melee) : this.fireBullet(shot, undefined, faction)),
+      (shot, faction) => {
+        if (shot.melee) this.zombieBlow(shot.origin, shot.melee);
+        else if (shot.antiAir) this.fireAntiAirRocket(shot.origin, shot.direction);
+        else this.fireBullet(shot, undefined, faction);
+      },
+      { enemy: this.antiAir.targets, player: [] },
     );
+    this.antiAir.update(dt, this.world);
+    this.aaWarning -= dt;
     if (this.waves) this.updateLastStand(dt, rawInput.menu.confirm);
     this.updateFlamePits(dt);
     this.overrun?.update(dt, this.player.position, (p, r) => this.impacts.chimneyPuff(p, r));

@@ -12,9 +12,9 @@ const ELEVATE_RATE = 1.4; // rad/s up and down
 const IDLE_PITCH = 0.9;
 
 /**
- * An enemy base's quad-barrelled flak gun (night mission): a sandbagged pit with a turntable,
- * a gunner's seat and four long barrels. It's what hoses the tracer up into the night sky, and
- * one of the base's targets.
+ * An enemy base's quad-barrelled flak gun: a sandbagged pit with a turntable, a gunner's seat and
+ * four long barrels. It fires flak at your choppers (see AntiAir), hoses tracer up into the night
+ * sky on the night mission, and it's one of the base's targets.
  */
 export class AAGun {
   readonly building: Building;
@@ -26,6 +26,8 @@ export class AAGun {
   private targetYaw = this.yaw;
   private targetPitch = IDLE_PITCH;
   private idleTimer = 0;
+  /** Seconds left locked on to a chopper; the night sky's tracer leaves it alone meanwhile. */
+  private engagedTimer = 0;
 
   constructor(world: RAPIER.World, scene: THREE.Scene, hitRegistry: HitRegistry, x: number, z: number, color: number) {
     const body = plastic(color);
@@ -103,15 +105,26 @@ export class AAGun {
     return new THREE.Vector3(0, 0, -1).applyQuaternion(this.cradle.getWorldQuaternion(new THREE.Quaternion()));
   }
 
-  /** Swings the barrels round to fire along `dir`. */
+  /** Swings the barrels round to fire along `dir` (the night sky's tracer), unless it's busy with a chopper. */
   aimAlong(dir: THREE.Vector3): void {
+    if (this.engagedTimer <= 0) this.point(dir);
+  }
+
+  /** Keeps the barrels on a chopper: they follow `dir` until it stops being called. */
+  track(dir: THREE.Vector3): void {
+    this.point(dir);
+    this.engagedTimer = 1.5;
+  }
+
+  private point(dir: THREE.Vector3): void {
     this.targetYaw = Math.atan2(-dir.x, -dir.z);
-    this.targetPitch = Math.asin(THREE.MathUtils.clamp(dir.y, -1, 1));
+    this.targetPitch = Math.max(0, Math.asin(THREE.MathUtils.clamp(dir.y, -1, 1)));
     this.idleTimer = 4;
   }
 
   update(dt: number): void {
     if (!this.alive) return;
+    this.engagedTimer -= dt;
     // Between bursts it scans the sky slowly.
     this.idleTimer -= dt;
     if (this.idleTimer <= 0) {

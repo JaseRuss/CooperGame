@@ -6,6 +6,7 @@ import { plastic } from '../utils/plastic';
 import type { Faction } from './Tank';
 import { createJammedTag, createMuzzleGlob } from '../combat/JamCannon';
 import { KNIGHTS } from '../core/config';
+import { AA_ROCKET_SPEED, AA_TROOPER_RANGE, leadPoint } from '../combat/AntiAir';
 
 const UP = new THREE.Vector3(0, 1, 0);
 const ENGAGE_RANGE = 120;
@@ -17,7 +18,7 @@ const DOWN_LINGER = 14;
  * A shot fired: from `origin` along `direction`. A zombie's bite or swipe is a `melee` shot instead:
  * `origin` is the spot it lands on and `melee` how hard it hits.
  */
-export type Shot = { origin: THREE.Vector3; direction: THREE.Vector3; melee?: number };
+export type Shot = { origin: THREE.Vector3; direction: THREE.Vector3; melee?: number; antiAir?: boolean };
 
 /** Zombies: walkers shamble, runners hurry, brutes are big, slow and take several hits. */
 export type ZombieKind = 'walker' | 'runner' | 'brute';
@@ -127,8 +128,11 @@ function rifle(x: number, y: number, z: number): THREE.BufferGeometry[] {
   ];
 }
 
-/** Everything from the hips up, with the hips at height y. `cheer` holds the rifle up overhead in both hands. */
-function upperBody(y: number, cheer = false): THREE.BufferGeometry[] {
+/** What a figure's arms are doing: holding the rifle, cheering with it overhead, or aiming a rocket launcher up at the sky. */
+type Arms = 'rifle' | 'cheer' | 'launcher';
+
+/** Everything from the hips up, with the hips at height y. */
+function upperBody(y: number, arms: Arms = 'rifle'): THREE.BufferGeometry[] {
   const v = (x: number, yy: number, z: number) => v3(x, y + yy, z);
   const helmet = new THREE.SphereGeometry(0.2, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2).scale(1, 0.9, 1.05);
   helmet.translate(0, y + 0.72, 0);
@@ -157,7 +161,7 @@ function upperBody(y: number, cheer = false): THREE.BufferGeometry[] {
     helmet,
     new THREE.CylinderGeometry(0.23, 0.25, 0.035, 16).translate(0, y + 0.72, 0.01), // flared brim
     new THREE.TorusGeometry(0.2, 0.014, 4, 18).rotateX(Math.PI / 2).translate(0, y + 0.78, 0), // net band
-    ...(cheer ? cheeringArms(y) : [
+    ...(arms === 'cheer' ? cheeringArms(y) : arms === 'launcher' ? launcherArms(y) : [
       // Arms bent to hold the rifle: right hand on the grip, left under the fore-end.
       ...jointed(v(0.25, 0.53, 0.01), v(0.33, 0.36, -0.05), v(0.14, 0.44, -0.2), 0.065),
       ...jointed(v(-0.25, 0.53, 0.01), v(-0.18, 0.37, -0.34), v(0.1, 0.46, -0.58), 0.065),
@@ -181,6 +185,36 @@ function cheeringArms(y: number): THREE.BufferGeometry[] {
   ];
 }
 
+/** How far up the anti-aircraft troopers' launchers and bows point. */
+const AA_AIM_PITCH = 0.5;
+
+/**
+ * A rocket launcher on the right shoulder, tilted up at the sky, with a warhead in the front and
+ * a flared back end; the right hand on the grip and the left on the front grip.
+ */
+function launcherArms(y: number): THREE.BufferGeometry[] {
+  const v = (x: number, yy: number, z: number) => v3(x, y + yy, z);
+  const d = v3(0, Math.sin(AA_AIM_PITCH), -Math.cos(AA_AIM_PITCH)); // along the tube
+  const down = v3(0, -Math.cos(AA_AIM_PITCH), -Math.sin(AA_AIM_PITCH)); // under it
+  const shoulder = v(0.2, 0.6, 0.02);
+  const along = (t: number, below = 0) => shoulder.clone().addScaledVector(d, t).addScaledVector(down, below);
+  const tilt = (g: THREE.BufferGeometry, at: V) => g.rotateX(AA_AIM_PITCH - Math.PI / 2).translate(at.x, at.y, at.z);
+  const grip = along(0.1, 0.1);
+  const frontGrip = along(0.5, 0.09);
+  return [
+    tilt(new THREE.CylinderGeometry(0.075, 0.075, 1.35, 10), along(0.2)), // tube
+    tilt(new THREE.CylinderGeometry(0.075, 0.105, 0.14, 10), along(-0.52)), // flared back end
+    tilt(new THREE.ConeGeometry(0.1, 0.3, 10), along(1.05)), // warhead
+    ball(0.1, along(0.9), 1, 1.2, 1),
+    tilt(new THREE.BoxGeometry(0.05, 0.05, 0.16), along(0.3, 0.1)), // trigger housing
+    box(0.04, 0.09, 0.1, 0.11, along(0.4).y, along(0.4).z), // sight
+    ...jointed(v(0.25, 0.53, 0.01), v(0.36, 0.38, -0.02), grip, 0.065),
+    ...jointed(v(-0.25, 0.53, 0.01), v(-0.1, 0.5, -0.35), frontGrip, 0.065),
+    ball(0.06, grip),
+    ball(0.06, frontGrip),
+  ];
+}
+
 function stand(): THREE.BufferGeometry {
   const base = new THREE.CylinderGeometry(0.42, 0.44, 0.06, 20);
   base.scale(1, 1, 0.75);
@@ -188,7 +222,7 @@ function stand(): THREE.BufferGeometry {
   return base;
 }
 
-function standingFigure(): THREE.BufferGeometry {
+function standingFigure(arms: Arms = 'rifle'): THREE.BufferGeometry {
   const frontAnkle = v3(-0.12, 0.13, -0.24);
   const backAnkle = v3(0.12, 0.13, 0.22);
   return mergeGeometries([
@@ -197,7 +231,7 @@ function standingFigure(): THREE.BufferGeometry {
     ...boot(backAnkle),
     ...jointed(frontAnkle, v3(-0.12, 0.52, -0.15), v3(-0.1, 0.93, -0.02), 0.095),
     ...jointed(backAnkle, v3(0.11, 0.53, 0.14), v3(0.1, 0.93, 0.02), 0.095),
-    ...upperBody(0.95),
+    ...upperBody(0.95, arms),
   ]);
 }
 
@@ -211,7 +245,7 @@ function cheeringFigure(): THREE.BufferGeometry {
     ...boot(backAnkle),
     ...jointed(frontAnkle, v3(-0.13, 0.53, -0.08), v3(-0.1, 0.93, -0.01), 0.095),
     ...jointed(backAnkle, v3(0.13, 0.53, 0.06), v3(0.1, 0.93, 0.01), 0.095),
-    ...upperBody(0.95, true),
+    ...upperBody(0.95, 'cheer'),
   ]);
 }
 
@@ -246,7 +280,7 @@ function crossbow(x: number, y: number, z: number): THREE.BufferGeometry[] {
  * A toy knight from the hips up (hips at height y): mail shirt under a tabard, a great helm with a
  * crest, a sword at the hip, a kite shield slung on the back and a crossbow at the shoulder.
  */
-function knightUpperBody(y: number): THREE.BufferGeometry[] {
+function knightUpperBody(y: number, longbow = false): THREE.BufferGeometry[] {
   const v = (x: number, yy: number, z: number) => v3(x, y + yy, z);
   return [
     box(0.4, 0.18, 0.25, 0, y, 0), // hips
@@ -273,16 +307,49 @@ function knightUpperBody(y: number): THREE.BufferGeometry[] {
     ball(0.02, v(-0.07, 0.63, -0.16)),
     ball(0.02, v(0.07, 0.63, -0.16)),
     box(0.045, 0.15, 0.36, 0, y + 0.96, 0.02), // crest
-    // Arms bent to hold the crossbow.
-    ...jointed(v(0.25, 0.53, 0.01), v(0.33, 0.36, -0.05), v(0.14, 0.44, -0.2), 0.065),
-    ...jointed(v(-0.25, 0.53, 0.01), v(-0.18, 0.37, -0.34), v(0.1, 0.46, -0.58), 0.065),
-    ball(0.065, v(0.14, 0.44, -0.2)),
-    ball(0.065, v(0.1, 0.46, -0.58)),
-    ...crossbow(0.12, y + 0.52, 0),
+    ...(longbow ? longbowArms(y) : [
+      // Arms bent to hold the crossbow.
+      ...jointed(v(0.25, 0.53, 0.01), v(0.33, 0.36, -0.05), v(0.14, 0.44, -0.2), 0.065),
+      ...jointed(v(-0.25, 0.53, 0.01), v(-0.18, 0.37, -0.34), v(0.1, 0.46, -0.58), 0.065),
+      ball(0.065, v(0.14, 0.44, -0.2)),
+      ball(0.065, v(0.1, 0.46, -0.58)),
+      ...crossbow(0.12, y + 0.52, 0),
+    ]),
   ];
 }
 
-function standingKnight(): THREE.BufferGeometry {
+/**
+ * A longbow held out in the left hand, off to the side of the helm, drawn and aimed up at the
+ * sky: the knights' answer to choppers (fire arrows).
+ */
+function longbowArms(y: number): THREE.BufferGeometry[] {
+  const v = (x: number, yy: number, z: number) => v3(x, y + yy, z);
+  const d = v3(0, Math.sin(AA_AIM_PITCH), -Math.cos(AA_AIM_PITCH)); // along the arrow
+  const n = v3(0, Math.cos(AA_AIM_PITCH), Math.sin(AA_AIM_PITCH)); // up the bow
+  const radius = 0.7;
+  const halfArc = 1;
+  const grip = v(-0.2, 0.53, 0.01).addScaledVector(d, 0.62);
+  const nock = grip.clone().addScaledVector(d, -0.55);
+  const tipBack = radius * (1 - Math.cos(halfArc));
+  const tips = [1, -1].map((s) => grip.clone().addScaledVector(d, -tipBack).addScaledVector(n, s * radius * Math.sin(halfArc)));
+  const centre = grip.clone().addScaledVector(d, -radius);
+  const point = grip.clone().addScaledVector(d, 0.2);
+  // The bow: an arc of a ring, bellied toward the sky, in the upright plane of the shot.
+  const bow = new THREE.TorusGeometry(radius, 0.025, 4, 18, halfArc * 2).rotateZ(-halfArc).rotateY(Math.PI / 2).rotateX(AA_AIM_PITCH);
+  bow.translate(centre.x, centre.y, centre.z);
+  return [
+    bow,
+    ...tips.map((t) => limb(t, nock, 0.009, 1)), // drawn string
+    limb(nock, grip.clone().addScaledVector(d, 0.15), 0.016, 1), // arrow
+    new THREE.ConeGeometry(0.04, 0.1, 5).rotateX(AA_AIM_PITCH - Math.PI / 2).translate(point.x, point.y, point.z), // arrowhead
+    ...jointed(v(-0.25, 0.53, 0.01), v(-0.26, 0.72, -0.24), grip, 0.065),
+    ...jointed(v(0.25, 0.53, 0.01), v(0.3, 0.62, 0.12), nock, 0.065),
+    ball(0.065, grip),
+    ball(0.065, nock),
+  ];
+}
+
+function standingKnight(longbow = false): THREE.BufferGeometry {
   const frontAnkle = v3(-0.12, 0.13, -0.24);
   const backAnkle = v3(0.12, 0.13, 0.22);
   return mergeGeometries([
@@ -293,7 +360,7 @@ function standingKnight(): THREE.BufferGeometry {
     ...jointed(backAnkle, v3(0.11, 0.53, 0.14), v3(0.1, 0.93, 0.02), 0.095),
     ball(0.1, v3(-0.12, 0.52, -0.17), 1, 0.8, 1), // knee cops
     ball(0.1, v3(0.11, 0.53, 0.12), 1, 0.8, 1),
-    ...knightUpperBody(0.95),
+    ...knightUpperBody(0.95, longbow),
   ]);
 }
 
@@ -364,6 +431,15 @@ const FIGURES = [standingFigure(), kneelingFigure()];
 const KNIGHT_FIGURES = KNIGHTS ? [standingKnight(), kneelingKnight()] : FIGURES;
 const ZOMBIE_FIGURES = [zombieFigure(false), zombieFigure(true)];
 const MUZZLE_HEIGHT = [1.49, 1.14];
+/**
+ * The enemy's anti-aircraft troopers: a bazooka man, or a longbowman with fire arrows on the
+ * knights mission. They only ever stand, and their rockets leave from about this high.
+ */
+let antiAirFigure: THREE.BufferGeometry | null = null;
+const LAUNCH_HEIGHT = 2;
+/** Seconds between an AA trooper's rockets (plus up to three more). */
+const AA_RELOAD = 7;
+const AA_SPREAD = 0.05;
 
 /** A static army-man figure (0 = standing, 1 = kneeling) in the given plastic colour, e.g. for base guards. */
 export function createFigureMesh(pose: 0 | 1, color: number): THREE.Mesh {
@@ -439,12 +515,15 @@ export class Soldier {
     readonly faction: Faction,
     color: number,
     zombie: ZombieKind | null = null,
+    /** An anti-aircraft trooper: shoots unguided rockets at choppers, and at nothing else. */
+    readonly antiAir = false,
   ) {
     this.zombie = zombie;
-    this.pose = zombie ? (zombie === 'walker' ? (rng() < 0.3 ? 1 : 0) : 1) : rng() < 0.35 ? 1 : 0;
+    this.pose = zombie ? (zombie === 'walker' ? (rng() < 0.3 ? 1 : 0) : 1) : rng() < 0.35 && !antiAir ? 1 : 0;
     const figures = zombie ? ZOMBIE_FIGURES : faction === 'enemy' ? KNIGHT_FIGURES : FIGURES;
     this.baseMaterial = zombie ? zombiePlastic(color) : plastic(color);
-    this.mesh = new THREE.Mesh(figures[this.pose], this.baseMaterial);
+    const figure = antiAir ? (antiAirFigure ??= KNIGHTS ? standingKnight(true) : standingFigure('launcher')) : figures[this.pose];
+    this.mesh = new THREE.Mesh(figure, this.baseMaterial);
     this.mesh.castShadow = true;
     if (zombie) {
       this.hp = ZOMBIE_STATS[zombie].hp;
@@ -537,9 +616,16 @@ export class Soldier {
   /** `target`: the nearest thing on the other side worth shooting at, or null to just wander. */
   /**
    * `blocked`: for zombies, true where they can't walk (the Fortress wall); they stop there and
-   * batter it instead.
+   * batter it instead. For an anti-aircraft trooper `target` is a chopper and `targetVelocity`
+   * how it's moving, so he can lead it.
    */
-  update(dt: number, world: RAPIER.World, target: THREE.Vector3 | null, blocked?: (x: number, z: number) => boolean): Shot | null {
+  update(
+    dt: number,
+    world: RAPIER.World,
+    target: THREE.Vector3 | null,
+    blocked?: (x: number, z: number) => boolean,
+    targetVelocity?: THREE.Vector3,
+  ): Shot | null {
     if (this.state === 'flying') {
       this.fallVelocity.y -= 24 * dt;
       this.pos.addScaledVector(this.fallVelocity, dt);
@@ -580,11 +666,12 @@ export class Soldier {
     const dx = target ? target.x - this.pos.x : 0;
     const dz = target ? target.z - this.pos.z : 0;
     const dist = target ? Math.hypot(dx, dz) : Infinity;
+    const range = this.antiAir ? AA_TROOPER_RANGE : ENGAGE_RANGE;
 
     this.losTimer -= dt;
     if (this.losTimer <= 0) {
       this.losTimer = LOS_CHECK_INTERVAL;
-      this.seesTarget = target !== null && dist < ENGAGE_RANGE && this.lineOfSight(world, target, dist);
+      this.seesTarget = target !== null && dist < range && this.lineOfSight(world, target, dist);
     }
 
     let hop = 0;
@@ -595,12 +682,17 @@ export class Soldier {
       if (this.gunJamTime <= 0) this.clearGunJam();
     }
 
-    if (this.seesTarget && target && dist < ENGAGE_RANGE) {
+    if (this.seesTarget && target && dist < range) {
       this.heading = Math.atan2(-dx, -dz);
       this.fireTimer -= dt;
       if (this.fireTimer <= 0 && this.gunJamTime <= 0) {
-        this.fireTimer = 1.4 + this.rng() * 1.6;
-        shot = this.shootAt(target, dist);
+        if (this.antiAir) {
+          this.fireTimer = AA_RELOAD + this.rng() * 3;
+          shot = this.launchAt(target, targetVelocity);
+        } else {
+          this.fireTimer = 1.4 + this.rng() * 1.6;
+          shot = this.shootAt(target, dist);
+        }
       }
     } else {
       if (!this.wanderTarget || this.wanderTarget.distanceTo(new THREE.Vector2(this.pos.x, this.pos.z)) < 1) {
@@ -692,6 +784,17 @@ export class Soldier {
     aim.y += (this.rng() - 0.5) * spread;
     aim.z += (this.rng() - 0.5) * spread * 2;
     return { origin, direction: aim.normalize() };
+  }
+
+  /** An AA trooper's rocket, aimed where the chopper will be when it gets there (roughly). */
+  private launchAt(chopper: THREE.Vector3, velocity = new THREE.Vector3()): Shot {
+    const forward = new THREE.Vector3(-Math.sin(this.heading), 0, -Math.cos(this.heading));
+    const origin = this.pos.clone().setY(this.pos.y + LAUNCH_HEIGHT).addScaledVector(forward, 0.8);
+    const aim = leadPoint({ position: chopper, velocity }, origin, AA_ROCKET_SPEED).sub(origin).normalize();
+    aim.x += (this.rng() - 0.5) * AA_SPREAD * 2;
+    aim.y += (this.rng() - 0.5) * AA_SPREAD * 2;
+    aim.z += (this.rng() - 0.5) * AA_SPREAD * 2;
+    return { origin, direction: aim.normalize(), antiAir: true };
   }
 
   private applyTransform(hop: number): void {

@@ -191,6 +191,7 @@ function enemySquad(x: number, z: number, count: number, wanderRadius: number, h
     faction: 'enemy',
     color: armyColorAt(x, z),
     holdWhile,
+    antiAir: 1, // one man in every squad has a launcher (a bow for the knights) for your choppers
   };
 }
 

@@ -4,7 +4,7 @@ import type { AssetLibrary } from './AssetLibrary';
 import type { Building } from './Building';
 import { Bunker } from './Bunker';
 import { AAGun } from './AAGun';
-import { NIGHT, KNIGHTS } from '../core/config';
+import { KNIGHTS } from '../core/config';
 import type { HitRegistry } from '../combat/HitRegistry';
 import { heightAt } from './Terrain';
 import { siteToWorld, siteYaw, enemyArmyOfSite, ENEMY_BASE_HALF, type Site } from './Landmarks';
@@ -109,7 +109,7 @@ export class EnemyBase {
   readonly objectives: Objective[] = [];
   readonly buildings: Building[] = [];
   readonly bunker: Bunker;
-  /** The flak gun that lights up the night sky with tracer (night mission only). */
+  /** The flak gun that shoots at your choppers (not on the knights mission: no flak in castles). */
   readonly aaGun: AAGun | null = null;
   private readonly smokestacks: { building: Building; top: THREE.Vector3; timer: number }[] = [];
   /** The spinning radar dish, or on a castle the trebuchet's rocking arm. */
@@ -144,7 +144,7 @@ export class EnemyBase {
     this.bunker = new Bunker(world, scene, hitRegistry, bp.x, bp.z, yaw + Math.PI, 'enemy', armyColor);
     this.objectives.push({ label: KNIGHTS ? 'Guardhouse' : 'Command Bunker', position: this.bunker.position, isDestroyed: () => !this.bunker.alive });
 
-    if (NIGHT) {
+    if (!KNIGHTS) {
       const ap = at(-22, 30);
       const gun = new AAGun(world, scene, hitRegistry, ap.x, ap.z, armyColor);
       this.aaGun = gun;
