@@ -28,8 +28,9 @@ const ALIGN_TURN_RATE = 0.8;
 const AA_TUBES = [-0.15, 0, 0.15].flatMap((x) => [0.07, -0.08].map((y) => [x, y] as const));
 
 // The jeep from a changing station: same body and collider, much quicker and nimbler.
-export type Vehicle = 'tank' | 'jeep' | 'chopper';
+export type Vehicle = 'tank' | 'jeep' | 'chopper' | 'motorbike';
 const JEEP_MAX_SPEED = 36; // m/s (the tank does 22)
+const MOTORBIKE_MAX_SPEED = 62;
 const JEEP_TURN_RATE = 1.3; // × the tank's
 /** The toy jeep is ~3.9 m long; scaled to about the tank's footprint so it fills the same collider. */
 const JEEP_SCALE = 1.15;
@@ -106,6 +107,16 @@ export class PlayerTank extends Tank {
   private readonly lastJeepPosition = new THREE.Vector3();
 
   private readonly chopperRig = new THREE.Group();
+  private readonly bikeRig = new THREE.Group();
+  private bikeWasAirborne = false;
+  private bikeFlipTime = 0;
+  private bikeAirY: number | null = null;
+  private bikeAirVelocity = 0;
+  private bikeJumpCooldown = 0;
+  private bikeMixer: THREE.AnimationMixer | null = null;
+  private bikeRollAction: THREE.AnimationAction | null = null;
+  private bikeHandlebar: THREE.Object3D | null = null;
+  private bikeHandlebarRest = 0;
   /** Leans the chopper into its travel (and bobs it while hovering). */
   private readonly chopperTilt = new THREE.Group();
   private chopperParts!: ChopperParts;
@@ -120,7 +131,14 @@ export class PlayerTank extends Tank {
   /** How far the tank's (and jeep's) gun can dip, put back after flying. */
   private readonly groundPitchMin = this.barrelPitchMin;
 
-  constructor(world: RAPIER.World, spawnX: number, spawnZ: number, facingRadians = 0) {
+  constructor(
+    world: RAPIER.World,
+    spawnX: number,
+    spawnZ: number,
+    facingRadians = 0,
+    bikeModel?: THREE.Object3D,
+    bikeAnimations: THREE.AnimationClip[] = [],
+  ) {
     super(world, spawnX, spawnZ, PLAYER_MAX_HEALTH, ARMY_GREEN, facingRadians, 'player');
     this.fasterOnRoads = true;
     this.addCommander(ARMY_GREEN);
@@ -147,6 +165,34 @@ export class PlayerTank extends Tank {
     this.tankParts = [...this.root.children];
     this.buildJeepRig();
     this.buildChopperRig();
+    this.buildBikeRig(bikeModel, bikeAnimations);
+  }
+
+  private buildBikeRig(source?: THREE.Object3D, animations: THREE.AnimationClip[] = []): void {
+    if (source) {
+      const scene = source.clone(true);
+      scene.scale.setScalar(1.55);
+      scene.position.y = -HULL_HALF_EXTENTS.y;
+      scene.rotation.y = Math.PI;
+      this.bikeRig.add(scene);
+      this.bikeHandlebar = scene.getObjectByName('handlebar') ?? null;
+      this.bikeHandlebarRest = this.bikeHandlebar?.rotation.y ?? 0;
+      if (animations.length) {
+        this.bikeMixer = new THREE.AnimationMixer(scene);
+        const wheelRoll = animations.find((clip) => clip.name === 'wheel-roll');
+        if (wheelRoll) {
+          this.bikeRollAction = this.bikeMixer.clipAction(wheelRoll);
+          this.bikeRollAction.play();
+          this.bikeRollAction.paused = true;
+        }
+      }
+    }
+    const rider = Tank.createCommander(ARMY_GREEN);
+    rider.scale.setScalar(0.7);
+    rider.position.set(0, 0.32, 0.3);
+    this.bikeRig.add(rider);
+    this.bikeRig.visible = false;
+    this.root.add(this.bikeRig);
   }
 
   // ---------- the jeep ----------
@@ -351,10 +397,18 @@ export class PlayerTank extends Tank {
     this.vehicleMode = vehicle;
     const jeep = vehicle === 'jeep';
     const chopper = vehicle === 'chopper';
+    const bike = vehicle === 'motorbike';
     for (const part of this.tankParts) part.visible = vehicle === 'tank';
     this.jeepRig.visible = jeep;
     this.chopperRig.visible = chopper;
-    this.turnRateScale = jeep ? JEEP_TURN_RATE : 1;
+    this.bikeRig.visible = bike;
+    if (!bike) {
+      this.bikeRig.rotation.set(0, 0, 0);
+      this.bikeWasAirborne = false;
+      this.bikeAirY = null;
+      this.bikeAirVelocity = 0;
+    }
+    this.turnRateScale = jeep || bike ? JEEP_TURN_RATE * (bike ? 1.25 : 1) : 1;
     this.lastJeepPosition.copy(this.position);
     // The chin gun can look well down at the ground (and starts off looking at it); the tank's gun can't.
     this.barrelPitchMin = chopper ? CHOPPER_PITCH_MIN : this.groundPitchMin;
@@ -380,7 +434,7 @@ export class PlayerTank extends Tank {
   }
 
   private get maxSpeed(): number {
-    return this.isJeep ? JEEP_MAX_SPEED : PLAYER_MAX_SPEED;
+    return this.isJeep ? JEEP_MAX_SPEED : this.vehicleMode === 'motorbike' ? MOTORBIKE_MAX_SPEED : PLAYER_MAX_SPEED;
   }
 
   /** The jeep's missile pod shows red noses, and the chopper's rails their missiles, while they're ready. */
@@ -398,6 +452,10 @@ export class PlayerTank extends Tank {
 
   /** Where each missile leaves and which way: the jeep's pod fires one, the chopper one off each rail. */
   get missileLaunches(): { origin: THREE.Vector3; direction: THREE.Vector3 }[] {
+    if (this.vehicleMode === 'motorbike') {
+      const origin = this.root.localToWorld(new THREE.Vector3(0, 0.45, -1.1));
+      return [{ origin, direction: this.muzzleWorldDirection }];
+    }
     if (!this.isChopper) return [this.jeepMissileLaunch];
     return this.chopperParts.rails.map((rail) => ({ origin: rail.getWorldPosition(new THREE.Vector3()), direction: this.muzzleWorldDirection }));
   }
@@ -556,6 +614,9 @@ export class PlayerTank extends Tank {
   }
 
   step(input: InputState, dt: number): { origin: THREE.Vector3; direction: THREE.Vector3 } | null {
+    const startX = this.position.x;
+    const startZ = this.position.z;
+    const startGround = heightAt(startX, startZ);
     const hullYawBefore = this.yaw;
 
     // WASD drives exactly like the left stick.
@@ -597,9 +658,70 @@ export class PlayerTank extends Tank {
     if (this.isJeep) this.animateJeep(dt, hullDelta);
     if (this.isChopper) this.animateChopper(dt);
     this.update(dt);
+    if (this.vehicleMode === 'motorbike') {
+      const moveX = this.position.x - startX;
+      const moveZ = this.position.z - startZ;
+      const moveDistance = Math.hypot(moveX, moveZ);
+      this.advanceBikeJump(dt, startGround, moveX, moveZ, moveDistance / Math.max(dt, 0.001));
+      this.animateBike(dt, hullDelta, moveDistance / Math.max(dt, 0.001));
+    }
 
     // The jeep and the chopper have no cannon: the trigger fires their own guns (see tryRapidFire).
     return input.firing && this.vehicleMode === 'tank' ? this.tryFire() : null;
+  }
+
+  private advanceBikeJump(dt: number, startGround: number, moveX: number, moveZ: number, speed: number): void {
+    this.bikeJumpCooldown = Math.max(0, this.bikeJumpCooldown - dt);
+    const ground = heightAt(this.position.x, this.position.z);
+    const drop = startGround - ground;
+    const aboveTerrain = this.position.y - ground - HULL_HALF_EXTENTS.y;
+    const moved = Math.hypot(moveX, moveZ);
+    const downhillAhead = moved > 0.05
+      ? ground - heightAt(this.position.x + (moveX / moved) * 12, this.position.z + (moveZ / moved) * 12)
+      : 0;
+    if (this.bikeAirY === null && this.bikeJumpCooldown === 0 && speed > 10 && (downhillAhead > 1.15 || aboveTerrain > 1.55 || drop > 0.8)) {
+      // Sample ahead so a fast bike launches at a hill crest; the freestanding kicker gives it a stronger lip.
+      this.bikeAirY = this.position.y;
+      this.bikeAirVelocity = aboveTerrain > 1.55 ? 11 : 8 + Math.min(7, Math.max(drop, downhillAhead) * 1.4);
+      this.bikeJumpCooldown = 0.9;
+    }
+    if (this.bikeAirY === null) return;
+
+    this.bikeAirVelocity -= 22 * dt;
+    this.bikeAirY += this.bikeAirVelocity * dt;
+    const floor = ground + HULL_HALF_EXTENTS.y + 0.05;
+    if (this.bikeAirY <= floor) {
+      this.bikeAirY = null;
+      this.bikeAirVelocity = 0;
+      this.root.position.y = floor;
+    } else {
+      this.root.position.y = this.bikeAirY;
+    }
+    const p = this.root.position;
+    this.body.setNextKinematicTranslation({ x: p.x, y: p.y, z: p.z });
+  }
+
+  private animateBike(dt: number, hullDelta: number, speed: number): void {
+    const airborne = this.heightAboveGround > 0.65;
+    this.bikeMixer?.update(dt);
+    if (this.bikeRollAction) {
+      this.bikeRollAction.paused = false;
+      this.bikeRollAction.timeScale = speed / 7;
+    }
+    const steer = dt > 0 ? clamp(-hullDelta / dt * 0.18, -0.52, 0.52) : 0;
+    if (this.bikeHandlebar) this.bikeHandlebar.rotation.y = this.bikeHandlebarRest + steer;
+    const turnRate = dt > 0 ? hullDelta / dt : 0;
+    const lean = clamp(-turnRate * 0.14, -0.42, 0.42);
+    this.bikeRig.rotation.z = damp(this.bikeRig.rotation.z, lean, 7, dt);
+    if (airborne && !this.bikeWasAirborne) this.bikeFlipTime = 0;
+    if (airborne) {
+      this.bikeFlipTime += dt;
+      // One quick backflip during a ramp jump. A full turn returns the bike to upright on landing.
+      this.bikeRig.rotation.x = Math.PI * 2 * Math.min(1, this.bikeFlipTime / 0.75);
+    } else {
+      this.bikeRig.rotation.x = 0;
+    }
+    this.bikeWasAirborne = airborne;
   }
 
   private driveCameraRelative(sx: number, sy: number, len: number, dt: number): void {

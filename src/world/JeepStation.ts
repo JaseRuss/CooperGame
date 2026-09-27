@@ -20,7 +20,7 @@ const BUSY_TIME = 2.5;
 let signTexture: THREE.CanvasTexture | null = null;
 let padTexture: THREE.CanvasTexture | null = null;
 
-function makeSignTexture(): THREE.CanvasTexture {
+function makeSignTexture(label = 'JEEP STATION'): THREE.CanvasTexture {
   const c = document.createElement('canvas');
   c.width = 512;
   c.height = 128;
@@ -33,7 +33,7 @@ function makeSignTexture(): THREE.CanvasTexture {
   ctx.font = '900 64px "Black Ops One", Impact, "Arial Black", sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText('JEEP STATION', 256, 68, 470);
+  ctx.fillText(label, 256, 68, 470);
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
   return tex;
@@ -94,7 +94,7 @@ function makePadTexture(): THREE.CanvasTexture {
  * other side as a jeep. Only the posts are solid, so it drives straight through either way.
  */
 export class JeepStation {
-  readonly kind = 'jeep';
+  readonly kind: 'jeep' | 'motorbike';
   readonly center: THREE.Vector3;
   private readonly root = new THREE.Group();
   private readonly cog = new THREE.Group();
@@ -106,7 +106,8 @@ export class JeepStation {
   private busy = 0;
 
   /** @param yaw turns the bay's local Z (the way you drive through) in the world, like rotation.y. */
-  constructor(world: RAPIER.World, scene: THREE.Scene, x: number, z: number, yaw: number) {
+  constructor(world: RAPIER.World, scene: THREE.Scene, x: number, z: number, yaw: number, kind: 'jeep' | 'motorbike' = 'jeep') {
+    this.kind = kind;
     const ground = heightAt(x, z);
     this.center = new THREE.Vector3(x, ground, z);
     this.cosYaw = Math.cos(yaw);
@@ -207,7 +208,7 @@ export class JeepStation {
     this.root.add(markings);
 
     // "JEEP STATION" on both faces of both signs.
-    const signMat = new THREE.MeshStandardMaterial({ map: (signTexture ??= makeSignTexture()), roughness: 0.6 });
+    const signMat = new THREE.MeshStandardMaterial({ map: this.kind === 'jeep' ? (signTexture ??= makeSignTexture()) : makeSignTexture('MOTORBIKE TIME'), roughness: 0.6 });
     for (const sz of [-1, 1]) {
       const face = new THREE.Mesh(new THREE.PlaneGeometry(8.2, 1.75), signMat);
       face.position.set(0, HEIGHT + 1.65, sz * (HALF_L + 0.14));
