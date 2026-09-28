@@ -15,6 +15,11 @@ const MAX_CAMERA_DIP_PITCH = 0.38;
  */
 const AIR_CHASE_DISTANCE = 19;
 const AIR_CHASE_RISE = 6.5;
+/** During the motorbike's rocket jump: further back and above, looking down past it at the ground ahead. */
+const JUMP_VIEW_BACK = 15;
+const JUMP_VIEW_RISE = 8;
+const JUMP_VIEW_LOOK_AHEAD = 12;
+const JUMP_VIEW_LOOK_DROP = 9;
 const UP = new THREE.Vector3(0, 1, 0);
 
 /**
@@ -30,6 +35,8 @@ export class CameraRig {
   private shake = 0;
   /** Chase the chopper (see AIR_CHASE_DISTANCE) rather than a tank. */
   private aerial = false;
+  /** Following the motorbike's rocket jump (see JUMP_VIEW_BACK). */
+  private jumpView = false;
 
   constructor(private readonly camera: THREE.PerspectiveCamera) {}
 
@@ -41,6 +48,11 @@ export class CameraRig {
   /** Switches the chase cam between following a tank or jeep and following the chopper. */
   setAerial(aerial: boolean): void {
     this.aerial = aerial;
+  }
+
+  /** Pulls back and up over the motorbike while it rocket jumps, whatever the gun is aimed at. */
+  setJumpView(on: boolean): void {
+    this.jumpView = on;
   }
 
   toggle(): void {
@@ -120,6 +132,11 @@ export class CameraRig {
       desiredPos.copy(target.position).addScaledVector(aim, -AIR_CHASE_DISTANCE).addScaledVector(up, AIR_CHASE_RISE);
       desiredPos.y = Math.max(desiredPos.y, target.position.y + 1); // never down in the ground on take-off
       desiredLook.copy(desiredPos).addScaledVector(aim, 30);
+    } else if (this.jumpView) {
+      desiredPos.copy(target.position).addScaledVector(forward, -JUMP_VIEW_BACK);
+      desiredPos.y += JUMP_VIEW_RISE;
+      desiredLook.copy(target.position).addScaledVector(forward, JUMP_VIEW_LOOK_AHEAD);
+      desiredLook.y -= JUMP_VIEW_LOOK_DROP;
     }
 
     if (!this.initialized) {

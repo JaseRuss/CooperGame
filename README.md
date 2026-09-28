@@ -80,7 +80,7 @@ plug one in and press a button so the browser detects it.
 | Fire (the jeep fires jam rounds, the chopper its chin gun) | RT or A | Left click or Space |
 | Jam cannon (hold, short range) | LT | E |
 | Mega jam: jam all round the tank (when charged) | X | X |
-| Homing rocket (when charged; the jeep and chopper fire missiles) | LB | F or right click |
+| Homing rocket (when charged; the jeep and chopper fire missiles, the motorbike rocket jumps) | LB | F or right click |
 | AA missiles (with a helicopter locked) | RB | Q |
 | Switch first / third person | Y | C |
 | Pause, full map and options | Start | M |
@@ -181,14 +181,14 @@ sound on.
 - Hit a building and a health bar pops up over it for a few seconds.
 - The pause map shows where the enemy is gathered as a red glow.
 
-## Jeep and chopper stations
+## Jeep, chopper and motorbike stations
 
-Every family base has a changing station just outside the gate, and they take
-turns round the map: Cooper's, Mum's, Dad's and Inness's have a **jeep
-station**, and Granny's, Grandpa's, Auntie Claire's and Uncle Steven's have a
-**chopper station**. Each enemy base gets one too once you've captured it, a
-jeep station and a chopper station in turn. Jeep stations show as a blue **J**
-on the maps, chopper stations as an orange **H**.
+Every family base has a changing station just outside the gate: Cooper's,
+Dad's and Auntie Claire's have a **motorbike station**, Mum's and Inness's a
+**jeep station**, and Granny's, Grandpa's and Uncle Steven's a **chopper
+station**. Each enemy base gets one too once you've captured it. Jeep stations
+show as a blue **J** on the maps, chopper stations as an orange **H** and
+motorbike stations as a pink **M**.
 
 ### Jeep stations
 
@@ -228,6 +228,25 @@ a puff of smoke, it turns into an attack helicopter and takes off.
   down to land wherever it is (steer it somewhere clear), then turns back into
   the tank. Fly over a chopper station, even on the way down, to top the time
   back up.
+
+### Motorbike stations
+
+Drive through a motorbike station and the tank turns into an army-green sports
+bike, with a rider in a helmet, twin machine guns on the fairing and a booster
+rocket down each side.
+
+- It's the fastest thing on the ground and leans into the corners. Hit a
+  kicker ramp or a hill crest at speed to jump, with a backflip.
+- **Fire** shoots the twin machine guns, left and right in turn. It has no jam
+  cannon or AA missiles.
+- **LB / F** fires the boosters for a **rocket jump**: the bike shoots about
+  25 m straight up. At the top, the six missiles in the booster racks fire down
+  at the nearest enemies below (tanks first, then bunkers and base buildings,
+  then soldiers), and landing bowls over any soldiers close by. It recharges in
+  a minute, and the missiles show back on the racks when it's ready. A rocket
+  jump can't carry you over the Fortress's walls while the gates are locked.
+- After **3 minutes** (it uses the **Jeep time** option) it turns back into the
+  tank. Drive through a motorbike station to top the time back up.
 
 ## Mission 2: Night Raid
 
@@ -303,6 +322,5 @@ too:
 - **[poly.pizza](https://poly.pizza/)**: wooden huts and shacks by
   [Quaternius](https://quaternius.com/). CC0. Links to each model are in
   `public/models/huts/LICENSE-quaternius-huts.txt`.
-- **[3DAssets.dev](https://3dassets.dev/assets/motorcycle-racing-and-street-bikes-road-sportbike-e1418015)**: road sportbike model. CC0 1.0 Universal.
 - **[fonts.google.com](https://fonts.google.com/specimen/Black+Ops+One)**: the
   Black Ops One font by James Grieshaber and Eben Sorkin. SIL Open Font License.

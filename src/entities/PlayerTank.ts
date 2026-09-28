@@ -6,6 +6,7 @@ import { PLAYER_MAX_HEALTH, PLAYER_MAX_SPEED, WORLD_HALF } from '../core/config'
 import { ARMY_GREEN, plastic, shade } from '../utils/plastic';
 import { PartBuilder, tubeZ } from '../utils/modelKit';
 import { buildRocketModel } from '../combat/HomingRocket';
+import { buildMotorbike, BIKE_SCALE, BIKE_WHEEL_RADIUS, type MotorbikeParts } from './MotorbikeModel';
 import { buildChopperParts, buildJeepParts, CHOPPER_SKID_DEPTH, type ChopperParts, type JeepParts } from '../world/Vehicles';
 import { heightAt } from '../world/Terrain';
 import type { DriveStyle } from '../core/Settings';
@@ -33,8 +34,17 @@ const JEEP_MAX_SPEED = 36; // m/s (the tank does 22)
 const MOTORBIKE_MAX_SPEED = 52.7; // 15% below the original 62 m/s
 const MOTORBIKE_GUN_INTERVAL = 0.085;
 const MOTORBIKE_GUN_SPREAD = 0.028;
-const MOTORBIKE_RIG_DROP = 0.12;
 export const MOTORBIKE_AIRBORNE_HEIGHT = 0.65;
+/** The bike flips and pitches about its middle, this high off the ground. */
+const BIKE_PIVOT_HEIGHT = 0.8;
+const BIKE_GRAVITY = 22; // m/s², a bit floatier than real for bigger jumps
+/**
+ * Rocket jump: the side boosters kick the bike up at this speed, then keep pushing (m/s², against
+ * gravity) for the burn. That tops out about 25 m up, around 3 seconds in the air.
+ */
+const ROCKET_JUMP_SPEED = 14;
+const ROCKET_JUMP_THRUST = 40;
+const ROCKET_JUMP_BURN = 0.55;
 const JEEP_TURN_RATE = 1.3; // × the tank's
 const MOTORBIKE_TURN_RATE = 2.5; // multiplier relative to the jeep's turn rate
 /** The toy jeep is ~3.9 m long; scaled to about the tank's footprint so it fills the same collider. */
@@ -118,11 +128,19 @@ export class PlayerTank extends Tank {
   private bikeAirY: number | null = null;
   private bikeAirVelocity = 0;
   private bikeJumpCooldown = 0;
-  private bikeMixer: THREE.AnimationMixer | null = null;
-  private bikeRollAction: THREE.AnimationAction | null = null;
-  private bikeHandlebar: THREE.Object3D | null = null;
-  private bikeHandlebarRest = 0;
-  private readonly bikeGunMuzzle = new THREE.Object3D();
+  /** Leans the bike into turns about the tyres' contact patch (inside bikeRig, which flips it). */
+  private readonly bikeLean = new THREE.Group();
+  private bikeParts!: MotorbikeParts;
+  /** Which of the bike's twin guns fires next. */
+  private bikeGunSide = 0;
+  private bikeSteer = 0;
+  private readonly lastBikePosition = new THREE.Vector3();
+  /** Seconds of booster burn left in a rocket jump. */
+  private boostTime = 0;
+  /** In the air from a rocket jump (rather than a ramp or a hill crest). */
+  private rocketJumping = false;
+  private rocketApexPending = false;
+  private rocketLandingPending = false;
   /** Leans the chopper into its travel (and bobs it while hovering). */
   private readonly chopperTilt = new THREE.Group();
   private chopperParts!: ChopperParts;
@@ -142,8 +160,6 @@ export class PlayerTank extends Tank {
     spawnX: number,
     spawnZ: number,
     facingRadians = 0,
-    bikeModel?: THREE.Object3D,
-    bikeAnimations: THREE.AnimationClip[] = [],
   ) {
     super(world, spawnX, spawnZ, PLAYER_MAX_HEALTH, ARMY_GREEN, facingRadians, 'player');
     this.fasterOnRoads = true;
@@ -171,48 +187,17 @@ export class PlayerTank extends Tank {
     this.tankParts = [...this.root.children];
     this.buildJeepRig();
     this.buildChopperRig();
-    this.buildBikeRig(bikeModel, bikeAnimations);
+    this.buildBikeRig();
   }
 
-  private buildBikeRig(source?: THREE.Object3D, animations: THREE.AnimationClip[] = []): void {
-    this.bikeRig.position.y = -MOTORBIKE_RIG_DROP;
-    if (source) {
-      const scene = source.clone(true);
-      scene.scale.setScalar(1.55);
-      // The imported bike's tyres sit noticeably above the ground at the tank's normal mount.
-      scene.position.y = -HULL_HALF_EXTENTS.y;
-      scene.rotation.y = Math.PI;
-      this.bikeRig.add(scene);
-      this.bikeHandlebar = scene.getObjectByName('handlebar') ?? null;
-      this.bikeHandlebarRest = this.bikeHandlebar?.rotation.y ?? 0;
-      if (animations.length) {
-        this.bikeMixer = new THREE.AnimationMixer(scene);
-        const wheelRoll = animations.find((clip) => clip.name === 'wheel-roll');
-        if (wheelRoll) {
-          this.bikeRollAction = this.bikeMixer.clipAction(wheelRoll);
-          this.bikeRollAction.play();
-          this.bikeRollAction.paused = true;
-        }
-      }
-    }
-    const rider = Tank.createCommander(ARMY_GREEN);
-    rider.scale.setScalar(0.7);
-    rider.position.set(0, 0.32, 0.3);
-    this.bikeRig.add(rider);
-    const gun = new THREE.Group();
-    gun.position.set(0.34, 0.9, -0.55);
-    const gunMat = plastic(shade(ARMY_GREEN, 0.72));
-    const receiver = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.24, 0.72), gunMat);
-    gun.add(receiver);
-    for (const side of [-1, 1]) {
-      const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.055, 0.82, 8), plastic(0x252a20));
-      barrel.rotation.x = -Math.PI / 2;
-      barrel.position.set(side * 0.09, 0, -0.64);
-      gun.add(barrel);
-    }
-    this.bikeGunMuzzle.position.set(0, 0, -1.05);
-    gun.add(this.bikeGunMuzzle);
-    this.bikeRig.add(gun);
+  /** The toy sports bike from a changing station (see MotorbikeModel), hidden until it's swapped in. */
+  private buildBikeRig(): void {
+    this.bikeParts = buildMotorbike(ARMY_GREEN);
+    // bikeRig pivots (flips) about the bike's middle; bikeLean, at the ground, leans it into turns.
+    this.bikeRig.position.y = -HULL_HALF_EXTENTS.y + BIKE_PIVOT_HEIGHT;
+    this.bikeLean.position.y = -BIKE_PIVOT_HEIGHT;
+    this.bikeLean.add(this.bikeParts.group);
+    this.bikeRig.add(this.bikeLean);
     this.bikeRig.visible = false;
     this.root.add(this.bikeRig);
   }
@@ -426,10 +411,15 @@ export class PlayerTank extends Tank {
     this.bikeRig.visible = bike;
     if (!bike) {
       this.bikeRig.rotation.set(0, 0, 0);
+      this.bikeLean.rotation.set(0, 0, 0);
       this.bikeWasAirborne = false;
       this.bikeAirY = null;
       this.bikeAirVelocity = 0;
     }
+    this.boostTime = 0;
+    this.rocketJumping = this.rocketApexPending = this.rocketLandingPending = false;
+    for (const flame of this.bikeParts.flames) flame.visible = false;
+    this.lastBikePosition.copy(this.position);
     this.turnRateScale = jeep ? JEEP_TURN_RATE : bike ? JEEP_TURN_RATE * MOTORBIKE_TURN_RATE : 1;
     this.lastJeepPosition.copy(this.position);
     // The chin gun can look well down at the ground (and starts off looking at it); the tank's gun can't.
@@ -481,7 +471,7 @@ export class PlayerTank extends Tank {
 
   /** Where the main gun's muzzle is: the tank's cannon, the jeep's jam gun or the chopper's chin gun. */
   get gunMuzzlePosition(): THREE.Vector3 {
-    const muzzle = this.vehicleMode === 'motorbike' ? this.bikeGunMuzzle : this.isChopper ? this.chopperParts.chinMuzzle : this.isJeep ? this.jeepMuzzle : this.muzzle;
+    const muzzle = this.vehicleMode === 'motorbike' ? this.bikeParts.muzzles[this.bikeGunSide] : this.isChopper ? this.chopperParts.chinMuzzle : this.isJeep ? this.jeepMuzzle : this.muzzle;
     return muzzle.getWorldPosition(new THREE.Vector3());
   }
 
@@ -493,6 +483,7 @@ export class PlayerTank extends Tank {
     if (this.vehicleMode === 'tank' || this.rapidCooldown > 0 || this.isGunJammed) return null;
     this.rapidCooldown = this.isChopper ? CHOPPER_GUN_INTERVAL : this.vehicleMode === 'motorbike' ? MOTORBIKE_GUN_INTERVAL : JEEP_JAM_INTERVAL;
     const spread = this.isChopper ? CHOPPER_GUN_SPREAD : this.vehicleMode === 'motorbike' ? MOTORBIKE_GUN_SPREAD : JEEP_JAM_SPREAD;
+    if (this.vehicleMode === 'motorbike') this.bikeGunSide = 1 - this.bikeGunSide; // the twin guns take turns
     const direction = this.muzzleWorldDirection;
     direction.x += (Math.random() - 0.5) * spread;
     direction.y += (Math.random() - 0.5) * spread * 0.5;
@@ -612,6 +603,58 @@ export class PlayerTank extends Tank {
     return { origin: muzzle.getWorldPosition(new THREE.Vector3()), direction: direction.normalize(), speedScale: 0.62 + 0.45 * t };
   }
 
+  // ---------- the bike's rocket jump ----------
+
+  /** Fires the bike's side boosters: a big jump straight up. False if it's already in the air. */
+  rocketJump(): boolean {
+    if (this.vehicleMode !== 'motorbike' || this.bikeAirY !== null || this.heightAboveGround > 1.5) return false;
+    this.bikeAirY = this.position.y;
+    this.bikeAirVelocity = ROCKET_JUMP_SPEED;
+    this.boostTime = ROCKET_JUMP_BURN;
+    this.rocketJumping = true;
+    this.rocketApexPending = true;
+    return true;
+  }
+
+  /** True from a rocket jump's take-off until the bike lands again. */
+  get inRocketJump(): boolean {
+    return this.rocketJumping;
+  }
+
+  /** True while the boosters are firing. */
+  get boosting(): boolean {
+    return this.boostTime > 0;
+  }
+
+  /** True (once) when a rocket jump reaches the top: the moment to fire the missiles. */
+  consumeRocketApex(): boolean {
+    if (!this.rocketApexPending || !this.rocketJumping || this.bikeAirVelocity > 0) return false;
+    this.rocketApexPending = false;
+    return true;
+  }
+
+  /** True (once) when the bike comes back down from a rocket jump. */
+  consumeRocketLanding(): boolean {
+    const landed = this.rocketLandingPending;
+    this.rocketLandingPending = false;
+    return landed;
+  }
+
+  /** The boosters' nozzles, in world space (for the smoke trail). */
+  get boosterNozzles(): THREE.Vector3[] {
+    return this.bikeParts.flames.map((f) => f.getWorldPosition(new THREE.Vector3()));
+  }
+
+  /** Where the bike's six rack missiles sit, in world space: they launch from there. */
+  get bikeMissilePoints(): THREE.Vector3[] {
+    return this.bikeParts.missiles.map((m) => m.getWorldPosition(new THREE.Vector3()));
+  }
+
+  /** Shows the missiles in the booster racks while the rocket jump is charged. */
+  setRocketJumpReady(ready: boolean): void {
+    for (const m of this.bikeParts.missiles) m.visible = ready;
+  }
+
   /** Shows the rocket on its rail (and blinks the lamp) when it's charged. */
   setRocketReady(ready: boolean): void {
     this.readyRocket.visible = ready;
@@ -682,7 +725,7 @@ export class PlayerTank extends Tank {
       const moveZ = this.position.z - startZ;
       const moveDistance = Math.hypot(moveX, moveZ);
       this.advanceBikeJump(dt, startGround, moveX, moveZ, moveDistance / Math.max(dt, 0.001));
-      this.animateBike(dt, hullDelta, moveDistance / Math.max(dt, 0.001));
+      this.animateBike(dt, hullDelta);
     }
 
     // The jeep and the chopper have no cannon: the trigger fires their own guns (see tryRapidFire).
@@ -706,13 +749,28 @@ export class PlayerTank extends Tank {
     }
     if (this.bikeAirY === null) return;
 
-    this.bikeAirVelocity -= 22 * dt;
+    if (this.boostTime > 0) {
+      this.boostTime = Math.max(0, this.boostTime - dt);
+      this.bikeAirVelocity += ROCKET_JUMP_THRUST * dt;
+    }
+    this.bikeAirVelocity -= BIKE_GRAVITY * dt;
     this.bikeAirY += this.bikeAirVelocity * dt;
-    const floor = ground + HULL_HALF_EXTENTS.y + 0.05;
+    // Coming down, land on whatever's underneath: the ground, or a roof (a rocket jump clears houses).
+    let floor = ground + HULL_HALF_EXTENTS.y + 0.05;
+    if (this.bikeAirVelocity < 0) {
+      const from = { x: this.position.x, y: this.bikeAirY, z: this.position.z };
+      const hit = this.world.castRay(new RAPIER.Ray(from, { x: 0, y: -1, z: 0 }), this.bikeAirY - floor + 1, true, undefined, undefined, this.physicsCollider);
+      if (hit) floor = Math.max(floor, this.bikeAirY - hit.timeOfImpact + HULL_HALF_EXTENTS.y + 0.05);
+    }
     if (this.bikeAirY <= floor) {
       this.bikeAirY = null;
       this.bikeAirVelocity = 0;
       this.root.position.y = floor;
+      if (this.rocketJumping) {
+        this.rocketJumping = false;
+        this.rocketApexPending = false;
+        this.rocketLandingPending = true;
+      }
     } else {
       this.root.position.y = this.bikeAirY;
     }
@@ -720,20 +778,28 @@ export class PlayerTank extends Tank {
     this.body.setNextKinematicTranslation({ x: p.x, y: p.y, z: p.z });
   }
 
-  private animateBike(dt: number, hullDelta: number, speed: number): void {
+  private animateBike(dt: number, hullDelta: number): void {
+    const parts = this.bikeParts;
     const airborne = this.heightAboveGround > MOTORBIKE_AIRBORNE_HEIGHT;
-    this.bikeMixer?.update(dt);
-    if (this.bikeRollAction) {
-      this.bikeRollAction.paused = false;
-      this.bikeRollAction.timeScale = speed / 7;
+    // Roll the wheels by how far the bike moved along its nose (they spin free in the air).
+    const moved = this.position.clone().sub(this.lastBikePosition);
+    this.lastBikePosition.copy(this.position);
+    if (moved.lengthSq() < 25) {
+      const spin = moved.dot(this.forward) / (BIKE_WHEEL_RADIUS * BIKE_SCALE);
+      parts.rearWheel.rotation.x -= spin;
+      parts.frontWheel.rotation.x -= spin;
     }
     const steer = dt > 0 ? clamp(-hullDelta / dt * 0.18, -0.52, 0.52) : 0;
-    if (this.bikeHandlebar) this.bikeHandlebar.rotation.y = this.bikeHandlebarRest + steer;
+    this.bikeSteer += ((airborne ? 0 : steer) - this.bikeSteer) * Math.min(1, dt * 8);
+    parts.steer.rotation.y = this.bikeSteer;
     const turnRate = dt > 0 ? hullDelta / dt : 0;
     const lean = clamp(-turnRate * 0.14, -0.42, 0.42);
-    this.bikeRig.rotation.z = damp(this.bikeRig.rotation.z, lean, 7, dt);
+    this.bikeLean.rotation.z = damp(this.bikeLean.rotation.z, airborne ? 0 : lean, 7, dt);
     if (airborne && !this.bikeWasAirborne) this.bikeFlipTime = 0;
-    if (airborne) {
+    if (this.rocketJumping) {
+      // Nose up as it climbs on the boosters, level at the top for the missiles, nose down to land.
+      this.bikeRig.rotation.x = damp(this.bikeRig.rotation.x, clamp(this.bikeAirVelocity * 0.02, -0.25, 0.35), 6, dt);
+    } else if (airborne) {
       this.bikeFlipTime += dt;
       // One quick backflip during a ramp jump. A full turn returns the bike to upright on landing.
       this.bikeRig.rotation.x = Math.PI * 2 * Math.min(1, this.bikeFlipTime / 0.75);
@@ -741,6 +807,11 @@ export class PlayerTank extends Tank {
       this.bikeRig.rotation.x = 0;
     }
     this.bikeWasAirborne = airborne;
+    // Booster flames flicker while they burn.
+    for (const flame of parts.flames) {
+      flame.visible = this.boostTime > 0;
+      if (flame.visible) flame.scale.set(1, 1, 0.8 + Math.random() * 0.5 + this.boostTime);
+    }
   }
 
   private driveCameraRelative(sx: number, sy: number, len: number, dt: number): void {

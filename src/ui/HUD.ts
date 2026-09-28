@@ -16,7 +16,6 @@ const CREDITS: { site: string; url: string; items: string }[] = [
     items: 'City Kit Suburban, Commercial, Industrial and Roads, Car Kit, Nature Kit (jungle trees and plants); Sci-fi, Impact and Interface Sounds · CC0',
   },
   { site: 'poly.pizza', url: 'https://poly.pizza', items: 'Wooden huts and shacks by Quaternius · CC0' },
-  { site: '3dassets.dev', url: 'https://3dassets.dev/assets/motorcycle-racing-and-street-bikes-road-sportbike-e1418015', items: 'Road sportbike · CC0 1.0 Universal' },
   { site: 'fonts.google.com', url: 'https://fonts.google.com/specimen/Black+Ops+One', items: 'Black Ops One font by James Grieshaber and Eben Sorkin · SIL Open Font License' },
 ];
 
@@ -64,8 +63,9 @@ export interface HUDState {
   maxHealth: number;
   reloadFraction: number; // 0 = ready to fire, 1 = just fired
   /**
-   * Set while in the jeep or chopper from a changing station: seconds left of it, its missile
-   * reload (0..1), and whether the chopper is coming in to land.
+   * Set while in the jeep, chopper or motorbike from a changing station: seconds left of it, its
+   * missile reload (0..1; the motorbike's rocket jump charge), and whether the chopper is coming
+   * in to land.
    */
   ride: { vehicle: 'jeep' | 'chopper' | 'motorbike'; timeLeft: number; total: number; missileCharge: number; landing: boolean } | null;
   cameraMode: 'first' | 'third';
@@ -338,6 +338,7 @@ export class HUD {
   private readonly reloadFill: HTMLDivElement;
   private readonly reloadText: HTMLSpanElement;
   private readonly rocketSlot: HTMLDivElement;
+  private readonly jamSlot: HTMLDivElement;
   private readonly rocketFill: HTMLDivElement;
   private readonly rocketText: HTMLSpanElement;
   private readonly gunName: HTMLSpanElement;
@@ -451,6 +452,7 @@ export class HUD {
     this.aaPips = el('div', 'pips', aaBody);
 
     const jamSlot = el('div', 'slot', card);
+    this.jamSlot = jamSlot;
     el('div', 'icon', jamSlot).innerHTML = JAM_ICON;
     const jamBody = el('div', 'body', jamSlot);
     const jamLabel = el('div', 'row-label', jamBody);
@@ -1027,10 +1029,10 @@ export class HUD {
     this.reloadText.style.color = ride ? (chopper ? '#ffd24a' : '#ff8aa8') : loaded ? '#ffd24a' : '#eef3f8';
     this.modeText.textContent = `${state.cameraMode === 'first' ? '1st' : '3rd'} person · ${chopper ? 'Flying' : bike ? 'Motorbike' : `${state.driveStyle === 'warthog' ? 'Warthog' : 'Classic'} drive`}`;
 
-    // The jeep and chopper swap the homing rocket for quick-reloading missiles.
+    // The jeep and chopper swap the homing rocket for quick-reloading missiles, the motorbike for its rocket jump.
     const charge = ride ? ride.missileCharge : state.rocketCharge;
     const rocketReady = charge >= 1 && !state.rocketDamaged;
-    this.rocketName.textContent = ride ? (chopper ? 'CHOPPER MISSILES' : 'JEEP MISSILES') : 'HOMING ROCKET';
+    this.rocketName.textContent = ride ? (chopper ? 'CHOPPER MISSILES' : bike ? 'ROCKET JUMP' : 'JEEP MISSILES') : 'HOMING ROCKET';
     this.rocketFill.style.width = `${Math.floor(charge * 100)}%`;
     this.rocketText.textContent = state.rocketDamaged
       ? 'DAMAGED · REPAIR AT BASE'
@@ -1050,7 +1052,7 @@ export class HUD {
     }
     this.rocketText.style.color = state.rocketDamaged ? '#ff6a5a' : rocketReady ? '#ff9a5a' : '#eef3f8';
     this.rocketSlot.classList.toggle('ready', rocketReady);
-    this.rocketSlot.style.display = bike ? 'none' : '';
+    this.jamSlot.style.display = bike ? 'none' : ''; // the bike has no jam cannon
 
     const aaLocked = state.aaLockScreen !== null;
     this.aaText.textContent = state.aaRearming
@@ -1092,13 +1094,13 @@ export class HUD {
 
     const k = (key: string, what: string) => `<span class="key">${key}</span>${what}`;
     const fire = ride ? (chopper ? 'chin gun' : bike ? 'machine gun' : 'jam gun') : 'fire';
-    const rocket = ride ? (chopper ? 'missiles' : 'missile') : 'rocket';
+    const rocket = ride ? (chopper ? 'missiles' : bike ? 'rocket jump' : 'missile') : 'rocket';
     const drive = chopper ? 'fly' : 'drive';
     this.setHTML(
       this.keys,
       (state.usingGamepad
-        ? `${k('LS', drive)}${k('RS', 'aim')}${k('RT', fire)}${bike ? '' : k('LT', 'jam')}${bike ? '' : k('LB', rocket)}${bike ? '' : k('RB', 'AA')}<br>${bike ? '' : k('X', 'mega jam')}${k('Y', 'camera')}${k('Start', 'pause · options')}${k('Back', 'home')}`
-        : `${k('WASD', drive)}${k('Mouse', 'aim')}${k('Click', fire)}${bike ? '' : k('E', 'jam')}${bike ? '' : k('F', rocket)}${bike ? '' : k('Q', 'AA')}<br>${bike ? '' : k('X', 'mega jam')}${k('C', 'camera')}${k('M', 'pause · options')}${k('R', 'home')}` +
+        ? `${k('LS', drive)}${k('RS', 'aim')}${k('RT', fire)}${bike ? '' : k('LT', 'jam')}${k('LB', rocket)}${bike ? '' : k('RB', 'AA')}<br>${bike ? '' : k('X', 'mega jam')}${k('Y', 'camera')}${k('Start', 'pause · options')}${k('Back', 'home')}`
+        : `${k('WASD', drive)}${k('Mouse', 'aim')}${k('Click', fire)}${bike ? '' : k('E', 'jam')}${k('F', rocket)}${bike ? '' : k('Q', 'AA')}<br>${bike ? '' : k('X', 'mega jam')}${k('C', 'camera')}${k('M', 'pause · options')}${k('R', 'home')}` +
             (state.mouseCaptureHint ? '<br><span style="color:#ffd24a">Click the game to capture the mouse for aiming</span>' : '')) +
         // A gamepad press doesn't count for the browser's "user has interacted" rule, so say so.
         (state.soundLocked ? '<br><span style="color:#8fe0ff">Sound is off until you click or press a key</span>' : ''),
