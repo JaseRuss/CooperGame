@@ -59,7 +59,10 @@ const BULLET_HIT_RADIUS = 1.2; // a rifle round landing this close knocks a sold
 const RUN_OVER_RADIUS = 2.8;
 // Jam cannon: short-range lobbed jam that sticks infantry fast, then they slip over.
 const JAM_SPEED = 36;
-const JAM_RADIUS = 3; // per splat; a held spray lays a whole line of them
+/** The tank's hose throws further than the jeep's and chopper's (range grows with speed squared: ~1.5x). */
+const TANK_JAM_SPEED_SCALE = 1.22;
+const JAM_RADIUS = 3; // per splat of mega jam or a jeep round
+const HOSE_JAM_RADIUS = 4; // per hose glob's wide puddle; a held spray lays a whole line of them
 const JAM_STUCK_TIME = 5;
 const GUN_JAM_TIME = 4; // friendly fire: a teammate's gun is gummed up this long
 const JAM_DRIP_RADIUS = 2.2; // jam dripping off the globs in flight catches whatever is under their path
@@ -2194,19 +2197,21 @@ export class Game {
     if (input.jamFiring && this.player.vehicle !== 'motorbike') {
       const glob = this.player.tryJam();
       if (glob) {
-        this.jam.fire(glob.origin, glob.direction, JAM_SPEED * glob.speedScale);
+        const speed = JAM_SPEED * glob.speedScale * (this.player.vehicle === 'tank' ? TANK_JAM_SPEED_SCALE : 1);
+        this.jam.fire(glob.origin, glob.direction, speed, true);
         this.sound.play('jamShot', { volume: 0.22, rate: 1.1, minGap: 0.09 });
       }
     }
-    this.jam.update(dt, this.world, this.player.physicsCollider, (point, hit, velocity) => {
+    this.jam.update(dt, this.world, this.player.physicsCollider, (point, hit, velocity, big) => {
       if (hit) this.jamBunkerSlit(hit, point, velocity);
       this.sound.play('splat', { at: point, volume: 0.9, minGap: 0.1 });
-      this.jamEnemies(point, JAM_RADIUS);
+      const radius = big ? HOSE_JAM_RADIUS : JAM_RADIUS;
+      this.jamEnemies(point, radius);
       // Jam on your own side doesn't hurt, but it gums up their guns for a bit.
-      const fumbled = this.troops.jamGuns(point, JAM_RADIUS, 'player', GUN_JAM_TIME);
+      const fumbled = this.troops.jamGuns(point, radius, 'player', GUN_JAM_TIME);
       let jammedTank: string | null = null;
       for (const tank of [...this.buddies, ...this.redTanks]) {
-        if (tank.position.distanceTo(point) < JAM_RADIUS + 2 && tank.jamGun(GUN_JAM_TIME)) {
+        if (tank.position.distanceTo(point) < radius + 2 && tank.jamGun(GUN_JAM_TIME)) {
           jammedTank = tank instanceof BuddyTank ? `${tank.name.toUpperCase()}'S` : "A FRIENDLY TANK'S";
         }
       }
