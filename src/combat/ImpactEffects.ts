@@ -235,6 +235,26 @@ export class ImpactEffects {
     });
   }
 
+  /** A short, low dirt puff kicked up behind a fast bike. */
+  bikeDust(point: THREE.Vector3, strength: number, trailDirection: THREE.Vector3): void {
+    const shade = 0.28 + Math.random() * 0.12;
+    const drift = trailDirection.clone().setY(0).normalize().multiplyScalar(0.2 + Math.random() * 0.7)
+      .add(new THREE.Vector3((Math.random() - 0.5) * 0.45, 0.7 + strength * 0.35, (Math.random() - 0.5) * 0.45));
+    this.add({
+      geometry: SMOKE_SPHERE,
+      position: point.clone().add(new THREE.Vector3((Math.random() - 0.5) * 0.35, 0.12, (Math.random() - 0.5) * 0.25)),
+      velocity: drift,
+      life: 0.45 + Math.random() * 0.3,
+      startScale: 0.12 + strength * 0.08,
+      endScale: 0.55 + strength * 0.35,
+      startOpacity: 0.24 + strength * 0.08,
+      additive: false,
+      colorFrom: new THREE.Color(shade + 0.12, shade + 0.08, shade + 0.03),
+      colorTo: new THREE.Color(shade, shade * 0.85, shade * 0.65),
+      drag: 2.4,
+    });
+  }
+
   /** A firework burst: a ring of bright stars and a shower of tumbling confetti. */
   confetti(point: THREE.Vector3): void {
     this.flash(point, 4000, 0.3);
