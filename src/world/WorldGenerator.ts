@@ -371,7 +371,8 @@ function dressTowns(world: RAPIER.World, scene: THREE.Scene, hitRegistry: HitReg
   }
 
   const staticBody = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
-  const lamps = toppleInstances(world, scene, hitRegistry, staticBody, assets.template('prop', 'light-square'), lights, LAMP_SIZE);
+  const lamps = byChunk(lights).flatMap((chunk) =>
+    toppleInstances(world, scene, hitRegistry, staticBody, assets.template('prop', 'light-square'), chunk, LAMP_SIZE));
   return { cars, lamps };
 }
 

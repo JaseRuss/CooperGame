@@ -96,6 +96,13 @@ press A or Enter, then type a new name, or on a controller use up and down to
 pick each letter, left and right to move, and X to delete. Your choices are
 remembered.
 
+**Slower computers:** pause with **M** / **Start**, open **Options**, and set
+**Graphics** to **Low** for a softer picture without shadows. **Balanced** uses
+normal screen resolution and lighter shadows; **High** is the default, with
+sharper shadows and extra resolution on Retina / high DPI screens. Enable
+**Show FPS** to display frames per second at the top-right of the minimap (off
+by default). Changes take effect immediately and are remembered between visits.
+
 **Sound:** each level has its own music: a march for the day battle, a sneaky
 tune for the night raid, bongos in the jungle, a jig for the castles and a spooky
 xylophone for the zombies. Browsers keep a page quiet

@@ -28,6 +28,7 @@ export class Tree {
   private falling = false;
   private collider: RAPIER.Collider | null;
   private readonly yaw: number;
+  onFall: (() => void) | null = null;
 
   constructor(
     private readonly world: RAPIER.World,
@@ -61,18 +62,28 @@ export class Tree {
     this.syncInstance(0);
   }
 
-  /** Start falling when a tank reaches the trunk, then ease the tree down to the ground. */
-  update(dt: number, tankPositions: readonly THREE.Vector3[]): void {
-    if (!this.falling) {
-      for (const tank of tankPositions) {
-        const dx = tank.x - this.pivot.position.x;
-        const dz = tank.z - this.pivot.position.z;
-        if (dx * dx + dz * dz > this.size.triggerRadius * this.size.triggerRadius) continue;
-        this.fallAwayFrom(dx, dz);
-        break;
-      }
-    }
+  get position(): THREE.Vector3 {
+    return this.pivot.position;
+  }
 
+  get triggerRadius(): number {
+    return this.size.triggerRadius;
+  }
+
+  get fallen(): boolean {
+    return this.fallT >= this.size.fallDuration;
+  }
+
+  /** Start falling when a nearby tank reaches the trunk. */
+  tryTopple(tank: THREE.Vector3): void {
+    if (this.falling) return;
+    const dx = tank.x - this.pivot.position.x;
+    const dz = tank.z - this.pivot.position.z;
+    if (dx * dx + dz * dz <= this.size.triggerRadius * this.size.triggerRadius) this.fallAwayFrom(dx, dz);
+  }
+
+  /** Ease an already falling tree down to the ground. */
+  update(dt: number): void {
     if (!this.falling || this.fallT >= this.size.fallDuration) return;
     this.fallT = Math.min(this.size.fallDuration, this.fallT + dt);
     const progress = this.fallT / this.size.fallDuration;
@@ -96,6 +107,7 @@ export class Tree {
     this.falling = true;
     if (Math.hypot(dx, dz) < 1e-4) this.fallAxis.set(1, 0, 0);
     else this.fallAxis.set(-dz, 0, dx).normalize();
+    this.onFall?.();
   }
 
   private syncInstance(progress: number): void {
