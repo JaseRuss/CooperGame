@@ -119,6 +119,15 @@ sound on.
   a checklist shows what's left to knock down.
 - Once a base falls, **green troops and bunkers** move in and fight anything
   nearby.
+- **The war goes on around you** (missions 1 to 4). Every enemy base that's
+  still standing sends squads of raiders, a minute or two apart, marching on
+  the family base nearest you. If they get inside, that base is **under
+  attack**: its guards turn out to fight, and it can't repair you until the
+  raiders are cleared out. Your side sends squads too: the family base
+  nearest you, and every enemy base you've captured, sends green troops
+  marching on the nearest enemy base to soften it up (they can't take it on
+  their own), and you'll hear when they get there so you can go and help.
+  Knock out enemy bases and the raids dry up.
 - **The Fortress** in the middle of the map is locked until all five enemy
   bases are down, and nothing inside can be shot until then. Then its gates
   open and a column of green and red tanks and troops joins you for the final

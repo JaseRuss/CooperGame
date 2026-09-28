@@ -552,6 +552,27 @@ export class Soldier {
     return this.state === 'active';
   }
 
+  /** Standing and shooting at something it can see (a marching squad waits while anyone is). */
+  get engaged(): boolean {
+    return this.state === 'active' && this.seesTarget;
+  }
+
+  /**
+   * Carried along by a marching squad whose anchor just moved (dx, dz): hops along with it, unless
+   * it's stuck in jam or down. (The squad doesn't move while anyone's fighting.) Works for
+   * soldiers too far off to be updated.
+   */
+  march(dx: number, dz: number): void {
+    if (this.state !== 'active' || this.jamTime > 0) return;
+    this.pos.x += dx;
+    this.pos.z += dz;
+    this.pos.y = surfaceHeightAt(this.pos.x, this.pos.z);
+    if (this.wanderTarget) this.wanderTarget.set(this.wanderTarget.x + dx, this.wanderTarget.y + dz);
+    this.heading = Math.atan2(-dx, -dz);
+    this.hopPhase += Math.hypot(dx, dz) * 3;
+    this.applyTransform(Math.abs(Math.sin(this.hopPhase)) * 0.22);
+  }
+
   /** True once the fallen soldier has lain around long enough to be cleaned up. */
   get expired(): boolean {
     return this.state === 'down' && this.downTime > DOWN_LINGER;
