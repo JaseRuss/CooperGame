@@ -131,6 +131,12 @@ const MISSILE_DAMAGE = 95;
 const MISSILE_RADIUS = 12;
 const MISSILE_BLAST = 2.3;
 const MISSILE_SCALE = 0.6;
+// The motorbike's rocket jump: once a minute, the boosters throw it high in the air and at the top
+// its six rack missiles rain down on whatever's below within this range.
+const ROCKET_JUMP_RECHARGE = 60;
+const BIKE_VOLLEY_RANGE = 70;
+/** Coming back down from a rocket jump bowls over enemy soldiers this close. */
+const BIKE_STOMP_RADIUS = 7;
 /** The model swap happens this long into the smoke puff, once the cloud has thickened. */
 const CHANGE_SWAP_DELAY = 0.18;
 /** Where a station stands outside a home base's wall, and how far either side of the road. */
@@ -374,6 +380,9 @@ export class Game {
   private bikeDustTimer = 0;
   /** The jeep's and chopper's missiles: reload (0..1) and the ones in flight. */
   private missileCharge = 1;
+  /** The motorbike's rocket jump: charge (0..1), and whether its missiles are still to go this jump. */
+  private rocketJumpCharge = 1;
+  private bikeVolleyPending = false;
   private missiles: HomingRocket[] = [];
   /** The night mission's headlight, which the chopper points down at the ground. */
   private headlight: THREE.SpotLight | null = null;
@@ -574,8 +583,7 @@ export class Game {
     }
     const home = this.familyBases[0];
     const start = this.fortHome ?? { x: home.info.x, z: home.info.z, yaw: home.spawnYaw };
-    const bikeAsset = this.assets.motorbikeAsset();
-    this.player = new PlayerTank(this.world, start.x, start.z, start.yaw, bikeAsset.model, bikeAsset.animations);
+    this.player = new PlayerTank(this.world, start.x, start.z, start.yaw);
     this.scene.add(this.player.root);
     this.hitRegistry.register(this.player.physicsCollider, { kind: 'tank', tank: this.player });
     this.hud.setSettings(this.settings, (s) => {
@@ -1344,6 +1352,9 @@ export class Game {
 
     this.missileCharge = Math.min(1, this.missileCharge + dt / MISSILE_RECHARGE);
     this.player.setMissilesReady(this.missileCharge >= 1 && !this.rocketsDamaged);
+    this.rocketJumpCharge = Math.min(1, this.rocketJumpCharge + dt / ROCKET_JUMP_RECHARGE);
+    // The rack missiles stay on show through the climb, until they're fired at the top.
+    this.player.setRocketJumpReady((this.rocketJumpCharge >= 1 && !this.rocketsDamaged) || this.bikeVolleyPending);
     for (let i = this.missiles.length - 1; i >= 0; i--) {
       const hit = this.missiles[i].update(dt, this.world, (p) => this.impacts.trailPuff(p));
       if (!hit) continue;
@@ -1368,10 +1379,93 @@ export class Game {
     const minutes = this.rideMinutes(to);
     this.rideTime = this.rideTimeTotal = minutes * 60;
     this.missileCharge = 1;
+    this.rocketJumpCharge = 1;
+    this.bikeVolleyPending = false;
     const time = `${minutes} minute${minutes > 1 ? 's' : ''}`;
     if (to === 'jeep') this.hud.showBanner('JEEP TIME!', `Zoom about for ${time}. Fire shoots jam, the rocket button fires missiles`);
-    else if (to === 'motorbike') this.hud.showBanner('MOTORBIKE TIME!', `Machine gun only. Hit the kicker and pull back for backflips. Ride fast for ${time}!`);
+    else if (to === 'motorbike') this.hud.showBanner('MOTORBIKE TIME!', `Ride fast for ${time}! The rocket button fires the boosters for a rocket jump that rains missiles on everything below`);
     else this.hud.showBanner('CHOPPER TIME!', `Fly about for ${time}. Fire shoots the chin gun, the rocket button fires two missiles`);
+  }
+
+  /** The rocket button on the motorbike: fire the boosters for a rocket jump, once a minute. */
+  private tryRocketJump(): void {
+    if (this.rocketsDamaged) {
+      this.hud.showCallout('BOOSTERS DAMAGED! REPAIR AT A HOME BASE', '#ff6a5a');
+      this.sound.play('uiBack', { volume: 0.5, minGap: 0.3 });
+      return;
+    }
+    if (this.rocketJumpCharge < 1) {
+      this.hud.showCallout(`ROCKET JUMP ${Math.floor(this.rocketJumpCharge * 100)}%`, '#ff9a5a');
+      return;
+    }
+    if (!this.player.rocketJump()) return; // already in the air
+    this.rocketJumpCharge = 0;
+    this.bikeVolleyPending = true;
+    this.impacts.changePuff(this.player.position.clone(), 0.9);
+    this.sound.play('launch', { volume: 0.85, rate: 0.75, fadeAfter: 1.1 });
+    this.cameraRig.addShake(0.6);
+    this.hud.showCallout('ROCKET JUMP!', '#ff9a5a');
+  }
+
+  /** The boosters' smoke trail, the missile volley at the top of the jump, and the landing. */
+  private updateRocketJump(): void {
+    if (this.player.boosting) for (const nozzle of this.player.boosterNozzles) this.impacts.trailPuff(nozzle);
+    if (this.player.consumeRocketApex() && this.bikeVolleyPending) this.fireBikeVolley();
+    if (this.player.consumeRocketLanding()) {
+      const at = this.player.position.clone();
+      this.impacts.changePuff(at, 1.1);
+      this.sound.play('thud', { volume: 0.9 });
+      this.cameraRig.addShake(0.7);
+      const knocked = this.troops.blast(at, BIKE_STOMP_RADIUS, 'player');
+      this.addRocketCharge(knocked * CHARGE_PER_TROOP);
+    }
+  }
+
+  /**
+   * At the top of a rocket jump the six rack missiles fire, one at each of the nearest enemies
+   * below: tanks first, then bunkers and base buildings, then soldiers. With fewer targets they
+   * double up; with none, they burst in a ring round where the bike will land.
+   */
+  private fireBikeVolley(): void {
+    this.bikeVolleyPending = false;
+    const bike = this.player.position;
+    const targets: { position: THREE.Vector3; track: RocketTarget; rank: number }[] = [];
+    const consider = (pos: THREE.Vector3, rank: number, track: RocketTarget) => {
+      const d = Math.hypot(pos.x - bike.x, pos.z - bike.z);
+      if (d <= BIKE_VOLLEY_RANGE && pos.y < bike.y) targets.push({ position: pos, track, rank: rank + d / BIKE_VOLLEY_RANGE });
+    };
+    for (const tank of this.targetableEnemies) {
+      if (!(tank instanceof HelicopterEnemy)) consider(tank.position, 0, () => (tank.isDestroyed ? null : tank.position));
+    }
+    for (const bunker of this.targetableBunkers) consider(bunker.position, 1, () => (bunker.alive ? bunker.position : null));
+    const objectives = [...this.enemyBases.flatMap((b) => b.objectives), ...(!this.fortress.locked && !ZOMBIES ? this.fortress.objectives : [])];
+    for (const o of objectives) if (!o.isDestroyed()) consider(o.position, 1.5, () => (o.isDestroyed() ? null : o.position));
+    for (const soldier of this.troops.activeSoldiers('enemy')) {
+      consider(soldier.position, 2, () => (soldier.isActive ? soldier.position.clone().setY(soldier.position.y + 1) : null));
+    }
+    targets.sort((a, b) => a.rank - b.rank);
+    const launches = this.player.bikeMissilePoints;
+    launches.forEach((from, i) => {
+      const target = targets.length ? targets[i % targets.length] : null;
+      let aimAt: THREE.Vector3;
+      if (target) {
+        aimAt = target.position.clone();
+      } else {
+        const a = (i / launches.length) * Math.PI * 2;
+        aimAt = new THREE.Vector3(bike.x + Math.cos(a) * 16, 0, bike.z + Math.sin(a) * 16);
+        aimAt.y = surfaceHeightAt(aimAt.x, aimAt.z);
+      }
+      // Each pops out sideways off its rack, then turns down onto its target.
+      const out = from.clone().sub(bike).setY(0).normalize();
+      const dir = aimAt.clone().sub(from).normalize().multiplyScalar(0.6).add(out).add(new THREE.Vector3(0, -0.2, 0)).normalize();
+      const missile = new HomingRocket(this.scene, from, dir, target ? target.track : () => null, aimAt, this.player.physicsCollider);
+      missile.mesh.scale.setScalar(MISSILE_SCALE);
+      this.missiles.push(missile);
+      this.impacts.muzzleFlash(from, dir);
+    });
+    this.sound.play('launch', { volume: 0.7, rate: 1.3, fadeAfter: 0.9 });
+    const named = new Set(targets.slice(0, launches.length).map((t) => t.position)).size;
+    this.hud.showCallout(named ? `MISSILES AWAY! ${named} TARGET${named > 1 ? 'S' : ''} BELOW` : 'MISSILES AWAY!', '#ff9a5a');
   }
 
   /** The jeep's and chopper's missiles: like the rocket (same lock), smaller, no rocket cam and a quick reload. */
@@ -2065,7 +2159,13 @@ export class Game {
       reloadFraction: vehicle !== 'tank' ? 0 : this.player.fireCooldown / this.player.fireInterval,
       ride:
         vehicle !== 'tank'
-          ? { vehicle, timeLeft: this.rideTime, total: this.rideTimeTotal, missileCharge: this.missileCharge, landing: this.player.landing }
+          ? {
+              vehicle,
+              timeLeft: this.rideTime,
+              total: this.rideTimeTotal,
+              missileCharge: vehicle === 'motorbike' ? this.rocketJumpCharge : this.missileCharge,
+              landing: this.player.landing,
+            }
           : null,
       cameraMode: this.cameraRig.mode,
       usingGamepad: input.usingGamepad,
@@ -2159,7 +2259,7 @@ export class Game {
       }
       if (input.mapTogglePressed) this.hud.toggleBigMap();
       if (input.rocketPressed && this.player.vehicle === 'motorbike') {
-        this.hud.showCallout('MACHINE GUN ONLY', '#ffd24a');
+        this.tryRocketJump();
       } else if (input.rocketPressed) {
         if (this.rocketsDamaged) {
           this.hud.showCallout(`${this.player.vehicle === 'tank' ? 'ROCKET' : 'MISSILES'} DAMAGED! REPAIR AT A HOME BASE`, '#ff6a5a');
@@ -2228,10 +2328,12 @@ export class Game {
       }
     }
     if (playerShot) this.fire(this.player, playerShot);
-    // The chopper can't fly in over the Fortress while it's locked: it would land inside and be stuck.
+    this.updateRocketJump();
+    // The chopper (or a rocket-jumping bike) can't get in over the Fortress's walls while it's
+    // locked: it would land inside and be stuck.
     const p = this.player.position;
     this.fortressWarning -= dt;
-    if (this.player.isChopper && this.fortress.locked && this.fortress.contains(p.x, p.z) && !this.fortress.contains(before.x, before.z)) {
+    if ((this.player.isChopper || this.player.vehicle === 'motorbike') && this.fortress.locked && this.fortress.contains(p.x, p.z) && !this.fortress.contains(before.x, before.z)) {
       this.player.holdAt(before.x, before.z);
       if (this.fortressWarning <= 0) {
         this.hud.showCallout('THE FORTRESS IS LOCKED!', '#ffd24a');
@@ -2416,6 +2518,7 @@ export class Game {
       this.aimGuide.setVisible(false);
     } else {
       this.cameraRig.setAerial(this.player.isChopper);
+      this.cameraRig.setJumpView(this.player.inRocketJump);
       this.cameraRig.update(this.player, dt);
       aim = this.updateAim();
       if (this.player.vehicle !== 'motorbike' && (this.player.vehicle !== 'tank' ? this.missileCharge >= 1 : this.rocketCharge >= 1) && !this.rocketsDamaged) {
