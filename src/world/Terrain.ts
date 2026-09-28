@@ -210,6 +210,63 @@ function clamp01(v: number): number {
   return Math.max(0, Math.min(1, v));
 }
 
+/** A contour line every this many metres of height, like a playmat map. */
+const CONTOUR_STEP = 3;
+/** Contour line half-width across the ground, in metres. */
+const CONTOUR_HALF_WIDTH = 0.35;
+const CONTOUR_DARKEN = 0.16;
+/** Steep ground is shaded down to this fraction of its colour, so hillsides stand out from flats. */
+const SLOPE_SHADE = 0.84;
+
+/**
+ * Draws contour lines and shades steep ground in the terrain's shader, so hills are easy to read.
+ * It works per pixel from the world height, so the lines stay crisp even though the mesh's
+ * vertices (and its vertex colours) are ~12 m apart.
+ */
+function addContours(material: THREE.MeshStandardMaterial): void {
+  const f = (n: number) => n.toFixed(3);
+  material.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader
+      .replace(
+        '#include <common>',
+        `#include <common>
+attribute float land;
+varying float vTerrainY;
+varying float vTerrainLand;
+varying float vTerrainSlope;`,
+      )
+      .replace(
+        '#include <begin_vertex>',
+        `#include <begin_vertex>
+vTerrainY = position.y;
+vTerrainLand = land;
+vTerrainSlope = length(normal.xz) / max(normal.y, 0.2); // rise over run`,
+      );
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        '#include <common>',
+        `#include <common>
+varying float vTerrainY;
+varying float vTerrainLand;
+varying float vTerrainSlope;`,
+      )
+      .replace(
+        '#include <color_fragment>',
+        `#include <color_fragment>
+{
+  float fw = max(fwidth(vTerrainY), 1e-5);
+  float d = abs(fract(vTerrainY / ${f(CONTOUR_STEP)} + 0.5) - 0.5) * ${f(CONTOUR_STEP)};
+  // A fixed width across the ground is a height band that narrows to nothing on the flat.
+  float halfWidth = ${f(CONTOUR_HALF_WIDTH)} * vTerrainSlope;
+  float line = 1.0 - smoothstep(halfWidth, halfWidth + fw, d);
+  line *= 1.0 - smoothstep(0.15, 0.45, fw / ${f(CONTOUR_STEP)}); // far off, where the lines crowd together
+  diffuseColor.rgb *= 1.0 - ${f(CONTOUR_DARKEN)} * line * vTerrainLand;
+  diffuseColor.rgb *= mix(1.0, ${f(SLOPE_SHADE)}, smoothstep(0.05, 0.35, vTerrainSlope) * vTerrainLand);
+}`,
+      );
+  };
+}
+
 export function buildTerrain(): TerrainBuild {
   const segments = TERRAIN_SEGMENTS;
   const geometry = new THREE.PlaneGeometry(WORLD_SIZE, WORLD_SIZE, segments, segments);
@@ -226,7 +283,18 @@ export function buildTerrain(): TerrainBuild {
   const dirt = pick('#bda673', '#9a7a4e', '#b39a66', '#9e8c68');
   const sand = pick('#e3d29a', '#c9b27a', '#e0cf96', '#c8bb92');
   const lakeBed = pick('#8a8a5c', '#6b6a3e', '#86895a', '#6f6a58');
+  // Hollows are a slightly deeper, fresher green (still well lighter than the green plastic).
+  const grassLow = grass.clone().multiplyScalar(0.9).lerp(new THREE.Color('#5fa84f'), 0.2);
+  // Colour stops by height: about half the ground is below 0 m, so the hollows get their own shade.
+  const stops: [number, THREE.Color][] = [
+    [-TERRAIN_HEIGHT * 0.65, grassLow],
+    [0, grass],
+    [TERRAIN_HEIGHT * 0.45, grassHigh],
+    [TERRAIN_HEIGHT * 0.9, dirt],
+  ];
   const tmp = new THREE.Color();
+  // 1 on open ground, 0 on the beaches and lake beds (no contour lines under the water).
+  const land = new Float32Array(position.count);
 
   for (let i = 0; i < position.count; i++) {
     const x = position.getX(i);
@@ -234,16 +302,18 @@ export function buildTerrain(): TerrainBuild {
     const h = heightAt(x, z);
     position.setY(i, h);
 
-    const t = clamp01(h / TERRAIN_HEIGHT);
     const shore = shoreKind(x, z);
+    land[i] = shore === 0 ? 1 : 0;
     if (shore === 1) {
       tmp.copy(sand);
     } else if (shore === 2) {
       tmp.copy(lakeBed);
-    } else if (t > 0.6) {
-      tmp.copy(grassHigh).lerp(dirt, (t - 0.6) / 0.4);
     } else {
-      tmp.copy(grass).lerp(grassHigh, t / 0.6);
+      let k = 1;
+      while (k < stops.length - 1 && h > stops[k][0]) k++;
+      const [h0, c0] = stops[k - 1];
+      const [h1, c1] = stops[k];
+      tmp.copy(c0).lerp(c1, clamp01((h - h0) / (h1 - h0)));
     }
     colors[i * 3] = tmp.r;
     colors[i * 3 + 1] = tmp.g;
@@ -251,6 +321,7 @@ export function buildTerrain(): TerrainBuild {
   }
 
   geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  geometry.setAttribute('land', new THREE.BufferAttribute(land, 1));
   geometry.computeVertexNormals();
 
   const material = new THREE.MeshStandardMaterial({
@@ -258,6 +329,7 @@ export function buildTerrain(): TerrainBuild {
     roughness: 1,
     metalness: 0,
   });
+  addContours(material);
 
   const mesh = new THREE.Mesh(geometry, material);
   mesh.receiveShadow = true;

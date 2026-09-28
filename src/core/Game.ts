@@ -33,6 +33,7 @@ import { ImpactEffects } from '../combat/ImpactEffects';
 import { predictTrajectory, type Trajectory } from '../combat/Projectile';
 import { HomingRocket, type RocketTarget } from '../combat/HomingRocket';
 import { JamCannon } from '../combat/JamCannon';
+import { RepairCrates, REPAIR_AMOUNT } from '../world/RepairCrates';
 import { AAMissiles, AA_SALVO, AA_CAPACITY, type AirTrack } from '../combat/AAMissiles';
 import { AntiAir } from '../combat/AntiAir';
 import { Wrecks, pickWreckGag } from '../combat/Wrecks';
@@ -92,6 +93,11 @@ const FUEL_BLAST_DAMAGE = 120;
 const ROCKET_RECHARGE_TIME = 75;
 const CHARGE_PER_TANK = 0.25;
 const CHARGE_PER_BUNKER = 0.2;
+// Repair crates: the chance each knocked-out enemy leaves one (helicopters always do).
+const CRATE_CHANCE_TANK = 0.35;
+const CRATE_CHANCE_BUNKER = 0.25;
+/** Only the big zombies drop them, or the Fortress would be knee-deep in crates. */
+const CRATE_CHANCE_BRUTE = 0.4;
 const CHARGE_PER_BUILDING = 0.08;
 const CHARGE_PER_TROOP = 0.02;
 const CHARGE_PER_ENEMY_BASE = 0.5;
@@ -311,6 +317,7 @@ export class Game {
   private projectiles!: ProjectileManager;
   private impacts!: ImpactEffects;
   private jam!: JamCannon;
+  private crates!: RepairCrates;
   private aa!: AAMissiles;
   private antiAir!: AntiAir;
   private aaWarning = 0;
@@ -467,6 +474,7 @@ export class Game {
     this.projectiles = new ProjectileManager(this.scene, this.world, this.hitRegistry);
     this.impacts = new ImpactEffects(this.scene);
     this.jam = new JamCannon(this.scene);
+    this.crates = new RepairCrates(this.scene);
     this.aa = new AAMissiles(this.scene);
     this.antiAir = new AntiAir(
       this.scene,
@@ -527,6 +535,9 @@ export class Game {
     this.buildings = [...content.buildings, ...content.bunkers.map((b) => b.building)];
     this.troops = new TroopManager(this.scene, content.squads, Math.random);
     this.troops.shielded = (p) => this.sealedInFortress(p);
+    this.troops.onZombieDown = (z) => {
+      if (z.zombie === 'brute' && Math.random() < CRATE_CHANCE_BRUTE) this.dropCrate(z.position);
+    };
     this.hud.setWorldMap(
       new WorldMap(
         content.highways,
@@ -651,6 +662,7 @@ export class Game {
     else if (gag === 'firework') this.wrecks.firework(tank.root);
     else keepHull = false;
     this.addRocketCharge(CHARGE_PER_TANK);
+    if (tank instanceof HelicopterEnemy || Math.random() < CRATE_CHANCE_TANK) this.dropCrate(tank.position);
     this.hitRegistry.unregister(tank.physicsCollider);
     if (!keepHull) this.scene.remove(tank.root);
     tank.dispose();
@@ -773,6 +785,13 @@ export class Game {
     this.impacts.addSmokeSource(building.groundCenter, footprint * 0.6);
     if (attacker === 'player') this.addRocketCharge(this.isBunker(building) ? CHARGE_PER_BUNKER : CHARGE_PER_BUILDING);
     if (building.fuel) this.fuelBlast(building, attacker);
+    if (this.isBunker(building) && Math.random() < CRATE_CHANCE_BUNKER) this.dropCrate(building.center);
+  }
+
+  /** A repair crate pops out beside a wreck (or falls from a helicopter) for the player to pick up. */
+  private dropCrate(at: THREE.Vector3): void {
+    const a = Math.random() * Math.PI * 2;
+    this.crates.drop(at.clone().add(new THREE.Vector3(Math.cos(a) * 3, 1, Math.sin(a) * 3)));
   }
 
   /** A fuel tank goes up: a ring of fireballs and a blast that can set its neighbours off too. */
@@ -2368,6 +2387,12 @@ export class Game {
 
     const insideBase = this.atHome(this.player.position);
     if (insideBase) this.player.heal(BASE_HEAL_RATE * dt);
+    const crates = this.crates.update(dt, this.player);
+    if (crates > 0) {
+      this.player.heal(REPAIR_AMOUNT * crates);
+      this.hud.showCallout(`+${REPAIR_AMOUNT * crates} REPAIR!`, '#8fe07a');
+      this.sound.play('uiConfirm', { volume: 0.8 });
+    }
     const repairingAt = insideBase && this.player.health < this.player.maxHealth ? nearestFriendlyBase(this.player.position.x, this.player.position.z) : null;
     for (const fb of this.familyBases) fb.camp.update(dt, fb.info === repairingAt, this.camera.position, this.player.position);
     this.landmarks.update(dt);

@@ -133,6 +133,11 @@ sound on.
 - The **red army** is on your side. Their tanks and soldiers guard every town.
 - **Family bases** sit around the edge of the map. Drive inside one to repair
   and restock your AA missiles.
+- **Repair crates**: knocked-out enemy helicopters always drop a green crate
+  with a red cross, and tanks and bunkers sometimes do (on the zombie mission,
+  the big zombies). Drive over one, or fly low over it in the chopper, to patch
+  up 25 hull points. It only gets picked up if you're damaged, and it glows so
+  you can spot it, then blinks and vanishes after 30 seconds.
 - The **jam cannon** sprays a stream of strawberry jam that lands in a line along
   your aim; sweep the turret to hose down a whole squad. The jam drips as it
   flies, so anything under its path gets it too, even if you shoot over their
@@ -146,7 +151,7 @@ sound on.
 - Your tank (and your buddies) go a bit faster on **roads**.
 - **Low hull:** when the hull drops below a third, the homing rocket (and the
   jeep's and chopper's missiles) are knocked out until you repair at a family
-  base.
+  base or with repair crates.
 - Drive into trees and lamp posts, or shoot them, to knock them flat.
 - **Rear hits** do double damage to enemy tanks. Front armour takes half damage.
 - Knocked-out enemy tanks usually just blow up, but sometimes the turret pops
