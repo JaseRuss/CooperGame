@@ -37,6 +37,8 @@ export class TroopManager {
   blocked: ((x: number, z: number) => boolean) | null = null;
   /** Zombies knocked over so far. */
   zombiesDowned = 0;
+  /** Called once for each zombie as it's knocked over. */
+  onZombieDown: ((zombie: Soldier) => void) | null = null;
 
   constructor(
     private readonly scene: THREE.Scene,
@@ -134,6 +136,7 @@ export class TroopManager {
         if (s.zombie && !s.isActive && !s.counted) {
           s.counted = true;
           this.zombiesDowned++;
+          this.onZombieDown?.(s);
         }
         if (s.expired) {
           this.scene.remove(s.mesh);
