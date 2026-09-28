@@ -2,7 +2,7 @@ import { WORLD_SIZE, WORLD_HALF, TERRAIN_HEIGHT } from '../core/config';
 import { heightAt } from '../world/Terrain';
 import { ROAD_WIDTH, type Town } from '../world/TownPlan';
 import { HIGHWAY_WIDTH, type Polyline } from '../world/RoadNetwork';
-import { CAUSEWAY_HALF, MOAT_INNER, MOAT_OUTER } from '../world/MoatShape';
+import { CAUSEWAY_HALF, MOAT_INNER, MOAT_OUTER, MOAT_OUTER_CORE, MOAT_WALL } from '../world/MoatShape';
 import {
   LAKES,
   SITES,
@@ -141,16 +141,20 @@ export class WorldMap {
       ctx.arc(lake.cx, lake.cz, lake.radius, 0, Math.PI * 2);
       ctx.fill();
     }
-    // The Fortress's moat: its four sides, with gaps for the causeways to the north and south gates.
+    // The Fortress's moat: a ring with rounded corners, with gaps for the causeways to the gates.
     const fort = SITES.find((site) => site.kind === 'fortress');
     if (fort) {
-      const w = MOAT_OUTER - MOAT_INNER;
-      for (const sz of [-1, 1]) {
-        const z = fort.cz + (sz > 0 ? MOAT_INNER : -MOAT_OUTER);
-        ctx.fillRect(fort.cx - MOAT_OUTER, z, MOAT_OUTER - CAUSEWAY_HALF, w);
-        ctx.fillRect(fort.cx + CAUSEWAY_HALF, z, MOAT_OUTER - CAUSEWAY_HALF, w);
-      }
-      for (const sx of [-1, 1]) ctx.fillRect(fort.cx + (sx > 0 ? MOAT_INNER : -MOAT_OUTER), fort.cz - MOAT_OUTER, w, MOAT_OUTER * 2);
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(fort.cx - MOAT_OUTER - 10, fort.cz - MOAT_OUTER - 10, (MOAT_OUTER + 10) * 2, (MOAT_OUTER + 10) * 2);
+      for (const sz of [-1, 1]) ctx.rect(fort.cx - CAUSEWAY_HALF, fort.cz + (sz > 0 ? MOAT_WALL : -MOAT_OUTER - 10), CAUSEWAY_HALF * 2, MOAT_OUTER + 10 - MOAT_WALL);
+      ctx.clip('evenodd');
+      ctx.beginPath();
+      const rounded = (core: number, r: number) => ctx.roundRect(fort.cx - core - r, fort.cz - core - r, (core + r) * 2, (core + r) * 2, r);
+      rounded(MOAT_OUTER_CORE, MOAT_OUTER - MOAT_OUTER_CORE);
+      rounded(MOAT_WALL, MOAT_INNER - MOAT_WALL);
+      ctx.fill('evenodd');
+      ctx.restore();
     }
 
     ctx.fillStyle = '#3a3d42';
