@@ -1,17 +1,24 @@
 import { SITES } from './Landmarks';
 
 /**
- * The shape of the moat round the Fortress: a square ring of water outside the walls, crossed by
- * a solid causeway at the north and south gates. Pure geometry, in the Fortress's frame (its site
+ * The shape of the moat round the Fortress: a ring of water outside the walls with rounded
+ * corners, crossed by a solid causeway at the north and south gates. Pure geometry, in the Fortress's frame (its site
  * is square to the world and never rotated), so the terrain, roads, vehicles and zombies can all
  * ask about it without building anything.
  */
 
 const FORTRESS = SITES.find((s) => s.kind === 'fortress');
 
-/** Inner and outer edge of the water, in metres out from the middle (the walls stand at 100). */
+/** Inner and outer edge of the water along the sides, in metres out from the middle. */
 export const MOAT_INNER = 106;
 export const MOAT_OUTER = 130;
+/**
+ * The inner edge keeps the same distance from the walls (half-size 100) all the way round, so it
+ * rounds off tightly round the corner towers; the outer edge rounds off round a smaller square,
+ * a 45 m curve at each corner, so the water sweeps round rather than turning a sharp corner.
+ */
+export const MOAT_WALL = 100;
+export const MOAT_OUTER_CORE = 85;
 /**
  * Half-width of the causeways to the gates: the road (11 m wide) with room either side, since a
  * gate road can start to curve away before it's off the causeway.
@@ -20,8 +27,11 @@ export const CAUSEWAY_HALF = 15;
 /** How deep the moat is dug below the Fortress's ground, and how far below that the water sits. */
 export const MOAT_DEPTH = 3.5;
 export const MOAT_WATER_DROP = 1;
-/** Past the outer edge, the ground eases back from the Fortress's level to its own over this far. */
-const MOAT_BANK = 20;
+/**
+ * Past the outer edge, the ground eases back from the Fortress's level to its own over this far
+ * (long enough that a hill beside the Fortress can't rise up and hide the moat).
+ */
+const MOAT_BANK = 60;
 /** Where the causeway meets the dug moat, the digging eases in over this far. */
 const CAUSEWAY_EASE = 6;
 /** Routes round the moat go by corners this far out, clear of the water. */
@@ -43,9 +53,17 @@ function local(x: number, z: number): [number, number] {
   return FORTRESS ? [x - FORTRESS.cx, z - FORTRESS.cz] : [Infinity, Infinity];
 }
 
-/** Distance out from the middle, square-wise (the walls and moat are square). */
-function ring(lx: number, lz: number): number {
-  return Math.max(Math.abs(lx), Math.abs(lz));
+/** Distance from a point to a square of half-size `half` round the middle (0 inside it). */
+function squareDistance(lx: number, lz: number, half: number): number {
+  return Math.hypot(Math.max(Math.abs(lx) - half, 0), Math.max(Math.abs(lz) - half, 0));
+}
+
+/** How far past the water's inner edge, and how far short of its outer edge: both positive over the water. */
+function edges(lx: number, lz: number): [number, number] {
+  return [
+    squareDistance(lx, lz, MOAT_WALL) - (MOAT_INNER - MOAT_WALL),
+    MOAT_OUTER - MOAT_OUTER_CORE - squareDistance(lx, lz, MOAT_OUTER_CORE),
+  ];
 }
 
 /** On a causeway: the north or south side, within `CAUSEWAY_HALF - shrink` of the middle line. */
@@ -59,15 +77,16 @@ function onCauseway(lx: number, lz: number, shrink: number): boolean {
  */
 export function inMoat(x: number, z: number, margin = 0): boolean {
   const [lx, lz] = local(x, z);
-  const m = ring(lx, lz);
-  return m >= MOAT_INNER - margin && m <= MOAT_OUTER + margin && !onCauseway(lx, lz, margin);
+  const [a, b] = edges(lx, lz);
+  return a >= -margin && b >= -margin && !onCauseway(lx, lz, margin);
 }
 
 /** How much of the moat's depth is dug at (x, z): 0 on dry ground and the causeways, 1 mid-channel. */
 export function moatDig(x: number, z: number): number {
   const [lx, lz] = local(x, z);
-  const t = (ring(lx, lz) - MOAT_INNER) / (MOAT_OUTER - MOAT_INNER);
-  if (t <= 0 || t >= 1) return 0;
+  const [a, b] = edges(lx, lz);
+  if (a <= 0 || b <= 0) return 0;
+  const t = a / (a + b); // across the channel, 0 at the inner edge and 1 at the outer
   const across = Math.sin(Math.PI * t) ** 0.6;
   const causeway = Math.abs(lz) >= Math.abs(lx) ? smoothstep((Math.abs(lx) - CAUSEWAY_HALF) / CAUSEWAY_EASE) : 1;
   return across * causeway;
@@ -76,10 +95,10 @@ export function moatDig(x: number, z: number): number {
 /** How strongly the ground is levelled to the Fortress's height: fully under the moat, easing out past it. */
 export function moatLevelling(x: number, z: number): number {
   const [lx, lz] = local(x, z);
-  const m = ring(lx, lz);
-  if (m < MOAT_INNER || !FORTRESS) return 0;
-  if (m <= MOAT_OUTER) return 1;
-  return 1 - smoothstep((m - MOAT_OUTER) / MOAT_BANK);
+  const [a, b] = edges(lx, lz);
+  if (a < 0 || !FORTRESS) return 0;
+  if (b >= 0) return 1;
+  return 1 - smoothstep(-b / MOAT_BANK);
 }
 
 /** True when the straight line from `a` to `b` would cut across the moat (Liang-Barsky against its square). */
@@ -165,13 +184,13 @@ function routeLength(from: Point2, path: Point2[]): number {
 export function zombieWaypoint(p: Point2): Point2 | null {
   if (!FORTRESS) return null;
   const [lx, lz] = local(p.x, p.z);
-  const m = ring(lx, lz);
-  if (m < MOAT_INNER) return null;
+  const [a, b] = edges(lx, lz);
+  if (a < 0) return null;
   if (onCauseway(lx, lz, 2)) {
     // Down the middle of the causeway to the gate.
     return { x: FORTRESS.cx + Math.max(-4, Math.min(4, lx)), z: FORTRESS.cz + Math.sign(lz) * (MOAT_INNER - 5) };
   }
-  if (m <= MOAT_OUTER + 2) return null;
+  if (b >= -2) return null;
   let best: Point2[] | null = null;
   let bestLength = Infinity;
   for (const side of [1, -1]) {

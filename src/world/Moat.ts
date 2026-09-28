@@ -3,13 +3,16 @@ import { PartBuilder } from '../utils/modelKit';
 import { plastic, shade } from '../utils/plastic';
 import { SITES } from './Landmarks';
 import { MOAT_LEVEL } from './Terrain';
-import { CAUSEWAY_HALF, MOAT_INNER, MOAT_OUTER, inMoat } from './MoatShape';
+import { CAUSEWAY_HALF, MOAT_INNER, MOAT_OUTER, MOAT_OUTER_CORE, inMoat } from './MoatShape';
 import { KNIGHTS } from '../core/config';
 
 /** The water's grid: cells this big, kept where their middle is over the moat. */
 const WATER_CELL = 3;
-/** Loungers drift along the middle of the channel, turning back before the causeways. */
-const DRIFT_LINE = (MOAT_INNER + MOAT_OUTER) / 2;
+/**
+ * Loungers drift along the middle of the channel, curving round the corners with it, and turn
+ * back before the causeways. The line rounds off round the same square as the outer bank.
+ */
+const DRIFT_RADIUS = 34;
 const DRIFT_END = CAUSEWAY_HALF + 6;
 const LOUNGERS_PER_SIDE = 4;
 /** A shell or blast this close tips a lounger out of his ring (grows with the blast). */
@@ -39,16 +42,40 @@ interface Lounger {
   splashTimer: number;
 }
 
-/** Along one half's path: north arm, down the far side, back along the south arm (Fortress frame). */
+/**
+ * One half's drift line (the east half; the west is its mirror image): along the +z arm, round the
+ * corner, down the side, round the other corner and back along the -z arm.
+ */
+const DRIFT_PATH: { x: number; z: number; at: number }[] = (() => {
+  const c = MOAT_OUTER_CORE;
+  const r = DRIFT_RADIUS;
+  const pts: { x: number; z: number }[] = [{ x: DRIFT_END, z: c + r }];
+  const arc = (cz: number, from: number, to: number) => {
+    for (let i = 0; i <= 8; i++) {
+      const a = from + ((to - from) * i) / 8;
+      pts.push({ x: c + Math.cos(a) * r, z: cz + Math.sin(a) * r });
+    }
+  };
+  arc(c, Math.PI / 2, 0);
+  arc(-c, 0, -Math.PI / 2);
+  pts.push({ x: DRIFT_END, z: -(c + r) });
+  let at = 0;
+  return pts.map((p, i) => {
+    if (i > 0) at += Math.hypot(p.x - pts[i - 1].x, p.z - pts[i - 1].z);
+    return { ...p, at };
+  });
+})();
+const PATH_LENGTH = DRIFT_PATH[DRIFT_PATH.length - 1].at;
+
+/** How far `along` one half's drift line (east half +1, west half -1, mirrored). */
 function pathPoint(side: 1 | -1, along: number): { x: number; z: number } {
-  const arm = DRIFT_LINE - DRIFT_END;
-  if (along < arm) return { x: side * (DRIFT_END + along), z: DRIFT_LINE };
-  along -= arm;
-  if (along < DRIFT_LINE * 2) return { x: side * DRIFT_LINE, z: DRIFT_LINE - along };
-  along -= DRIFT_LINE * 2;
-  return { x: side * (DRIFT_LINE - along), z: -DRIFT_LINE };
+  let i = 1;
+  while (i < DRIFT_PATH.length - 1 && DRIFT_PATH[i].at < along) i++;
+  const a = DRIFT_PATH[i - 1];
+  const b = DRIFT_PATH[i];
+  const t = b.at > a.at ? Math.min(1, Math.max(0, (along - a.at) / (b.at - a.at))) : 0;
+  return { x: side * (a.x + (b.x - a.x) * t), z: a.z + (b.z - a.z) * t };
 }
-const PATH_LENGTH = (DRIFT_LINE - DRIFT_END) * 2 + DRIFT_LINE * 2;
 
 /**
  * A soldier lounging in a rubber ring: leaning back with his hands behind his head, legs over the

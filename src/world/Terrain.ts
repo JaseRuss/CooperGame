@@ -139,10 +139,13 @@ export function heightAt(x: number, z: number): number {
     }
   }
 
-  // Rounded but pronounced terrain shoulders give fast vehicles natural launch slopes.
+  // Rounded but pronounced terrain shoulders give fast vehicles natural launch slopes (flattened
+  // out near the moat, where they'd hide it).
+  const hillScale = 1 - level;
   for (const hill of JUMP_HILLS) {
+    if (hillScale <= 0) break;
     const d = Math.hypot(x - hill.x, z - hill.z);
-    h += hill.height * Math.exp(-(d * d) / (2 * hill.spread * hill.spread));
+    h += hill.height * hillScale * Math.exp(-(d * d) / (2 * hill.spread * hill.spread));
   }
 
   return h;
