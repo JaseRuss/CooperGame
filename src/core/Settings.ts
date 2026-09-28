@@ -2,11 +2,21 @@
 
 export type DriveStyle = 'warthog' | 'classic';
 export type AimSpeed = 'slow' | 'normal' | 'fast';
+export type GraphicsQuality = 'low' | 'balanced' | 'high';
+
+export const GRAPHICS_QUALITY: Record<GraphicsQuality, { pixelRatio: number; shadowSize: number }> = {
+  low: { pixelRatio: 0.75, shadowSize: 0 },
+  balanced: { pixelRatio: 1, shadowSize: 1024 },
+  high: { pixelRatio: 2, shadowSize: 2048 },
+};
 
 export interface Settings {
   /** Warthog: stick drives toward the camera's view. Classic: the tank turns to face the stick. */
   driveStyle: DriveStyle;
   aimSpeed: AimSpeed;
+  graphicsQuality: GraphicsQuality;
+  /** Show the frame rate at the top-right of the minimap. */
+  showFps: boolean;
   /** Floating names over the buddy tanks. */
   nameTags: boolean;
   /** The four buddy tank crews, in the order they're called in. */
@@ -32,6 +42,8 @@ export const BUDDY_NAME_MAX = 10;
 export const DEFAULT_SETTINGS: Settings = {
   driveStyle: 'warthog',
   aimSpeed: 'normal',
+  graphicsQuality: 'high',
+  showFps: false,
   nameTags: true,
   buddyNames: [...DEFAULT_BUDDY_NAMES],
   jeepMinutes: 3,
@@ -64,7 +76,10 @@ export function loadSettings(): Settings {
       const volume = (v: unknown, fallback: Volume) => (VOLUMES.includes(v as Volume) ? (v as Volume) : fallback);
       const musicVolume = volume(saved.musicVolume, DEFAULT_SETTINGS.musicVolume);
       const sfxVolume = volume(saved.sfxVolume, DEFAULT_SETTINGS.sfxVolume);
-      return { ...DEFAULT_SETTINGS, ...saved, buddyNames, jeepMinutes, chopperMinutes, musicVolume, sfxVolume };
+      const graphicsQuality = saved.graphicsQuality === 'low' || saved.graphicsQuality === 'balanced' || saved.graphicsQuality === 'high'
+        ? saved.graphicsQuality : DEFAULT_SETTINGS.graphicsQuality;
+      const showFps = typeof saved.showFps === 'boolean' ? saved.showFps : DEFAULT_SETTINGS.showFps;
+      return { ...DEFAULT_SETTINGS, ...saved, buddyNames, jeepMinutes, chopperMinutes, musicVolume, sfxVolume, graphicsQuality, showFps };
     }
   } catch {
     // Storage can be blocked (private windows, embedded previews); defaults are fine.
@@ -88,6 +103,23 @@ export interface OptionRow<K extends Exclude<keyof Settings, 'buddyNames'> = Exc
 }
 
 export const OPTION_ROWS: OptionRow[] = [
+  {
+    key: 'graphicsQuality',
+    label: 'Graphics',
+    values: [
+      { value: 'low', label: 'Low', hint: 'For older computers: a softer picture and no shadows.' },
+      { value: 'balanced', label: 'Balanced', hint: 'A clear picture with lighter shadows. A good starting point for most computers.' },
+      { value: 'high', label: 'High', hint: 'Sharper shadows and extra detail on high resolution screens. Needs a faster computer.' },
+    ],
+  },
+  {
+    key: 'showFps',
+    label: 'Show FPS',
+    values: [
+      { value: false, label: 'Off', hint: 'Hide the frame rate display.' },
+      { value: true, label: 'On', hint: 'Show frames per second at the top-right of the minimap.' },
+    ],
+  },
   {
     key: 'driveStyle',
     label: 'Tank controls',

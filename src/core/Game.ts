@@ -17,7 +17,7 @@ import type { Fortress } from '../world/Fortress';
 import { ENEMY_BASE_HALF, siteToWorld, siteYaw } from '../world/Landmarks';
 import { LaunchPad } from '../world/MoonRocket';
 import { MoonBase } from '../world/MoonBase';
-import type { Tree } from '../world/Tree';
+import { TreeManager } from '../world/TreeManager';
 import type { LandmarkSet } from '../world/LandmarkBuilders';
 import { TOWNS } from '../world/TownPlan';
 import { MOTORBIKE_AIRBORNE_HEIGHT, PlayerTank, type Vehicle } from '../entities/PlayerTank';
@@ -48,7 +48,7 @@ import type { ShotStyle } from '../combat/Projectile';
 import { NightSky, MOON_DIRECTION } from '../world/NightSky';
 import { ARMY_GREEN, ARMY_RED, ARMY_TAN, ARMY_BLUE, shade } from '../utils/plastic';
 import { Sound } from '../audio/Sound';
-import { loadSettings, saveSettings, AIM_SPEED_SCALE, DEFAULT_BUDDY_NAMES, type Settings } from './Settings';
+import { loadSettings, saveSettings, AIM_SPEED_SCALE, DEFAULT_BUDDY_NAMES, GRAPHICS_QUALITY, type Settings } from './Settings';
 
 const RESPAWN_DELAY = 25;
 const BASE_HEAL_RATE = 45; // HP/sec while inside a family base
@@ -149,6 +149,7 @@ const NEXT_MISSION_DELAY = 12; // after winning a mission, the next one starts t
 const nextMission = MISSIONS.find((m) => m.mission === MISSION + 1);
 /** Where the jungle haze turns fully opaque. */
 const JUNGLE_FOG_FAR = 950;
+const DAY_FOG_FAR = 1700;
 /** The night raid and the zombie attack are both played by moonlight. */
 const DARK = NIGHT || ZOMBIES;
 
@@ -324,7 +325,7 @@ export class Game {
   private enemyBases: EnemyBase[] = [];
   private announcedBases = new Set<EnemyBase>();
   private buildings: Building[] = [];
-  private trees: Tree[] = [];
+  private trees!: TreeManager;
   private enemySlots: EnemySlot[] = [];
   /** Enemy pillboxes. */
   private bunkers: Bunker[] = [];
@@ -345,6 +346,11 @@ export class Game {
   private settings: Settings = loadSettings();
   private wakeTimer = 0;
   private ready = false;
+  private pausedRendered = false;
+  /** Maps refresh at 10 Hz during play and once when paused; aiming still updates every frame. */
+  private cachedMapView: MapView | null = null;
+  private nextMapUpdate = 0;
+  private mapWasPaused = false;
   private assets!: AssetLibrary;
   /** Stars, moon and distant firefights on the night mission. */
   private nightSky: NightSky | null = null;
@@ -392,14 +398,15 @@ export class Game {
 
   constructor(container: HTMLElement) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    const graphics = GRAPHICS_QUALITY[this.settings.graphicsQuality];
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, graphics.pixelRatio));
     this.renderer.setSize(window.innerWidth, window.innerHeight);
-    this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.enabled = graphics.shadowSize > 0;
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
     container.appendChild(this.renderer.domElement);
 
-    // In the jungle haze nothing shows past the fog, so don't draw the thousands of trees out there.
-    this.camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, JUNGLE ? JUNGLE_FOG_FAR + 60 : 4000);
+    // Skip scenery beyond the opaque fog. Night skies also contain distant, unfogged flares.
+    this.camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, DARK ? 4000 : (JUNGLE ? JUNGLE_FOG_FAR : DAY_FOG_FAR) + 60);
     this.cameraRig = new CameraRig(this.camera);
     this.input = new InputManager(this.renderer.domElement);
     this.hud = new HUD(container);
@@ -421,7 +428,7 @@ export class Game {
       ? new THREE.Fog(sky, 280, 1250)
       : JUNGLE
         ? new THREE.Fog(sky, 180, JUNGLE_FOG_FAR)
-        : new THREE.Fog(sky, 500, 1700);
+        : new THREE.Fog(sky, 500, DAY_FOG_FAR);
 
     this.scene.add(
       DARK
@@ -436,7 +443,7 @@ export class Game {
         ? new THREE.DirectionalLight(0xffe7b8, 1.5)
         : new THREE.DirectionalLight(0xfff2d9, 1.7);
     this.sun.castShadow = true;
-    this.sun.shadow.mapSize.set(2048, 2048);
+    this.sun.shadow.mapSize.set(graphics.shadowSize || 1024, graphics.shadowSize || 1024);
     this.sun.shadow.camera.left = -180;
     this.sun.shadow.camera.right = 180;
     this.sun.shadow.camera.top = 180;
@@ -492,7 +499,7 @@ export class Game {
 
     const content = generateWorld(this.world, this.scene, this.hitRegistry, this.assets);
     this.highways = content.highways;
-    this.trees = content.trees;
+    this.trees = new TreeManager(content.trees);
     this.familyBases = FRIENDLY_BASES.map((info) => {
       const gates = gateAngles(info, content.highways);
       const gate = gates[0];
@@ -696,6 +703,7 @@ export class Game {
   }
 
   private applySettings(): void {
+    this.applyGraphicsSettings();
     this.player.driveStyle = this.settings.driveStyle;
     this.input.setAimScale(AIM_SPEED_SCALE[this.settings.aimSpeed]);
     this.sound.setVolumes(this.settings.sfxVolume, this.settings.musicVolume);
@@ -703,6 +711,25 @@ export class Game {
       b.setNameTagVisible(this.settings.nameTags);
       b.rename(this.settings.buddyNames[b.crew]);
     }
+  }
+
+  private applyGraphicsSettings(): void {
+    const graphics = GRAPHICS_QUALITY[this.settings.graphicsQuality];
+    const ratio = Math.min(window.devicePixelRatio, graphics.pixelRatio);
+    if (this.renderer.getPixelRatio() !== ratio) this.renderer.setPixelRatio(ratio);
+    this.renderer.shadowMap.enabled = graphics.shadowSize > 0;
+    for (const scene of [this.scene, this.moonBase?.scene]) {
+      scene?.traverse((object) => {
+        if (!(object instanceof THREE.DirectionalLight)) return;
+        const shadow = object.shadow;
+        const size = graphics.shadowSize || 1024;
+        if (shadow.mapSize.x === size) return;
+        shadow.map?.dispose();
+        shadow.map = null;
+        shadow.mapSize.set(size, size);
+      });
+    }
+    this.pausedRendered = false;
   }
 
   private removeBuddy(buddy: BuddyTank): void {
@@ -1734,6 +1761,7 @@ export class Game {
       this.player.root.visible = false;
       pad.launch(COUNTDOWN);
       this.moonBase = new MoonBase();
+      this.applyGraphicsSettings();
       return;
     }
     // Didn't make it. A chopper comes down to the ground so the zombies can get at it.
@@ -1934,6 +1962,11 @@ export class Game {
   }
 
   private mapView(): MapView {
+    const now = performance.now();
+    const paused = this.hud.paused;
+    if (this.cachedMapView && paused === this.mapWasPaused && (paused || now < this.nextMapUpdate)) return this.cachedMapView;
+    this.mapWasPaused = paused;
+    this.nextMapUpdate = now + 100;
     const base = this.nearestEnemyBase(true);
     const f = this.fortress;
     // Point at the nearest standing base; once they're all down, at the Fortress.
@@ -1942,7 +1975,7 @@ export class Game {
       : f.isDestroyed
         ? null
         : { x: f.center.x, z: f.center.z, name: f.name };
-    return {
+    this.cachedMapView = {
       playerX: this.player.position.x,
       playerZ: this.player.position.z,
       playerYaw: this.player.yaw,
@@ -1954,6 +1987,7 @@ export class Game {
       fortress: { x: f.center.x, z: f.center.z, name: f.name, title: f.title, locked: f.locked, destroyed: f.isDestroyed, friendly: ZOMBIES },
       stations: this.stations.map((s) => ({ x: s.center.x, z: s.center.z, kind: s.kind })),
     };
+    return this.cachedMapView;
   }
 
   private hudState(
@@ -2047,6 +2081,7 @@ export class Game {
     this.camera.aspect = window.innerWidth / window.innerHeight;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this.applyGraphicsSettings();
   }
 
   // ---------- main loop ----------
@@ -2066,9 +2101,13 @@ export class Game {
       if (rawInput.mapTogglePressed && this.hud.paused) this.hud.toggleBigMap();
       this.sound.updateEngine(0, this.player.vehicle, false);
       this.hud.update(this.hudState(rawInput, false, { screen: null, range: null, target: 'none' }, null));
-      this.renderer.render(this.ending?.phase === 'moon' && this.moonBase ? this.moonBase.scene : this.scene, this.camera);
+      if (!this.pausedRendered) {
+        this.renderer.render(this.ending?.phase === 'moon' && this.moonBase ? this.moonBase.scene : this.scene, this.camera);
+        this.pausedRendered = true;
+      }
       return;
     }
+    this.pausedRendered = false;
 
     // The zombie mission's happy ending: the world's left behind for the party on the Moon.
     if (this.ending?.phase === 'moon' && this.moonBase) {
@@ -2079,6 +2118,7 @@ export class Game {
       this.sound.setListener(this.camera);
       this.hud.update(this.hudState(rawInput, true, { screen: null, range: null, target: 'none' }, null));
       this.renderer.render(this.moonBase.scene, this.camera);
+      this.hud.recordFrame();
       return;
     }
 
@@ -2294,7 +2334,7 @@ export class Game {
     const tankPositions = [...(playerLow ? [this.player] : []), ...this.buddies.filter((b) => !b.flying), ...this.enemySlots.flatMap((slot) => slot.tank ? [slot.tank] : []), ...this.redSlots.flatMap((slot) => slot.tank ? [slot.tank] : [])]
       .filter((tank) => !tank.isDestroyed)
       .map((tank) => tank.position);
-    for (const tree of this.trees) tree.update(dt, tankPositions);
+    this.trees.update(dt, tankPositions);
 
     this.world.step();
     this.projectiles.update(dt);
@@ -2373,5 +2413,6 @@ export class Game {
 
     this.hud.update(this.hudState(input, cinematic, aim, lockScreen, aaLockScreen));
     this.renderer.render(this.scene, this.camera);
+    this.hud.recordFrame();
   };
 }

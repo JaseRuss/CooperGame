@@ -185,6 +185,8 @@ const STYLE = `
 .hud .minimap { position:absolute; right:18px; top:16px; width:${MINIMAP_SIZE + 12}px; height:${MINIMAP_SIZE + 12}px; border-radius:50%; padding:6px;
   background:conic-gradient(from 0deg, #8f845d, #c9b983, #8f845d, #c9b983, #8f845d); box-shadow:0 3px 12px rgba(0,0,0,0.5); }
 .hud .minimap canvas { display:block; border-radius:50%; }
+.hud .fps { position:absolute; right:0; top:-8px; padding:3px 6px; border-radius:4px; background:rgba(10,16,10,0.85);
+  font-size:11px; font-weight:700; font-variant-numeric:tabular-nums; white-space:nowrap; }
 .hud .north { position:absolute; left:50%; top:-3px; transform:translateX(-50%); font-size:12px; color:#1c2414; background:#e8d9a4;
   border-radius:8px; padding:0 6px; line-height:16px; }
 
@@ -356,6 +358,7 @@ export class HUD {
   private readonly keys: HTMLDivElement;
   private readonly fullscreenTarget: HTMLElement;
   private readonly minimapCtx: CanvasRenderingContext2D;
+  private readonly fps: HTMLDivElement;
   private readonly overlay: HTMLDivElement;
   private readonly tabs: Record<'map' | 'options', HTMLDivElement>;
   private readonly pages: Record<'map' | 'options', HTMLDivElement>;
@@ -389,6 +392,7 @@ export class HUD {
   private readonly hudBits: HTMLElement[];
   private readonly html = new Map<HTMLElement, string>();
   private worldMap: WorldMap | null = null;
+  private lastDrawnMap: MapView | null = null;
   private pausedOpen = false;
   private page: 'map' | 'options' = 'map';
   private optionIndex = 0;
@@ -399,6 +403,8 @@ export class HUD {
   private hitMarkerAge = HIT_MARKER_TIME;
   private bannerAge = BANNER_TIME;
   private lastUpdate = performance.now();
+  private fpsSampleStart: number | null = null;
+  private fpsFrames = 0;
 
   constructor(container: HTMLElement) {
     const style = document.createElement('style');
@@ -494,6 +500,9 @@ export class HUD {
     minimapCanvas.height = MINIMAP_SIZE;
     this.minimapCtx = minimapCanvas.getContext('2d') as CanvasRenderingContext2D;
     el('div', 'stencil north', minimapWrap, 'N');
+    this.fps = el('div', 'fps', minimapWrap, '— FPS');
+    this.fps.hidden = true;
+    document.addEventListener('visibilitychange', () => this.resetFps());
 
     // --- target checklist when near an enemy base (under the minimap) ---
     this.checklist = el('div', 'panel checklist', root);
@@ -596,7 +605,30 @@ export class HUD {
   setSettings(settings: Settings, onChange: (s: Settings) => void): void {
     this.settings = settings;
     this.onSettingsChange = onChange;
+    this.resetFps();
     this.renderOptions();
+  }
+
+  private resetFps(): void {
+    this.fpsSampleStart = null;
+    this.fpsFrames = 0;
+    this.fps.textContent = '— FPS';
+  }
+
+  /** Called after a gameplay render; use real time, since simulation time is capped on slow machines. */
+  recordFrame(): void {
+    if (!this.settings?.showFps || this.pausedOpen || document.hidden) return;
+    const now = performance.now();
+    if (this.fpsSampleStart === null) {
+      this.fpsSampleStart = now;
+      return;
+    }
+    this.fpsFrames++;
+    const elapsed = now - this.fpsSampleStart;
+    if (elapsed < 500) return;
+    this.fps.textContent = `${Math.round(this.fpsFrames * 1000 / elapsed)} FPS`;
+    this.fpsSampleStart = now;
+    this.fpsFrames = 0;
   }
 
   /** Called when a different mission is picked and confirmed on the options screen. */
@@ -636,6 +668,7 @@ export class HUD {
   toggleBigMap(): void {
     this.nameEdit = null;
     this.pausedOpen = !this.pausedOpen;
+    this.resetFps();
     this.sfx(this.pausedOpen ? 'open' : 'back');
     this.overlay.style.display = this.pausedOpen ? 'flex' : 'none';
     this.showPage('map');
@@ -767,6 +800,7 @@ export class HUD {
 
   private showPage(page: 'map' | 'options'): void {
     this.page = page;
+    this.lastDrawnMap = null;
     for (const p of ['map', 'options'] as const) {
       this.tabs[p].classList.toggle('on', p === page);
       this.pages[p].classList.toggle('on', p === page);
@@ -975,6 +1009,7 @@ export class HUD {
     const now = performance.now();
     const dt = Math.min(0.1, (now - this.lastUpdate) / 1000);
     this.lastUpdate = now;
+    this.fps.hidden = !this.settings?.showFps;
 
     // Hull: segmented bar that shifts green → amber → red.
     const healthFrac = Math.max(0, state.health / state.maxHealth);
@@ -1148,20 +1183,28 @@ export class HUD {
     }
 
     if (!this.worldMap) return;
-    this.worldMap.draw(this.minimapCtx, MINIMAP_SIZE, MINIMAP_SIZE, state.map.playerX, state.map.playerZ, MINIMAP_METERS, state.map, {
-      arrowScale: 1,
-      labels: false,
-      rimPointer: true,
-      heatmap: false,
-    });
+    const mapChanged = this.lastDrawnMap !== state.map;
+    if (!this.pausedOpen && !state.cinematic && mapChanged) {
+      this.worldMap.draw(this.minimapCtx, MINIMAP_SIZE, MINIMAP_SIZE, state.map.playerX, state.map.playerZ, MINIMAP_METERS, state.map, {
+        arrowScale: 1,
+        labels: false,
+        rimPointer: true,
+        heatmap: false,
+      });
+      this.lastDrawnMap = state.map;
+    }
 
     if (this.pausedOpen && this.page === 'map') {
-      const size = Math.floor(Math.min(window.innerWidth * 0.9, window.innerHeight - 310));
-      if (this.bigMapCanvas.width !== size) {
+      const size = Math.max(1, Math.floor(Math.min(window.innerWidth * 0.9, window.innerHeight - 310)));
+      const resized = this.bigMapCanvas.width !== size;
+      if (resized) {
         this.bigMapCanvas.width = size;
         this.bigMapCanvas.height = size;
       }
-      this.worldMap.draw(this.bigMapCtx, size, size, 0, 0, WORLD_SIZE, state.map, { arrowScale: 2.6, labels: true, rimPointer: false, heatmap: true });
+      if (mapChanged || resized) {
+        this.worldMap.draw(this.bigMapCtx, size, size, 0, 0, WORLD_SIZE, state.map, { arrowScale: 2.6, labels: true, rimPointer: false, heatmap: true });
+        this.lastDrawnMap = state.map;
+      }
     }
   }
 
