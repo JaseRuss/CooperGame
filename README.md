@@ -123,6 +123,13 @@ sound on.
   bases are down, and nothing inside can be shot until then. Then its gates
   open and a column of green and red tanks and troops joins you for the final
   assault. Flatten it to win.
+- A **moat** runs all the way round the Fortress (the Great Castle's too), with
+  a causeway across it to each gate. An invisible wall along the water's edge
+  stops anything driving in, so you can't get stuck in it. A few of the
+  garrison lounge about in the moat in **rubber rings**, some in sunglasses,
+  one on a duck: shells and blasts nearby tip them in (they climb back out),
+  jam gums them up, and once the gates open they paddle for their lives.
+  Nobody shoots at them and they don't shoot back.
 - **Enemy helicopters** patrol the open country and circle in to attack. Raise
   your gun: one direct shell hit brings one down. Or aim roughly at one until
   **HELI LOCKED** shows by the crosshair and fire a salvo of wobbly
@@ -287,14 +294,15 @@ The last level, at night. Green, red, tan and blue have all joined up to defend
 the **Fortress**, and waves of glow-in-the-dark plastic **zombies** are coming. A
 new wave comes every minute, from more sides and bigger each time: walkers, then
 speedy runners, then big purple brutes that take several hits. Pillboxes, squads
-and tanks from every army hold a ring round the walls, green soldiers man
-**flamethrower pits** just outside the wall that hose any zombie that gets close,
+and tanks from every army hold a ring round the moat, green soldiers man
+**flamethrower pits** on its far bank that hose any zombie that gets close,
 and there's a jeep station and a chopper station by the gates. Some of the towns
 have already been overrun: houses knocked down, fires burning and zombies still
 hanging about. Drive into the Fortress to repair and rearm, and press Back / R to
 get back there.
 
-Zombies that reach the Fortress wall batter it, and the wall's strength bar at
+Zombies can't swim, so they go round the moat and up the causeways to batter
+the gates. Zombies that reach the Fortress wall batter it, and the wall's strength bar at
 the top of the screen goes down (it mends slowly while they're kept off). If it
 runs out, the zombies are in and the game is over.
 

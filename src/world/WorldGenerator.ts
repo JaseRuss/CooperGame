@@ -21,6 +21,7 @@ import { ENEMY_ARMY_COLOR, ARMY_RED, ARMY_TAN, ARMY_BLUE, plastic } from '../uti
 import { WORLD_HALF, WORLD_SEED, BASE_RADIUS, MAX_ENEMIES, FORTRESS_HALF, JUNGLE, KNIGHTS, ZOMBIES, distanceToFriendlyBase } from '../core/config';
 import { buildCottage, buildHayCart, COTTAGE_ROOFS, SHUTTER_COLORS } from './Medieval';
 import { Tree, TREE_SIZE, LAMP_SIZE, type ToppleSize } from './Tree';
+import { inMoat } from './MoatShape';
 
 export interface EnemySpawnPoint {
   x: number;
@@ -132,7 +133,7 @@ export function generateWorld(
 
 /** Anywhere a bunker, tree or spawn shouldn't go: towns, malls, the airfield, lakes. */
 function isOccupied(x: number, z: number, padding: number): boolean {
-  return isInAnyTown(x, z, padding) || isInLandmark(x, z, padding);
+  return isInAnyTown(x, z, padding) || isInLandmark(x, z, padding) || inMoat(x, z, padding + 4);
 }
 
 function placeBunkers(world: RAPIER.World, scene: THREE.Scene, hitRegistry: HitRegistry, highways: Polyline[]): Bunker[] {

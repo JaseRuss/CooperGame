@@ -33,6 +33,8 @@ import { ImpactEffects } from '../combat/ImpactEffects';
 import { predictTrajectory, type Trajectory } from '../combat/Projectile';
 import { HomingRocket, type RocketTarget } from '../combat/HomingRocket';
 import { JamCannon } from '../combat/JamCannon';
+import { Moat } from '../world/Moat';
+import { inMoat, routeRoundMoat, zombieWaypoint } from '../world/MoatShape';
 import { RepairCrates, REPAIR_AMOUNT } from '../world/RepairCrates';
 import { AAMissiles, AA_SALVO, AA_CAPACITY, type AirTrack } from '../combat/AAMissiles';
 import { AntiAir } from '../combat/AntiAir';
@@ -323,6 +325,7 @@ export class Game {
   private projectiles!: ProjectileManager;
   private impacts!: ImpactEffects;
   private jam!: JamCannon;
+  private moat!: Moat;
   private crates!: RepairCrates;
   private aa!: AAMissiles;
   private antiAir!: AntiAir;
@@ -543,6 +546,10 @@ export class Game {
     this.landmarks = content.landmarks;
     this.buildings = [...content.buildings, ...content.bunkers.map((b) => b.building)];
     this.troops = new TroopManager(this.scene, content.squads, Math.random);
+    // Nobody wanders into the moat; zombies go round it to the causeways.
+    this.troops.route = { outOfBounds: (x, z) => inMoat(x, z, 1), zombieWaypoint };
+    // The Fortress's garrison lounging in the moat: tan and blue, or on the zombie mission ours.
+    this.moat = new Moat(this.scene, ZOMBIES ? [ARMY_GREEN, ARMY_RED] : [ARMY_TAN, ARMY_BLUE]);
     this.troops.shielded = (p) => this.sealedInFortress(p);
     this.troops.onZombieDown = (z) => {
       if (z.zombie === 'brute' && Math.random() < CRATE_CHANCE_BRUTE) this.dropCrate(z.position);
@@ -774,6 +781,7 @@ export class Game {
   /** A blast knocks over the other side's soldiers (`attacker` null = everyone's). */
   private explode(point: THREE.Vector3, size: number, attacker: Faction | null): void {
     this.impacts.explode(point, size);
+    this.tipLoungers(point, size);
     this.sound.play('explosion', { at: point, volume: Math.min(1, 0.35 + size * 0.22), rate: size < 1 ? 1.25 : 1, minGap: 0.05 });
     if (size >= 2.3) this.sound.play('boom', { at: point, volume: 0.9, minGap: 0.1 });
     const knocked = this.troops.blast(point, BLAST_RADIUS * size, attacker);
@@ -781,6 +789,11 @@ export class Game {
     // During rocket cam the camera is near the blast, not the tank.
     const camDist = point.distanceTo(this.rocketSeq ? this.camera.position : this.player.position);
     this.cameraRig.addShake((size * 0.9) / Math.max(1, camDist / 12));
+  }
+
+  /** Anyone lounging in the moat near a blast or a shell's splash goes in, with a splash of his own. */
+  private tipLoungers(point: THREE.Vector3, size: number): void {
+    for (const p of this.moat.disturb(point, size)) this.impacts.splash(p, 0.6);
   }
 
   private isBunker(building: Building): boolean {
@@ -860,8 +873,10 @@ export class Game {
       tank.physicsCollider,
       (point, result) => {
         if (result.collapsedBuilding) this.collapseBuilding(result.collapsedBuilding, tank.faction);
-        else if (result.water) this.impacts.splash(point, 1);
-        else if (result.tree) {
+        else if (result.water) {
+          this.impacts.splash(point, 1);
+          this.tipLoungers(point, 1);
+        } else if (result.tree) {
           // Tank shells fell trees (and lamp posts), so you can blast a way through the jungle.
           result.tree.knockDown(shot.direction);
           this.impacts.dustPuff(point);
@@ -1569,6 +1584,7 @@ export class Game {
     if (this.finalAssault) return;
     this.finalAssault = true;
     this.fortress.unlock();
+    this.moat.panic();
     this.rocketCharge = 1;
     this.buddyCharge = 1;
     this.hud.showBanner('THE FORTRESS GATES ARE OPEN!', 'Final assault! The whole army is rolling in with you');
@@ -1584,13 +1600,17 @@ export class Game {
       const offset = new THREE.Vector3(side * 14, 0, 26 + Math.floor(i / 2) * 13).applyAxisAngle(up, this.player.yaw);
       const start = p.clone().add(offset);
       start.y = surfaceHeightAt(start.x, start.z);
-      this.addAssaultTank([start, gate, ...sweep], i % 2 === 0 ? ASSAULT_GREEN : ARMY_RED, 2, 1, holdWhile);
+      // Round the moat's corners if it's in the way, then up the causeway to the gate.
+      const approach = routeRoundMoat(start, gate).map((q) => new THREE.Vector3(q.x, surfaceHeightAt(q.x, q.z), q.z));
+      const toGate = approach.length; // the gate's index in the route
+      this.addAssaultTank([start, ...approach, ...sweep], i % 2 === 0 ? ASSAULT_GREEN : ARMY_RED, toGate + 1, toGate, holdWhile);
     }
     // More tanks and infantry already waiting outside each gate.
     for (const rally of this.fortress.rallyPoints) {
       for (let i = 0; i < GATE_TANKS; i++) {
         const spot = rally.clone().add(new THREE.Vector3((i - 1.5) * 12, 0, 0));
-        this.addAssaultTank([spot, ...sweep], i % 2 === 0 ? ASSAULT_GREEN : ARMY_RED, 1, 0, holdWhile);
+        // In line with the causeway first, then straight up it.
+        this.addAssaultTank([spot, rally, ...sweep], i % 2 === 0 ? ASSAULT_GREEN : ARMY_RED, 2, 0, holdWhile);
       }
       for (const [dx, color] of [[-18, ARMY_GREEN], [0, ARMY_RED], [18, ARMY_GREEN]] as [number, number][]) {
         this.troops.addSquad({
@@ -1670,27 +1690,28 @@ export class Game {
     // The way out: the moon rocket on its pad in the middle.
     const pad = siteToWorld(f.site, PAD_LOCAL.x, PAD_LOCAL.z);
     this.launchPad = new LaunchPad(this.world, this.scene, pad.x, surfaceHeightAt(pad.x, pad.z), pad.z, siteYaw(f.site));
-    // Pillboxes round the outside, slits facing out, skipping the roads to the gates.
+    // The walls and moat are square, so things placed round them go out further at the corners.
+    const square = (r: number, a: number) => around(r / Math.max(Math.abs(Math.cos(a)), Math.abs(Math.sin(a))), a);
+    // Pillboxes round the outside of the moat, slits facing out, skipping the roads to the gates.
     for (let i = 0; i < 12; i++) {
       const a = (i / 12) * Math.PI * 2;
-      const p = around(140, a);
+      const p = square(145, a);
       if (Math.abs(Math.cos(a)) < 0.2 || highways.some((h) => distanceToPolyline(p.x, p.z, h) < 16)) continue; // leave the gates clear
       const bunker = new Bunker(this.world, this.scene, this.hitRegistry, p.x, p.z, Math.atan2(-Math.cos(a), -Math.sin(a)), 'player', LAST_STAND_COLORS[i % 4]);
       this.friendlyBunkers.push(bunker);
       this.buildings.push(bunker.building);
     }
-    // Flamethrower pits just outside the wall, facing out, clear of the gates.
+    // Flamethrower pits on the far bank of the moat, facing out, clear of the gates.
     for (let i = 0; i < 8; i++) {
       const a = (i / 8) * Math.PI * 2;
       if (Math.abs(Math.cos(a)) < 0.2) continue;
-      // The walls are square, so push the corner pits out past the corner towers.
-      const p = around(118 / Math.max(Math.abs(Math.cos(a)), Math.abs(Math.sin(a))), a);
+      const p = square(137, a);
       const pit = new FlamePit(this.world, this.scene, this.hitRegistry, p.x, p.z, Math.atan2(-Math.cos(a), -Math.sin(a)));
       this.flamePits.push(pit);
       this.buildings.push(pit.building);
     }
     for (let i = 0; i < 8; i++) {
-      const p = around(125, ((i + 0.5) / 8) * Math.PI * 2); // between the gates
+      const p = square(143, ((i + 0.5) / 8) * Math.PI * 2); // between the gates, beyond the moat
       this.troops.addSquad({ anchor: new THREE.Vector2(p.x, p.z), count: GARRISON_SQUAD_SIZE, wanderRadius: 12, faction: 'player', color: LAST_STAND_COLORS[i % 4], holdWhile: null });
     }
     // Tanks of every army on a loop round the walls.
@@ -2374,6 +2395,7 @@ export class Game {
       this.sound.play('splat', { at: point, volume: 0.9, minGap: 0.1 });
       const radius = big ? HOSE_JAM_RADIUS : JAM_RADIUS;
       this.jamEnemies(point, radius);
+      this.moat.jam(point);
       // Jam on your own side doesn't hurt, but it gums up their guns for a bit.
       const fumbled = this.troops.jamGuns(point, radius, 'player', GUN_JAM_TIME);
       let jammedTank: string | null = null;
@@ -2504,6 +2526,7 @@ export class Game {
     const repairingAt = insideBase && this.player.health < this.player.maxHealth ? nearestFriendlyBase(this.player.position.x, this.player.position.z) : null;
     for (const fb of this.familyBases) fb.camp.update(dt, fb.info === repairingAt, this.camera.position, this.player.position);
     this.landmarks.update(dt);
+    for (const p of this.moat.update(dt)) this.impacts.splash(p, 0.35);
 
     // Bow wave while the tank wades through a lake.
     this.wakeTimer -= dt;

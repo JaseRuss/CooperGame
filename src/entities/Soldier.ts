@@ -22,6 +22,12 @@ export type Shot = { origin: THREE.Vector3; direction: THREE.Vector3; melee?: nu
 
 /** Zombies: walkers shamble, runners hurry, brutes are big, slow and take several hits. */
 export type ZombieKind = 'walker' | 'runner' | 'brute';
+
+/** The ground troops keep out of (the moat), and the way zombies go round it. */
+export interface TroopRoute {
+  outOfBounds(x: number, z: number): boolean;
+  zombieWaypoint(p: THREE.Vector3): { x: number; z: number } | null;
+}
 export const ZOMBIE_COLOR: Record<ZombieKind, number> = { walker: 0xa9d38e, runner: 0xd6cc6e, brute: 0xa98cc8 };
 
 const zombieMaterials = new Map<number, THREE.MeshPhysicalMaterial>();
@@ -617,7 +623,9 @@ export class Soldier {
   /**
    * `blocked`: for zombies, true where they can't walk (the Fortress wall); they stop there and
    * batter it instead. For an anti-aircraft trooper `target` is a chopper and `targetVelocity`
-   * how it's moving, so he can lead it.
+   * how it's moving, so he can lead it. `route`: where the ground is out of bounds (the moat), a
+   * soldier doesn't wander in, and a zombie is steered round it (the next spot to make for, or
+   * null to go straight at its goal).
    */
   update(
     dt: number,
@@ -625,6 +633,7 @@ export class Soldier {
     target: THREE.Vector3 | null,
     blocked?: (x: number, z: number) => boolean,
     targetVelocity?: THREE.Vector3,
+    route?: TroopRoute,
   ): Shot | null {
     if (this.state === 'flying') {
       this.fallVelocity.y -= 24 * dt;
@@ -661,7 +670,7 @@ export class Soldier {
       return null;
     }
 
-    if (this.zombie) return this.updateZombie(dt, target, blocked);
+    if (this.zombie) return this.updateZombie(dt, target, blocked, route);
 
     const dx = target ? target.x - this.pos.x : 0;
     const dz = target ? target.z - this.pos.z : 0;
@@ -703,8 +712,12 @@ export class Soldier {
       const tx = this.wanderTarget.x - this.pos.x;
       const tz = this.wanderTarget.y - this.pos.z;
       const tLen = Math.hypot(tx, tz);
-      if (tLen > 0.01) {
-        const step = Math.min(tLen, WALK_SPEED * dt);
+      const step = Math.min(tLen, WALK_SPEED * dt);
+      const intoMoat =
+        tLen > 0.01 && route && !route.outOfBounds(this.pos.x, this.pos.z) && route.outOfBounds(this.pos.x + (tx / tLen) * step, this.pos.z + (tz / tLen) * step);
+      if (intoMoat) {
+        this.wanderTarget = null; // the edge of the moat: wander somewhere else
+      } else if (tLen > 0.01) {
         this.pos.x += (tx / tLen) * step;
         this.pos.z += (tz / tLen) * step;
         this.heading = Math.atan2(-tx, -tz);
@@ -722,11 +735,12 @@ export class Soldier {
    * Shambles at the nearest target in reach and bites it, or on toward the anchor (the Fortress),
    * swaying as it goes. Where `blocked` stops it (the wall) it batters away at that instead.
    */
-  private updateZombie(dt: number, target: THREE.Vector3 | null, blocked?: (x: number, z: number) => boolean): Shot | null {
+  private updateZombie(dt: number, target: THREE.Vector3 | null, blocked?: (x: number, z: number) => boolean, route?: TroopRoute): Shot | null {
     const stats = ZOMBIE_STATS[this.zombie as ZombieKind];
     const chase = target !== null && Math.hypot(target.x - this.pos.x, target.z - this.pos.z) < ZOMBIE_AGGRO;
-    const gx = chase && target ? target.x : this.anchor.x;
-    const gz = chase && target ? target.z : this.anchor.y;
+    const via = chase ? null : route?.zombieWaypoint(this.pos);
+    const gx = chase && target ? target.x : via ? via.x : this.anchor.x;
+    const gz = chase && target ? target.z : via ? via.z : this.anchor.y;
     const dx = gx - this.pos.x;
     const dz = gz - this.pos.z;
     const dist = Math.hypot(dx, dz);
