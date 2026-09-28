@@ -20,7 +20,7 @@ import { MoonBase } from '../world/MoonBase';
 import type { Tree } from '../world/Tree';
 import type { LandmarkSet } from '../world/LandmarkBuilders';
 import { TOWNS } from '../world/TownPlan';
-import { PlayerTank, type Vehicle } from '../entities/PlayerTank';
+import { MOTORBIKE_AIRBORNE_HEIGHT, PlayerTank, type Vehicle } from '../entities/PlayerTank';
 import type { Tank, Faction } from '../entities/Tank';
 import { EnemyTank } from '../entities/EnemyTank';
 import { HelicopterEnemy } from '../entities/HelicopterEnemy';
@@ -355,6 +355,7 @@ export class Game {
   /** Seconds of jeep or chopper left (0 while it's the tank), out of `rideTimeTotal`. */
   private rideTime = 0;
   private rideTimeTotal = 0;
+  private bikeDustTimer = 0;
   /** The jeep's and chopper's missiles: reload (0..1) and the ones in flight. */
   private missileCharge = 1;
   private missiles: HomingRocket[] = [];
@@ -2148,6 +2149,22 @@ export class Game {
 
     const before = this.player.position.clone();
     const playerShot = this.player.step(input, dt);
+    if (this.player.vehicle === 'motorbike') {
+      this.bikeDustTimer = Math.max(0, this.bikeDustTimer - dt);
+      if (this.player.heightAboveGround < MOTORBIKE_AIRBORNE_HEIGHT && this.bikeDustTimer <= 0) {
+        const displacement = this.player.position.clone().sub(before);
+        const velocity = displacement.length() / Math.max(dt, 0.001);
+        if (velocity > 6) {
+          const travelDirection = displacement.normalize();
+          const point = this.player.position.clone().addScaledVector(travelDirection, -1.55);
+          point.y = surfaceHeightAt(point.x, point.z) + 0.06;
+          if (waterDepthAt(point.x, point.z) <= 0.05) {
+            this.impacts.bikeDust(point, Math.min(1, velocity / 45), travelDirection.negate());
+          }
+          this.bikeDustTimer = 0.065;
+        }
+      }
+    }
     if (playerShot) this.fire(this.player, playerShot);
     // The chopper can't fly in over the Fortress while it's locked: it would land inside and be stuck.
     const p = this.player.position;

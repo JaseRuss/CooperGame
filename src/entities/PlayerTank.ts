@@ -30,9 +30,11 @@ const AA_TUBES = [-0.15, 0, 0.15].flatMap((x) => [0.07, -0.08].map((y) => [x, y]
 // The jeep from a changing station: same body and collider, much quicker and nimbler.
 export type Vehicle = 'tank' | 'jeep' | 'chopper' | 'motorbike';
 const JEEP_MAX_SPEED = 36; // m/s (the tank does 22)
-const MOTORBIKE_MAX_SPEED = 62;
+const MOTORBIKE_MAX_SPEED = 52.7; // 15% below the original 62 m/s
 const MOTORBIKE_GUN_INTERVAL = 0.085;
 const MOTORBIKE_GUN_SPREAD = 0.028;
+const MOTORBIKE_RIG_DROP = 0.12;
+export const MOTORBIKE_AIRBORNE_HEIGHT = 0.65;
 const JEEP_TURN_RATE = 1.3; // × the tank's
 const MOTORBIKE_TURN_RATE = 2.5; // multiplier relative to the jeep's turn rate
 /** The toy jeep is ~3.9 m long; scaled to about the tank's footprint so it fills the same collider. */
@@ -173,9 +175,11 @@ export class PlayerTank extends Tank {
   }
 
   private buildBikeRig(source?: THREE.Object3D, animations: THREE.AnimationClip[] = []): void {
+    this.bikeRig.position.y = -MOTORBIKE_RIG_DROP;
     if (source) {
       const scene = source.clone(true);
       scene.scale.setScalar(1.55);
+      // The imported bike's tyres sit noticeably above the ground at the tank's normal mount.
       scene.position.y = -HULL_HALF_EXTENTS.y;
       scene.rotation.y = Math.PI;
       this.bikeRig.add(scene);
@@ -206,7 +210,7 @@ export class PlayerTank extends Tank {
       barrel.position.set(side * 0.09, 0, -0.64);
       gun.add(barrel);
     }
-    this.bikeGunMuzzle.position.set(0.34, 0.9, -1.12);
+    this.bikeGunMuzzle.position.set(0, 0, -1.05);
     gun.add(this.bikeGunMuzzle);
     this.bikeRig.add(gun);
     this.bikeRig.visible = false;
@@ -717,7 +721,7 @@ export class PlayerTank extends Tank {
   }
 
   private animateBike(dt: number, hullDelta: number, speed: number): void {
-    const airborne = this.heightAboveGround > 0.65;
+    const airborne = this.heightAboveGround > MOTORBIKE_AIRBORNE_HEIGHT;
     this.bikeMixer?.update(dt);
     if (this.bikeRollAction) {
       this.bikeRollAction.paused = false;
