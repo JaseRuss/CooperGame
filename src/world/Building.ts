@@ -11,6 +11,79 @@ const BAR_SHOW_TIME = 3.5;
 const BAR_FADE_TIME = 0.8;
 const BAR_MAX_HEIGHT = 24; // above the ground, so skyscraper bars stay in view
 
+/** Buildings this tough (several shells) crack where they're hit; a shell on a crack does double damage. */
+const CRACK_MIN_HEALTH = 100;
+/** Only a real shell cracks a wall (not rifle rounds or the chin gun). */
+const CRACK_MIN_DAMAGE = 15;
+const MAX_CRACKS = 3;
+const CRACK_BONUS = 2;
+const CRACK_VARIANTS = 3;
+
+let crackMaterials: THREE.MeshBasicMaterial[] | null = null;
+const crackGeometry = new THREE.PlaneGeometry(1, 1);
+
+/** A jagged crack drawn on a canvas: dark splits with a hot orange glow in the middle, so it reads as "hit here". */
+function crackTexture(seed: number): THREE.CanvasTexture {
+  let s = seed * 9301 + 49297;
+  const rand = () => ((s = (s * 9301 + 49297) % 233280) / 233280);
+  const c = document.createElement('canvas');
+  c.width = c.height = 256;
+  const ctx = c.getContext('2d') as CanvasRenderingContext2D;
+  const glow = ctx.createRadialGradient(128, 128, 4, 128, 128, 70);
+  glow.addColorStop(0, 'rgba(255,150,40,0.75)');
+  glow.addColorStop(1, 'rgba(255,120,30,0)');
+  ctx.fillStyle = glow;
+  ctx.fillRect(0, 0, 256, 256);
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  const branch = (x: number, y: number, angle: number, width: number, depth: number) => {
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    const steps = 3 + Math.floor(rand() * 3);
+    for (let i = 0; i < steps; i++) {
+      angle += (rand() - 0.5) * 0.9;
+      x += Math.cos(angle) * (14 + rand() * 12);
+      y += Math.sin(angle) * (14 + rand() * 12);
+      ctx.lineTo(x, y);
+    }
+    ctx.strokeStyle = '#17110c';
+    ctx.lineWidth = width;
+    ctx.stroke();
+    if (depth > 0) {
+      branch(x, y, angle + 0.6, width * 0.6, depth - 1);
+      if (rand() > 0.4) branch(x, y, angle - 0.7, width * 0.55, depth - 1);
+    }
+  };
+  const arms = 5 + Math.floor(rand() * 2);
+  for (let i = 0; i < arms; i++) branch(128, 128, (i / arms) * Math.PI * 2 + rand() * 0.5, 7, 2);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+function crackMaterial(): THREE.MeshBasicMaterial {
+  crackMaterials ??= Array.from(
+    { length: CRACK_VARIANTS },
+    (_, i) =>
+      new THREE.MeshBasicMaterial({
+        map: crackTexture(i + 1),
+        transparent: true,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+        polygonOffset: true,
+        polygonOffsetFactor: -4,
+        polygonOffsetUnits: -4,
+      }),
+  );
+  return crackMaterials[Math.floor(Math.random() * CRACK_VARIANTS)];
+}
+
+/** A crack on a building's wall: where it is and how close a shell has to land to it. */
+interface Crack {
+  mesh: THREE.Mesh;
+  radius: number;
+}
+
 interface Debris {
   mesh: THREE.Mesh;
   body: RAPIER.RigidBody;
@@ -51,6 +124,9 @@ export class Building {
   readonly critSpots: CritSpot[] = [];
   /** How much bigger the blast is when it goes up from a critical hit. */
   critExplosionScale = 1;
+  /** Set by strike(): the last shell landed on a crack and did double damage. */
+  lastStrikeOnCrack = false;
+  private readonly cracks: Crack[] = [];
 
   private bar: { sprite: THREE.Sprite; canvas: HTMLCanvasElement; texture: THREE.CanvasTexture } | null = null;
   private barTimer = 0;
@@ -106,15 +182,75 @@ export class Building {
     return null;
   }
 
-  /** A shell hit at `point` travelling along `dir`: normal damage, or instant destruction on a weak point. */
+  /**
+   * A shell hit at `point` travelling along `dir`: normal damage, instant destruction on a weak
+   * point, or double damage on a crack. A tough building cracks where the first shell lands and
+   * again each time it loses another quarter of its health.
+   */
   strike(amount: number, point: THREE.Vector3, dir: THREE.Vector3): CritSpot | null {
+    this.lastStrikeOnCrack = false;
     const crit = this.critAt(point, dir);
     if (crit) {
       this.destroyByCritical();
       return crit;
     }
-    this.takeDamage(amount);
+    const crackable = this.crackable && amount >= CRACK_MIN_DAMAGE;
+    const onCrack = crackable && this.crackAt(point, dir);
+    this.lastStrikeOnCrack = onCrack;
+    this.takeDamage(onCrack ? amount * CRACK_BONUS : amount);
+    if (crackable && !onCrack && !this.destroyed) {
+      const wanted = Math.min(MAX_CRACKS, 1 + Math.floor((1 - this.health / this.maxHealth) * 4));
+      if (this.cracks.length < wanted) this.addCrack(point, dir);
+    }
     return null;
+  }
+
+  /** Tough enough to crack, and not something with its own weak point (a bunker's slit) or a fuel tank. */
+  private get crackable(): boolean {
+    return this.maxHealth >= CRACK_MIN_HEALTH && !this.isFuel && this.critSpots.length === 0 && !this.locked && !this.destroyed;
+  }
+
+  /** True when a shell entering at `point` along `dir` passes close by a crack (for double damage). */
+  crackAt(point: THREE.Vector3, dir: THREE.Vector3): boolean {
+    if (this.cracks.length === 0 || !this.crackable) return false;
+    const d = dir.clone().normalize();
+    const reach = this.halfExtents.length() * 2;
+    const line = new THREE.Line3(point.clone().addScaledVector(d, -2), point.clone().addScaledVector(d, reach));
+    const closest = new THREE.Vector3();
+    // The collider is a box round the whole model, so follow the shell's path on to the wall itself.
+    return this.cracks.some((c) => line.closestPointToPoint(c.mesh.position, true, closest).distanceTo(c.mesh.position) < c.radius);
+  }
+
+  /** Puts a crack on the wall where a shell entering at `point` along `dir` meets the model. */
+  private addCrack(point: THREE.Vector3, dir: THREE.Vector3): void {
+    const d = dir.clone().normalize();
+    const ray = new THREE.Raycaster(point.clone().addScaledVector(d, -2), d, 0, this.halfExtents.length() * 2 + 2);
+    const hit = ray.intersectObject(this.mesh, true).find((h) => h.face);
+    let at: THREE.Vector3;
+    let normal: THREE.Vector3;
+    if (hit?.face) {
+      at = hit.point;
+      normal = hit.face.normal.clone().transformDirection(hit.object.matrixWorld);
+      if (normal.dot(d) > 0) normal.negate(); // face the way the shell came from
+    } else {
+      // Missed the model: the face of the collider box the shell struck.
+      at = point.clone();
+      const rel = point.clone().sub(this.center);
+      const ax = Math.abs(rel.x) / this.halfExtents.x;
+      const ay = Math.abs(rel.y) / this.halfExtents.y;
+      const az = Math.abs(rel.z) / this.halfExtents.z;
+      normal = ax >= ay && ax >= az ? new THREE.Vector3(Math.sign(rel.x), 0, 0) : ay >= az ? new THREE.Vector3(0, Math.sign(rel.y), 0) : new THREE.Vector3(0, 0, Math.sign(rel.z));
+    }
+    const smallest = Math.min(this.halfExtents.x, this.halfExtents.y, this.halfExtents.z) * 2;
+    const size = THREE.MathUtils.clamp(smallest * 0.35, 2, 4);
+    const mesh = new THREE.Mesh(crackGeometry, crackMaterial());
+    mesh.position.copy(at).addScaledVector(normal, 0.06);
+    mesh.lookAt(mesh.position.clone().add(normal));
+    mesh.rotateZ(Math.random() * Math.PI * 2);
+    mesh.scale.setScalar(size);
+    mesh.renderOrder = 2;
+    this.scene.add(mesh);
+    this.cracks.push({ mesh, radius: Math.max(2.2, size * 0.75) });
   }
 
   /** Goes up at once, with the bigger weak-point blast. */
@@ -170,6 +306,9 @@ export class Building {
   private collapse(): void {
     this.destroyed = true;
     this.removeHealthBar();
+    // (The crack geometry and materials are shared, so there's nothing to dispose.)
+    for (const c of this.cracks) this.scene.remove(c.mesh);
+    this.cracks.length = 0;
     this.startY = this.mesh.position.y;
     this.startScale.copy(this.mesh.scale);
     if (this.collider) this.hitRegistry.unregister(this.collider);
