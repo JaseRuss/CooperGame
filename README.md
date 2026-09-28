@@ -179,6 +179,12 @@ sound on.
   base's targets and falls to two shells, so knock it out before sending
   choppers in.
 - Hit a building and a health bar pops up over it for a few seconds.
+- **Cracks:** tough buildings (factories, warehouses, smokestacks, castle walls
+  and towers) crack where your first shell lands, with a glowing orange split,
+  and crack again as they lose each quarter of their health. A shell that
+  lands on a crack does **double damage**, and the aim ring turns orange and
+  says **CRACK ×2** when you're lined up on one. Keep hitting the crack and a
+  factory goes down in 7 shells instead of 13.
 - The pause map shows where the enemy is gathered as a red glow.
 
 ## Jeep, chopper and motorbike stations

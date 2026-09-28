@@ -872,6 +872,11 @@ export class Game {
           this.sound.play('clang', { volume: 0.55 });
         }
         if (result.critical) this.onCriticalHit(result.critical, point, tank === this.player);
+        else if (result.cracked && tank === this.player) {
+          this.hud.showCallout('CRACK HIT! DOUBLE DAMAGE', '#ff9a3d');
+          this.impacts.dustPuff(point);
+          this.cameraRig.addShake(0.2);
+        }
       },
       1,
       tank.faction,
@@ -2053,6 +2058,7 @@ export class Game {
       ? (this.targetableBunkers.find((b) => b.building === hit.building)?.jamCritAt(impact, travel) ?? false)
       : hit.building.critAt(impact, travel) !== null;
     if (crit) return 'critical';
+    if (!jam && hit.building.crackAt(impact, travel)) return 'crack';
     return hit.building.faction === 'enemy' ? 'enemy' : 'building';
   }
 

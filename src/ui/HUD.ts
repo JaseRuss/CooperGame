@@ -132,6 +132,7 @@ const RETICLE_COLORS: Record<AimTarget, string> = {
   ground: 'rgba(255,255,255,0.9)',
   none: 'rgba(255,255,255,0.6)',
   critical: '#ffd24a',
+  crack: '#ff9a3d',
 };
 
 /** Letters a controller cycles through when editing a buddy's name. */
@@ -1153,7 +1154,7 @@ export class HUD {
       this.crosshair.style.borderColor = color;
       this.crosshair.style.color = color;
       const range = state.aimRange === null ? 'out of range' : `${Math.round(state.aimRange)} m`;
-      this.rangeLabel.textContent = state.aimTarget === 'critical' ? `CRITICAL · ${range}` : range;
+      this.rangeLabel.textContent = state.aimTarget === 'critical' ? `CRITICAL · ${range}` : state.aimTarget === 'crack' ? `CRACK ×2 · ${range}` : range;
     } else {
       this.crosshair.style.display = 'none';
     }
