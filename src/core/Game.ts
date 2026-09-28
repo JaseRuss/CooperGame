@@ -34,6 +34,7 @@ import { predictTrajectory, type Trajectory } from '../combat/Projectile';
 import { HomingRocket, type RocketTarget } from '../combat/HomingRocket';
 import { JamCannon } from '../combat/JamCannon';
 import { Moat } from '../world/Moat';
+import { Warfront } from '../world/Warfront';
 import { inMoat, routeRoundMoat, zombieWaypoint } from '../world/MoatShape';
 import { RepairCrates, REPAIR_AMOUNT } from '../world/RepairCrates';
 import { AAMissiles, AA_SALVO, AA_CAPACITY, type AirTrack } from '../combat/AAMissiles';
@@ -391,6 +392,9 @@ export class Game {
   private headlight: THREE.SpotLight | null = null;
   /** Seconds until the "Fortress is locked" callout can show again. */
   private fortressWarning = 0;
+  /** Raids and marches between the bases (missions 1 to 4), and how long till the next "repairs stopped" warning. */
+  private warfront: Warfront | null = null;
+  private siegeWarning = 0;
   /** The vehicle to swap to once the smoke puff has thickened, and how long until then. */
   private pendingSwap: { to: Vehicle; delay: number } | null = null;
   /** The zombie mission's waves, the Fortress wall's strength and how long it's held out. */
@@ -550,6 +554,7 @@ export class Game {
     this.troops.route = { outOfBounds: (x, z) => inMoat(x, z, 1), zombieWaypoint };
     // The Fortress's garrison lounging in the moat: tan and blue, or on the zombie mission ours.
     this.moat = new Moat(this.scene, ZOMBIES ? [ARMY_GREEN, ARMY_RED] : [ARMY_TAN, ARMY_BLUE]);
+    if (!ZOMBIES) this.warfront = new Warfront(this.troops, this.enemyBases, Math.random);
     this.troops.shielded = (p) => this.sealedInFortress(p);
     this.troops.onZombieDown = (z) => {
       if (z.zombie === 'brute' && Math.random() < CRATE_CHANCE_BRUTE) this.dropCrate(z.position);
@@ -2515,15 +2520,30 @@ export class Game {
     for (const building of this.buildings) building.update(dt);
     this.updateEnemyBases(dt);
 
+    // The war around you: raids on your bases, and your squads going after theirs.
+    if (this.warfront) {
+      for (const n of this.warfront.update(dt, this.player.position)) {
+        if (n.banner) this.hud.showBanner(n.text, n.sub ?? '');
+        else this.hud.showCallout(n.text, n.color ?? '#ffd24a');
+      }
+    }
+    // A family base with raiders in it can't repair you until they're cleared out.
+    const home = nearestFriendlyBase(this.player.position.x, this.player.position.z);
+    const besieged = this.warfront?.isBesieged(home) ?? false;
     const insideBase = this.atHome(this.player.position);
-    if (insideBase) this.player.heal(BASE_HEAL_RATE * dt);
+    this.siegeWarning -= dt;
+    if (insideBase && besieged && this.player.health < this.player.maxHealth && this.siegeWarning <= 0) {
+      this.hud.showCallout('REPAIRS STOPPED! CLEAR THE RAIDERS OUT', '#ff8a7a');
+      this.siegeWarning = 6;
+    }
+    if (insideBase && !besieged) this.player.heal(BASE_HEAL_RATE * dt);
     const crates = this.crates.update(dt, this.player);
     if (crates > 0) {
       this.player.heal(REPAIR_AMOUNT * crates);
       this.hud.showCallout(`+${REPAIR_AMOUNT * crates} REPAIR!`, '#8fe07a');
       this.sound.play('uiConfirm', { volume: 0.8 });
     }
-    const repairingAt = insideBase && this.player.health < this.player.maxHealth ? nearestFriendlyBase(this.player.position.x, this.player.position.z) : null;
+    const repairingAt = insideBase && !besieged && this.player.health < this.player.maxHealth ? home : null;
     for (const fb of this.familyBases) fb.camp.update(dt, fb.info === repairingAt, this.camera.position, this.player.position);
     this.landmarks.update(dt);
     for (const p of this.moat.update(dt)) this.impacts.splash(p, 0.35);

@@ -21,6 +21,20 @@ export interface SquadSpawn {
   zombie?: ZombieKind;
   /** How many of the squad carry rocket launchers (bows on the knights mission) for shooting at choppers. */
   antiAir?: number;
+  /** A squad on the march: the anchor moves along the route, carrying the soldiers with it. */
+  march?: SquadMarch;
+  /** Never respawns: gone for good once they're all down. */
+  once?: boolean;
+}
+
+export interface SquadMarch {
+  route: THREE.Vector2[];
+  /** Metres a second. */
+  speed: number;
+  /** The route point it's heading for. */
+  next: number;
+  /** At the end of the route: from then on the squad holds that spot like any other. */
+  arrived: boolean;
 }
 
 interface Squad {
@@ -109,6 +123,7 @@ export class TroopManager {
     for (let q = this.squads.length - 1; q >= 0; q--) {
       const squad = this.squads[q];
       const foes = targets[squad.spawn.faction];
+      if (squad.spawn.march && !squad.spawn.march.arrived) this.advanceMarch(squad, squad.spawn.march, dt, playerPos, activeSq);
       for (let i = squad.soldiers.length - 1; i >= 0; i--) {
         const s = squad.soldiers[i];
         // Far-off soldiers stand still to save time, but zombies never stop coming.
@@ -149,7 +164,7 @@ export class TroopManager {
       }
 
       if (squad.soldiers.length === 0) {
-        if (squad.spawn.zombie) {
+        if (squad.spawn.zombie || squad.spawn.once) {
           this.squads.splice(q, 1);
           continue;
         }
@@ -158,6 +173,28 @@ export class TroopManager {
         if (squad.respawnTimer <= 0) this.fillSquad(squad);
       }
     }
+  }
+
+  /**
+   * Moves a marching squad's anchor along its route, waiting while anyone in it is fighting (only
+   * counting soldiers near the player: far-off ones aren't updated, so they'd never stop).
+   */
+  private advanceMarch(squad: Squad, march: SquadMarch, dt: number, playerPos: THREE.Vector3, activeSq: number): void {
+    if (squad.soldiers.some((s) => s.engaged && s.position.distanceToSquared(playerPos) <= activeSq)) return;
+    const anchor = squad.spawn.anchor;
+    const target = march.route[march.next];
+    const d = anchor.distanceTo(target);
+    const step = Math.min(d, march.speed * dt);
+    const dx = d > 0 ? ((target.x - anchor.x) / d) * step : 0;
+    const dz = d > 0 ? ((target.y - anchor.y) / d) * step : 0;
+    anchor.set(anchor.x + dx, anchor.y + dz);
+    for (const s of squad.soldiers) s.march(dx, dz);
+    if (d - step < 0.01 && ++march.next >= march.route.length) march.arrived = true;
+  }
+
+  /** The standing soldiers of the squad started from `spawn` (none once it's gone). */
+  soldiersOf(spawn: SquadSpawn): Soldier[] {
+    return this.squads.find((s) => s.spawn === spawn)?.soldiers.filter((s) => s.isActive) ?? [];
   }
 
   /**
