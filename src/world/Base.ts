@@ -71,6 +71,81 @@ function flagTexture(): THREE.CanvasTexture {
   return tex;
 }
 
+export type CampProp = 'tentL' | 'tentM' | 'tentR' | 'helipad' | 'supplyDump' | 'truck';
+
+/** Where a solid piece of the camp stands: angle off the layout's front, distance from the middle, and its reach. */
+interface Spot {
+  angle: number;
+  r: number;
+  reach: number;
+}
+
+/** The camp furniture, laid out round the front: tents at the back, the helipad and supply dump either side. */
+const FURNITURE: (Spot & { name: CampProp })[] = [
+  { name: 'tentL', angle: Math.PI - 0.42, r: 45, reach: 5 },
+  { name: 'tentM', angle: Math.PI, r: 45, reach: 5 },
+  { name: 'tentR', angle: Math.PI + 0.42, r: 45, reach: 5 },
+  { name: 'helipad', angle: Math.PI / 2, r: 38, reach: 7 },
+  { name: 'supplyDump', angle: -Math.PI / 2, r: 40, reach: 5.4 },
+  { name: 'truck', angle: -Math.PI / 2 + 0.32, r: 36, reach: 3.5 },
+];
+/** The jeep and the flagpole stand just inside the main gate, to one side (mirrored if that side is a lane). */
+const JEEP_SPOT: Spot = { angle: 0.5, r: 38, reach: 2.2 };
+const FLAG_SPOT: Spot = { angle: 0.55, r: 28, reach: 0.5 };
+/** The furniture turns round the middle in steps this size, up to half a turn either way. */
+const TURN_STEP = Math.PI / 60;
+
+export interface CampLayout {
+  /** How far the furniture is turned from its usual place, so it stands clear of every gate. */
+  turn: number;
+  /** Which side of the main gate the jeep parks (0: nowhere clear, so no jeep). */
+  jeepSide: -1 | 0 | 1;
+  flagSide: -1 | 1;
+  /** Furniture that can't be turned clear of every lane is left out. */
+  skip: Set<CampProp>;
+}
+
+/** True when a spot at `angle` stands in the lane a vehicle drives from the gate at `gate` to the middle. */
+function inLane(angle: number, spot: Spot, gate: number): boolean {
+  const off = angle - gate;
+  return spot.r * Math.cos(off) > 0 && Math.abs(spot.r * Math.sin(off)) < GATE_HALF_WIDTH + spot.reach;
+}
+
+/**
+ * Lays the camp out round every gate, not just the main one: a base with two roads has two gates,
+ * and a tent or the supply dump standing in the second one's lane blocks it as well as sandbags
+ * would. The first gate in `gateAngles` is the main one.
+ */
+export function planCampLayout(gateAngles: number[]): CampLayout {
+  const front = gateAngles[0];
+  const blocked = (angle: number, spot: Spot) => gateAngles.some((gate) => inLane(angle, spot, gate));
+  const flagSide = ([-1, 1] as const).find((s) => !blocked(front + s * FLAG_SPOT.angle, FLAG_SPOT)) ?? -1;
+  const jeepSide = ([1, -1] as const).find((s) => !blocked(front + s * JEEP_SPOT.angle, JEEP_SPOT)) ?? 0;
+  const fixed = [
+    { spot: FLAG_SPOT, angle: front + flagSide * FLAG_SPOT.angle },
+    ...(jeepSide ? [{ spot: JEEP_SPOT, angle: front + jeepSide * JEEP_SPOT.angle }] : []),
+  ];
+  const clashes = (turn: number): CampProp[] =>
+    FURNITURE.filter((prop) => {
+      const angle = front + turn + prop.angle;
+      if (blocked(angle, prop)) return true;
+      return fixed.some((f) => {
+        const d = Math.hypot(Math.cos(angle) * prop.r - Math.cos(f.angle) * f.spot.r, Math.sin(angle) * prop.r - Math.sin(f.angle) * f.spot.r);
+        return d < prop.reach + f.spot.reach + 1;
+      });
+    }).map((prop) => prop.name);
+  // The smallest turn that clears every lane, or failing that the one that leaves out the least.
+  let best = { turn: 0, skip: clashes(0) };
+  for (let step = 1; step <= Math.PI / TURN_STEP && best.skip.length > 0; step++) {
+    for (const turn of [step * TURN_STEP, -step * TURN_STEP]) {
+      const skip = clashes(turn);
+      if (skip.length < best.skip.length) best = { turn, skip };
+      if (skip.length === 0) break;
+    }
+  }
+  return { turn: best.turn, jeepSide, flagSide, skip: new Set(best.skip) };
+}
+
 /**
  * The player's home base, styled as a green plastic army-men playset: sandbag perimeter with a
  * gate onto the highway, watchtowers, tents, helipad, supply dump, repair gantry and guards.
@@ -91,6 +166,7 @@ export class HomeBase {
   private readonly bayWalls: { side: number; x: number; materials: THREE.Material[]; opacity: number }[] = [];
   private bayFrame: THREE.Object3D | null = null;
   private bayHalf = { x: 0, z: 0 };
+  private readonly layout: CampLayout;
 
   /**
    * @param center where the camp stands; `name` goes on the gate sign.
@@ -103,6 +179,7 @@ export class HomeBase {
     private readonly gateAngle: number,
     private readonly gateAngles: number[] = [gateAngle],
   ) {
+    this.layout = planCampLayout(gateAngles);
     this.groundY = heightAt(center.x, center.z);
     this.root.position.set(center.x, this.groundY, center.z);
     scene.add(this.root);
@@ -319,10 +396,10 @@ export class HomeBase {
 
   /** A jeep by the gate and a lorry by the supply dump. */
   private buildMotorPool(): void {
-    const spots: [THREE.Group, number, number, number, number, number][] = [
-      [buildJeep(ARMY_GREEN), this.gateAngle + 0.5, 38, 0.3, 1.2, 1.8],
-      [buildTruck(ARMY_GREEN), this.gateAngle - Math.PI / 2 + 0.32, 36, Math.PI / 2, 1.2, 3.3],
-    ];
+    const { jeepSide, turn, skip } = this.layout;
+    const spots: [THREE.Group, number, number, number, number, number][] = [];
+    if (jeepSide) spots.push([buildJeep(ARMY_GREEN), this.gateAngle + jeepSide * JEEP_SPOT.angle, JEEP_SPOT.r, 0.3, 1.2, 1.8]);
+    if (!skip.has('truck')) spots.push([buildTruck(ARMY_GREEN), this.gateAngle + turn - Math.PI / 2 + 0.32, 36, Math.PI / 2, 1.2, 3.3]);
     for (const [model, angle, r, turn, hx, hz] of spots) {
       const p = this.polar(angle, r);
       const yaw = this.facingCenter(p.x, p.y) + turn;
@@ -493,7 +570,7 @@ export class HomeBase {
   }
 
   private buildTents(): void {
-    const back = this.gateAngle + Math.PI;
+    const back = this.gateAngle + this.layout.turn + Math.PI;
     const tri = new THREE.Shape();
     tri.moveTo(-3.2, 0);
     tri.lineTo(3.2, 0);
@@ -510,7 +587,8 @@ export class HomeBase {
     const rope = plastic(0xd9cfa8);
     const wood = plastic(WOOD);
     const cot = plastic(shade(ARMY_GREEN, 0.6));
-    for (const off of [-0.42, 0, 0.42]) {
+    for (const [off, name] of [[-0.42, 'tentL'], [0, 'tentM'], [0.42, 'tentR']] as const) {
+      if (this.layout.skip.has(name)) continue;
       const p = this.polar(back + off, 45);
       const yaw = this.facingCenter(p.x, p.y);
       const tent = this.place(p.x, p.y, yaw);
@@ -547,7 +625,8 @@ export class HomeBase {
   }
 
   private buildHelipad(): void {
-    const p = this.polar(this.gateAngle + Math.PI / 2, 38);
+    if (this.layout.skip.has('helipad')) return;
+    const p = this.polar(this.gateAngle + this.layout.turn + Math.PI / 2, 38);
     const yaw = this.facingCenter(p.x, p.y);
     const pad = this.place(p.x, p.y, yaw);
     const top = PAD_TOP + 0.03; // a hair above the main pad so the two don't flicker
@@ -581,7 +660,8 @@ export class HomeBase {
   }
 
   private buildSupplyDump(): void {
-    const p = this.polar(this.gateAngle - Math.PI / 2, 40);
+    if (this.layout.skip.has('supplyDump')) return;
+    const p = this.polar(this.gateAngle + this.layout.turn - Math.PI / 2, 40);
     const yaw = this.facingCenter(p.x, p.y);
     const dump = this.place(p.x, p.y, yaw);
     const crate = plastic(WOOD);
@@ -828,7 +908,7 @@ export class HomeBase {
   }
 
   private buildFlag(): THREE.PlaneGeometry {
-    const p = this.polar(this.gateAngle - 0.55, 28);
+    const p = this.polar(this.gateAngle + this.layout.flagSide * FLAG_SPOT.angle, FLAG_SPOT.r);
     this.mesh(new THREE.CylinderGeometry(0.12, 0.16, 12, 10), plastic(0xd8d8d0), this.root, p.x, this.gy(p.x, p.y) + 6, p.y);
     this.mesh(new THREE.SphereGeometry(0.25, 10, 8), plastic(0xffcc33), this.root, p.x, this.gy(p.x, p.y) + 12.1, p.y);
     this.solid(p.x, this.gy(p.x, p.y) + 3, p.y, 0.2, 3, 0.2, 0);
@@ -852,9 +932,10 @@ export class HomeBase {
       { angle: this.gateAngle - gapHalf - 0.02, r: WALL_RADIUS - 3, pose: 0, outward: true },
       { angle: this.gateAngle + gapHalf + 0.12, r: WALL_RADIUS - 2, pose: 1, outward: true },
       { angle: this.gateAngle - gapHalf - 0.12, r: WALL_RADIUS - 2, pose: 1, outward: true },
-      { angle: this.gateAngle + Math.PI + 0.2, r: 38, pose: 0, outward: false },
-      { angle: this.gateAngle + Math.PI / 2 - 0.3, r: 30, pose: 0, outward: false },
-      { angle: this.gateAngle - Math.PI / 2 + 0.25, r: 33, pose: 1, outward: false },
+      // Inside, by the tents, helipad and supply dump (turned with them).
+      { angle: this.gateAngle + this.layout.turn + Math.PI + 0.2, r: 38, pose: 0, outward: false },
+      { angle: this.gateAngle + this.layout.turn + Math.PI / 2 - 0.3, r: 30, pose: 0, outward: false },
+      { angle: this.gateAngle + this.layout.turn - Math.PI / 2 + 0.25, r: 33, pose: 1, outward: false },
     ];
     for (const s of spots) {
       const p = this.polar(s.angle, s.r);

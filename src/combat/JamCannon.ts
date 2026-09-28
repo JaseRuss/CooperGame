@@ -19,6 +19,11 @@ const DRIP_EVERY = 3;
 const DRIP_MIN_HEIGHT = 1.2;
 const DRIP_SPLAT_LIFETIME = 7;
 const MAX_DRIP_SPLATS = 120;
+/** A hose glob's puddle: about 3 m across its lobes, so it covers the ground it catches troops on. */
+const BIG_SPLAT_RADIUS = 2.6;
+/** Rings and spokes of a big puddle: vertices inside it too, so it can follow the ground. */
+const PUDDLE_RINGS = [0.35, 0.7, 1];
+const PUDDLE_SPOKES = 40;
 
 // Bright strawberry jam (glossy and pinkish so it reads as jam, not anything nastier).
 const JAM_COLOR = 0xe0294f;
@@ -89,6 +94,45 @@ function splatGeometry(radius: number, rng: () => number): THREE.BufferGeometry 
   return new THREE.ShapeGeometry(s, 3).rotateX(-Math.PI / 2);
 }
 
+/**
+ * A big, lobed puddle lying on the ground: a grid of rings round the middle, each vertex lifted to
+ * `lift(x, z)` (local), so a puddle a few metres across follows the slope instead of cutting into it.
+ */
+function puddleGeometry(radius: number, rng: () => number, lift: (x: number, z: number) => number): THREE.BufferGeometry {
+  const lobes = Array.from({ length: 11 }, () => 0.72 + rng() * 0.45);
+  const edge = (a: number): number => {
+    const f = (a / (Math.PI * 2)) * lobes.length;
+    const i = Math.floor(f);
+    const t = (1 - Math.cos((f - i) * Math.PI)) / 2;
+    return radius * (lobes[i % lobes.length] * (1 - t) + lobes[(i + 1) % lobes.length] * t);
+  };
+  const positions = [0, lift(0, 0), 0];
+  for (const ring of PUDDLE_RINGS) {
+    for (let j = 0; j < PUDDLE_SPOKES; j++) {
+      const a = (j / PUDDLE_SPOKES) * Math.PI * 2;
+      const r = edge(a) * ring;
+      const x = Math.cos(a) * r;
+      const z = Math.sin(a) * r;
+      positions.push(x, lift(x, z), z);
+    }
+  }
+  const indices: number[] = [];
+  const at = (ring: number, j: number) => 1 + ring * PUDDLE_SPOKES + (j % PUDDLE_SPOKES);
+  for (let j = 0; j < PUDDLE_SPOKES; j++) {
+    // Wound so the faces point up.
+    indices.push(0, at(0, j + 1), at(0, j));
+    for (let ring = 1; ring < PUDDLE_RINGS.length; ring++) {
+      indices.push(at(ring - 1, j), at(ring - 1, j + 1), at(ring, j));
+      indices.push(at(ring - 1, j + 1), at(ring, j + 1), at(ring, j));
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geo.setIndex(indices);
+  geo.computeVertexNormals();
+  return geo;
+}
+
 interface Blob {
   mesh: THREE.Mesh;
   velocity: THREE.Vector3;
@@ -99,6 +143,8 @@ interface Blob {
   toNextDrip: number;
   /** A jam round from the jeep's gun: flies flat and fast like a bullet and leaves a small spot. */
   round: boolean;
+  /** A hose glob: lands in a big puddle (mega jam's rings keep the small one). */
+  big: boolean;
 }
 
 interface Droplet {
@@ -146,7 +192,8 @@ export class JamCannon {
 
   constructor(private readonly scene: THREE.Scene) {}
 
-  fire(origin: THREE.Vector3, direction: THREE.Vector3, speed: number): void {
+  /** A lobbed glob; `big` for the hose's globs, which land in a wide puddle. */
+  fire(origin: THREE.Vector3, direction: THREE.Vector3, speed: number, big = false): void {
     const mesh = new THREE.Mesh(blobGeometry, blobMaterial);
     mesh.position.copy(origin);
     mesh.castShadow = true;
@@ -158,6 +205,7 @@ export class JamCannon {
       drips: this.fired++ % DRIP_EVERY === 0,
       toNextDrip: DRIP_SPACING * (0.3 + Math.random() * 0.7),
       round: false,
+      big,
     });
   }
 
@@ -167,18 +215,19 @@ export class JamCannon {
     mesh.position.copy(origin);
     mesh.scale.set(1, 1, 3.5);
     this.scene.add(mesh);
-    this.blobs.push({ mesh, velocity: direction.clone().normalize().multiplyScalar(speed), age: 0, drips: false, toNextDrip: 0, round: true });
+    this.blobs.push({ mesh, velocity: direction.clone().normalize().multiplyScalar(speed), age: 0, drips: false, toNextDrip: 0, round: true, big: false });
   }
 
   /**
    * Advances blobs and drips. `onSplat` gets each glob's landing point, the collider it hit (null
-   * for open ground) and its velocity; `onDrip` gets each point a drip lands on.
+   * for open ground), its velocity and whether it was a big hose glob; `onDrip` gets each point a
+   * drip lands on.
    */
   update(
     dt: number,
     world: RAPIER.World,
     exclude: RAPIER.Collider,
-    onSplat: (point: THREE.Vector3, hit: RAPIER.Collider | null, velocity: THREE.Vector3) => void,
+    onSplat: (point: THREE.Vector3, hit: RAPIER.Collider | null, velocity: THREE.Vector3, big: boolean) => void,
     onDrip: (point: THREE.Vector3) => void,
   ): void {
     for (let i = this.blobs.length - 1; i >= 0; i--) {
@@ -216,8 +265,8 @@ export class JamCannon {
         this.blobs.splice(i, 1);
         if (landed) {
           if (b.round) this.roundSplat(landed);
-          else this.burst(landed);
-          onSplat(landed, hit?.collider ?? null, b.velocity);
+          else this.burst(landed, b.big);
+          onSplat(landed, hit?.collider ?? null, b.velocity, b.big);
         }
       }
     }
@@ -257,7 +306,8 @@ export class JamCannon {
     for (let i = this.splats.length - 1; i >= 0; i--) {
       const s = this.splats[i];
       s.age += dt;
-      s.mesh.scale.setScalar(Math.min(1, 0.3 + s.age * 6)); // spreads out as it lands
+      const spread = Math.min(1, 0.3 + s.age * 6); // spreads out as it lands
+      s.mesh.scale.set(spread, 1, spread); // (flat, so its lift to the ground holds)
       const left = SPLAT_LIFETIME - s.age;
       if (left < SPLAT_FADE) s.material.opacity = Math.max(0, left / SPLAT_FADE);
       if (left <= 0) {
@@ -315,13 +365,13 @@ export class JamCannon {
     if (point.y - ground < 0.6) this.dripSplat(point.clone().setY(ground));
   }
 
-  /** Droplets flying out, and a glossy puddle left on the ground. */
-  private burst(point: THREE.Vector3): void {
-    for (let i = 0; i < 4; i++) {
+  /** Droplets flying out, and a glossy puddle left on the ground (a wide one from a hose glob). */
+  private burst(point: THREE.Vector3, big: boolean): void {
+    for (let i = 0; i < (big ? 7 : 4); i++) {
       const mesh = new THREE.Mesh(dropletGeometry, blobMaterial);
       mesh.position.copy(point).setY(point.y + 0.3);
       const a = Math.random() * Math.PI * 2;
-      const s = 2 + Math.random() * 5;
+      const s = (2 + Math.random() * 5) * (big ? 1.4 : 1);
       this.scene.add(mesh);
       this.droplets.push({ mesh, velocity: new THREE.Vector3(Math.cos(a) * s, 3 + Math.random() * 5, Math.sin(a) * s), age: 0 });
     }
@@ -336,19 +386,29 @@ export class JamCannon {
       polygonOffsetFactor: -6,
       polygonOffsetUnits: -6,
     });
-    const mesh = new THREE.Mesh(splatGeometry(1.0 + Math.random() * 0.45, Math.random), material);
+    const ground = surfaceHeightAt(point.x, point.z);
+    const floor = point.y - 0.5;
+    const y = Math.max(ground, floor) + 0.08;
+    // On the ground, a big puddle's vertices follow the slope; on a roof or a hull it lies flat.
+    const onGround = point.y - ground < 0.6;
+    const lift = (x: number, z: number) => (onGround ? Math.max(surfaceHeightAt(point.x + x, point.z + z), floor) + 0.08 - y : 0);
+    const radius = big ? BIG_SPLAT_RADIUS * (0.9 + Math.random() * 0.2) : 1.0 + Math.random() * 0.45;
+    const mesh = new THREE.Mesh(big ? puddleGeometry(radius, Math.random, lift) : splatGeometry(radius, Math.random), material);
     // Strawberry chunks sitting in the jam.
-    for (let i = 0; i < 2; i++) {
+    for (let i = 0; i < (big ? 5 : 2); i++) {
       const chunk = new THREE.Mesh(chunkGeometry, chunkMaterial);
       const a = Math.random() * Math.PI * 2;
-      const r = Math.random() * 0.7;
-      chunk.position.set(Math.cos(a) * r, 0.04, Math.sin(a) * r);
+      const r = Math.random() * radius * 0.6;
+      const cx = Math.cos(a) * r;
+      const cz = Math.sin(a) * r;
+      chunk.position.set(cx, (big ? lift(cx, cz) : 0) + 0.04, cz);
       chunk.rotation.y = Math.random() * Math.PI;
+      if (big) chunk.scale.setScalar(1.5);
       mesh.add(chunk);
     }
-    const ground = surfaceHeightAt(point.x, point.z);
-    mesh.position.set(point.x, Math.max(ground, point.y - 0.5) + 0.08, point.z);
-    mesh.rotation.y = Math.random() * Math.PI * 2;
+    mesh.position.set(point.x, y, point.z);
+    // The big puddle is already shaped to the ground round it, so only the small one is spun.
+    if (!big) mesh.rotation.y = Math.random() * Math.PI * 2;
     mesh.receiveShadow = true;
     this.scene.add(mesh);
     this.splats.push({ mesh, material, age: 0 });
