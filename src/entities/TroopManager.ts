@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type RAPIER from '@dimforge/rapier3d-compat';
-import { Soldier, type Shot, type ZombieKind } from './Soldier';
+import { Soldier, type Shot, type TroopRoute, type ZombieKind } from './Soldier';
 import type { Faction } from './Tank';
 import type { MapMarker } from '../ui/WorldMap';
 import type { AirTarget } from '../combat/AntiAir';
@@ -35,6 +35,8 @@ export class TroopManager {
   shielded: ((p: THREE.Vector3) => boolean) | null = null;
   /** Where zombies can't walk (the Fortress wall): they stop there and batter it. */
   blocked: ((x: number, z: number) => boolean) | null = null;
+  /** Ground everyone keeps out of (the moat), and how zombies get round it. */
+  route: TroopRoute | null = null;
   /** Zombies knocked over so far. */
   zombiesDowned = 0;
   /** Called once for each zombie as it's knocked over. */
@@ -81,7 +83,8 @@ export class TroopManager {
     const { anchor, count, wanderRadius, faction, color, zombie, antiAir = 0 } = squad.spawn;
     for (let i = 0; i < count; i++) {
       const a = (i / count) * Math.PI * 2 + this.rng();
-      const r = 2 + this.rng() * wanderRadius * 0.6;
+      let r = 2 + this.rng() * wanderRadius * 0.6;
+      if (this.route?.outOfBounds(anchor.x + Math.cos(a) * r, anchor.y + Math.sin(a) * r)) r = 0; // not in the moat
       const soldier = new Soldier(anchor.x + Math.cos(a) * r, anchor.y + Math.sin(a) * r, anchor, wanderRadius, this.rng, faction, color, zombie ?? null, i < antiAir);
       this.scene.add(soldier.mesh);
       squad.soldiers.push(soldier);
@@ -131,7 +134,7 @@ export class TroopManager {
             }
           }
         }
-        const shot = s.update(dt, world, target, this.blocked ?? undefined, velocity);
+        const shot = s.update(dt, world, target, this.blocked ?? undefined, velocity, this.route ?? undefined);
         if (shot) onShot(shot, squad.spawn.faction);
         if (s.zombie && !s.isActive && !s.counted) {
           s.counted = true;

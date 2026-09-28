@@ -4,6 +4,7 @@ import { createNoise2D } from 'simplex-noise';
 import { mulberry32 } from '../utils/rng';
 import { TOWNS, distanceToTown } from './TownPlan';
 import { SITES, LAKES, distanceToSite } from './Landmarks';
+import { inMoat, moatDig, moatLevelling, MOAT_DEPTH, MOAT_WATER_DROP } from './MoatShape';
 import {
   WORLD_SIZE,
   TERRAIN_SEGMENTS,
@@ -46,6 +47,9 @@ const BASE_BLEND = 70;
 const townHeights = TOWNS.map((t) => rawHeight(t.cx, t.cz));
 const baseHeights = FRIENDLY_BASES.map((b) => rawHeight(b.x, b.z));
 const siteHeights = SITES.map((s) => rawHeight(s.cx, s.cz));
+const fortressHeight = siteHeights[SITES.findIndex((s) => s.kind === 'fortress')] ?? 0;
+/** The moat's water surface: a little below the Fortress's ground. */
+export const MOAT_LEVEL = fortressHeight - MOAT_WATER_DROP;
 
 /** Lake surface heights: a little below the lowest ground around each lake so water never spills. */
 export const LAKE_LEVELS = LAKES.map((l) => {
@@ -105,6 +109,12 @@ export function heightAt(x: number, z: number): number {
     }
   }
 
+  // The moat round the Fortress: the ground levelled to the Fortress's, with the channel dug out.
+  const level = moatLevelling(x, z);
+  if (level > 0) h = fortressHeight * level + h * (1 - level);
+  const dig = moatDig(x, z);
+  if (dig > 0) h -= MOAT_DEPTH * dig;
+
   for (let i = 0; i < LAKES.length; i++) {
     const lake = LAKES[i];
     const level = LAKE_LEVELS[i];
@@ -140,6 +150,7 @@ export function heightAt(x: number, z: number): number {
 
 /** How deep the water is at (x, z) (0 when dry). */
 export function waterDepthAt(x: number, z: number): number {
+  if (inMoat(x, z)) return Math.max(0, MOAT_LEVEL - heightAt(x, z));
   for (let i = 0; i < LAKES.length; i++) {
     const lake = LAKES[i];
     if (Math.hypot(x - lake.cx, z - lake.cz) < lake.radius + 2) {
@@ -151,6 +162,7 @@ export function waterDepthAt(x: number, z: number): number {
 
 /** True when a world point is below a lake's surface (e.g. a shell landing in the shallows). */
 export function isUnderwater(x: number, y: number, z: number): boolean {
+  if (inMoat(x, z) && y < MOAT_LEVEL + 0.05) return true;
   for (let i = 0; i < LAKES.length; i++) {
     const lake = LAKES[i];
     if (Math.hypot(x - lake.cx, z - lake.cz) < lake.radius + 2 && y < LAKE_LEVELS[i] + 0.05) return true;
@@ -160,6 +172,8 @@ export function isUnderwater(x: number, y: number, z: number): boolean {
 
 /** 0 = dry land, 1 = sandy shore, 2 = lake bed. Used to tint the terrain. */
 function shoreKind(x: number, z: number): number {
+  if (inMoat(x, z)) return 2;
+  if (inMoat(x, z, 5)) return 1; // a sandy bank round the moat
   for (const lake of LAKES) {
     const d = Math.hypot(x - lake.cx, z - lake.cz);
     if (d < lake.radius - 6) return 2;

@@ -2,6 +2,7 @@ import { WORLD_SIZE, WORLD_HALF, TERRAIN_HEIGHT } from '../core/config';
 import { heightAt } from '../world/Terrain';
 import { ROAD_WIDTH, type Town } from '../world/TownPlan';
 import { HIGHWAY_WIDTH, type Polyline } from '../world/RoadNetwork';
+import { CAUSEWAY_HALF, MOAT_INNER, MOAT_OUTER } from '../world/MoatShape';
 import {
   LAKES,
   SITES,
@@ -139,6 +140,17 @@ export class WorldMap {
       ctx.beginPath();
       ctx.arc(lake.cx, lake.cz, lake.radius, 0, Math.PI * 2);
       ctx.fill();
+    }
+    // The Fortress's moat: its four sides, with gaps for the causeways to the north and south gates.
+    const fort = SITES.find((site) => site.kind === 'fortress');
+    if (fort) {
+      const w = MOAT_OUTER - MOAT_INNER;
+      for (const sz of [-1, 1]) {
+        const z = fort.cz + (sz > 0 ? MOAT_INNER : -MOAT_OUTER);
+        ctx.fillRect(fort.cx - MOAT_OUTER, z, MOAT_OUTER - CAUSEWAY_HALF, w);
+        ctx.fillRect(fort.cx + CAUSEWAY_HALF, z, MOAT_OUTER - CAUSEWAY_HALF, w);
+      }
+      for (const sx of [-1, 1]) ctx.fillRect(fort.cx + (sx > 0 ? MOAT_INNER : -MOAT_OUTER), fort.cz - MOAT_OUTER, w, MOAT_OUTER * 2);
     }
 
     ctx.fillStyle = '#3a3d42';

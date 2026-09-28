@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { TOWNS, ROAD_WIDTH, type Town } from './TownPlan';
 import { SITES, LAKES, siteEntries, distanceToSite, type Site } from './Landmarks';
+import { inMoat } from './MoatShape';
 import { surfaceHeightAt } from './Terrain';
 import { FRIENDLY_BASES, BASE_RADIUS, JUNGLE, KNIGHTS } from '../core/config';
 
@@ -95,10 +96,11 @@ function siteRoadEntries(site: Site): Entry[] {
   }));
 }
 
-/** Lakes and landmark sites the road must go around (the joined site's own edge is exempt). */
+/** Lakes, the Fortress's moat and landmark sites the road must go around (the joined site's own edge is exempt). */
 function crossesLandmarks(path: Polyline): boolean {
   for (const p of path.slice(2, -2)) {
     if (LAKES.some((l) => Math.hypot(p.x - l.cx, p.y - l.cz) < l.radius + 15)) return true;
+    if (inMoat(p.x, p.y, 2)) return true; // the gate roads run up the causeways, which aren't moat
     if (SITES.some((s) => distanceToSite(s, p.x, p.y) < 3)) return true;
   }
   return false;

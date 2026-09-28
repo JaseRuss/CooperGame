@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { heightAt, waterDepthAt } from '../world/Terrain';
+import { inMoat } from '../world/MoatShape';
 import { isOnRoad } from '../world/RoadNetwork';
 import { clamp } from '../utils/math';
 import { plastic, shade } from '../utils/plastic';
@@ -23,6 +24,12 @@ const ROAD_SPEED_BOOST = 1.2;
 const BARREL_PITCH_MIN = -0.1;
 const BARREL_PITCH_MAX = 0.65;
 const GROUND_SEEK = 6; // m/s downward search bias fed to the character controller
+/**
+ * The Fortress's moat is fenced off by an invisible wall this far out from the water (about a
+ * hull's half-length), so nothing can drive in and get stuck. It's done here rather than with a
+ * collider so shells, jam and lines of sight pass straight over it.
+ */
+const MOAT_CLEARANCE = 2.2;
 
 /** Shared hull+turret+barrel tank rig: visuals, kinematic movement/collision, health, firing. */
 /** Stand-in materials marking which shade each part gets; swapped for the army's plastic. */
@@ -597,6 +604,13 @@ export class Tank {
     const corrected = this.controller.computedMovement();
     const t = this.body.translation();
     const newPos = new THREE.Vector3(t.x + corrected.x, t.y + corrected.y, t.z + corrected.z);
+    // The moat's invisible wall: slide along it. (Something already in it, say a chopper that
+    // landed there and turned back into a tank, can always drive out.)
+    if (inMoat(newPos.x, newPos.z, MOAT_CLEARANCE) && !inMoat(t.x, t.z, MOAT_CLEARANCE)) {
+      if (!inMoat(newPos.x, t.z, MOAT_CLEARANCE)) newPos.z = t.z;
+      else if (!inMoat(t.x, newPos.z, MOAT_CLEARANCE)) newPos.x = t.x;
+      else newPos.set(t.x, newPos.y, t.z);
+    }
 
     // A kinematic body under the one-sided heightfield can never climb back out, so recover it.
     const floorY = heightAt(newPos.x, newPos.z) + HULL_HALF_EXTENTS.y;
