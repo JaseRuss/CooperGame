@@ -25,6 +25,8 @@ export interface SquadSpawn {
   march?: SquadMarch;
   /** Never respawns: gone for good once they're all down. */
   once?: boolean;
+  /** Hits each soldier takes before going down (1 if not set). */
+  hp?: number;
 }
 
 export interface SquadMarch {
@@ -94,12 +96,12 @@ export class TroopManager {
   }
 
   private fillSquad(squad: Squad): void {
-    const { anchor, count, wanderRadius, faction, color, zombie, antiAir = 0 } = squad.spawn;
+    const { anchor, count, wanderRadius, faction, color, zombie, antiAir = 0, hp = 1 } = squad.spawn;
     for (let i = 0; i < count; i++) {
       const a = (i / count) * Math.PI * 2 + this.rng();
       let r = 2 + this.rng() * wanderRadius * 0.6;
       if (this.route?.outOfBounds(anchor.x + Math.cos(a) * r, anchor.y + Math.sin(a) * r)) r = 0; // not in the moat
-      const soldier = new Soldier(anchor.x + Math.cos(a) * r, anchor.y + Math.sin(a) * r, anchor, wanderRadius, this.rng, faction, color, zombie ?? null, i < antiAir);
+      const soldier = new Soldier(anchor.x + Math.cos(a) * r, anchor.y + Math.sin(a) * r, anchor, wanderRadius, this.rng, faction, color, zombie ?? null, i < antiAir, hp);
       this.scene.add(soldier.mesh);
       squad.soldiers.push(soldier);
     }
