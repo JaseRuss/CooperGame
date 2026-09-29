@@ -34,7 +34,7 @@ const MOAT_CLEARANCE = 2.2;
 
 /** Health regained per second once a vehicle has gone a few seconds without being hit. */
 const REGEN_RATE = 1.5;
-const REGEN_DELAY = 4;
+const REGEN_DELAY = 10;
 
 /** Shared hull+turret+barrel tank rig: visuals, kinematic movement/collision, health, firing. */
 /** Stand-in materials marking which shade each part gets; swapped for the army's plastic. */
