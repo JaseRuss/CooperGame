@@ -60,7 +60,7 @@ export const FRIENDLY_BASES: FriendlyBase[] = [
   { x: 0, z: EDGE, name: "Cooper's Base", keepsake: 'trophy' },
   { x: -EDGE, z: 0, name: "Mum's Base", keepsake: 'hearts' },
   { x: EDGE, z: 0, name: "Dad's Base", keepsake: 'barbecue' },
-  { x: 0, z: -EDGE, name: "Inness's Base", keepsake: 'dinosaur' },
+  { x: 0, z: -EDGE, name: "Innes's Base", keepsake: 'dinosaur' },
   { x: -CORNER, z: -CORNER, name: "Granny's Base", keepsake: 'yarn' },
   { x: CORNER, z: -CORNER, name: "Grandpa's Base", keepsake: 'golf' },
   { x: -CORNER, z: CORNER, name: "Auntie Claire's Base", keepsake: 'cupcake' },
