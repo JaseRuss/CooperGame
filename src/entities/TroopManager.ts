@@ -9,6 +9,13 @@ const RESPAWN_DELAY = 45;
 /** Soldiers further than this from the player stand still, to save CPU. */
 const ACTIVE_RANGE = 650;
 
+/** An enemy stronghold (a base or the Fortress): where its garrison is, and how far out it reaches. */
+export interface BaseArea {
+  x: number;
+  z: number;
+  radius: number;
+}
+
 export interface SquadSpawn {
   anchor: THREE.Vector2;
   count: number;
@@ -27,6 +34,8 @@ export interface SquadSpawn {
   once?: boolean;
   /** Hits each soldier takes before going down (1 if not set). */
   hp?: number;
+  /** The stronghold this garrison belongs to: under attack, replacements come in from outside it instead of appearing inside. */
+  base?: BaseArea;
 }
 
 export interface SquadMarch {
@@ -57,6 +66,8 @@ export class TroopManager {
   zombiesDowned = 0;
   /** Called once for each zombie as it's knocked over. */
   onZombieDown: ((zombie: Soldier) => void) | null = null;
+  /** Where a garrison's replacements appear: outside the base if it's under attack, or null to appear in place. */
+  reinforcePoint: ((base: BaseArea) => THREE.Vector2 | null) | null = null;
 
   constructor(
     private readonly scene: THREE.Scene,
@@ -95,13 +106,15 @@ export class TroopManager {
     return n;
   }
 
-  private fillSquad(squad: Squad): void {
+  /** `from`: where the squad turns up (it then walks to its anchor); the anchor itself if not given. */
+  private fillSquad(squad: Squad, from?: THREE.Vector2 | null): void {
     const { anchor, count, wanderRadius, faction, color, zombie, antiAir = 0, hp = 1 } = squad.spawn;
     for (let i = 0; i < count; i++) {
       const a = (i / count) * Math.PI * 2 + this.rng();
-      let r = 2 + this.rng() * wanderRadius * 0.6;
-      if (this.route?.outOfBounds(anchor.x + Math.cos(a) * r, anchor.y + Math.sin(a) * r)) r = 0; // not in the moat
-      const soldier = new Soldier(anchor.x + Math.cos(a) * r, anchor.y + Math.sin(a) * r, anchor, wanderRadius, this.rng, faction, color, zombie ?? null, i < antiAir, hp);
+      const origin = from ?? anchor;
+      let r = 2 + this.rng() * (from ? 6 : wanderRadius * 0.6);
+      if (this.route?.outOfBounds(origin.x + Math.cos(a) * r, origin.y + Math.sin(a) * r)) r = 0; // not in the moat
+      const soldier = new Soldier(origin.x + Math.cos(a) * r, origin.y + Math.sin(a) * r, anchor, wanderRadius, this.rng, faction, color, zombie ?? null, i < antiAir, hp);
       this.scene.add(soldier.mesh);
       squad.soldiers.push(soldier);
     }
@@ -172,7 +185,7 @@ export class TroopManager {
         }
         if (squad.spawn.holdWhile && !squad.spawn.holdWhile()) continue;
         squad.respawnTimer -= dt;
-        if (squad.respawnTimer <= 0) this.fillSquad(squad);
+        if (squad.respawnTimer <= 0) this.fillSquad(squad, squad.spawn.base ? this.reinforcePoint?.(squad.spawn.base) : null);
       }
     }
   }

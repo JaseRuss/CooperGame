@@ -14,7 +14,7 @@ import { planHighways, buildHighwayMeshes, distanceToPolyline, setSurfaceRoads, 
 import { Bunker } from './Bunker';
 import { LandmarkSet } from './LandmarkBuilders';
 import { SITES, isInLandmark, siteToWorld, siteLocalHalf, enemyArmyAt, type Site } from './Landmarks';
-import type { SquadSpawn } from '../entities/TroopManager';
+import type { BaseArea, SquadSpawn } from '../entities/TroopManager';
 import { mulberry32 } from '../utils/rng';
 import { randRange } from '../utils/math';
 import { ENEMY_ARMY_COLOR, ARMY_RED, ARMY_TAN, ARMY_BLUE, plastic } from '../utils/plastic';
@@ -33,6 +33,8 @@ export interface EnemySpawnPoint {
   helicopter: boolean;
   /** Keeps respawning only while this holds (guards stop coming once their base is taken). */
   holdWhile: (() => boolean) | null;
+  /** The stronghold it guards: under attack, replacements arrive from outside it. */
+  base?: BaseArea;
 }
 
 export interface WorldContent {
@@ -184,6 +186,12 @@ function armyColorAt(x: number, z: number): number {
   return ENEMY_ARMY_COLOR[enemyArmyAt(x, z)];
 }
 
+/** The enemy base or Fortress that (x, z) is inside, if any. */
+function strongholdAt(x: number, z: number): BaseArea | undefined {
+  const site = SITES.find((s) => (s.kind === 'enemyBase' || s.kind === 'fortress') && Math.abs(x - s.cx) <= s.halfX && Math.abs(z - s.cz) <= s.halfZ);
+  return site ? { x: site.cx, z: site.cz, radius: site.halfX } : undefined;
+}
+
 function enemySquad(x: number, z: number, count: number, wanderRadius: number, holdWhile: (() => boolean) | null): SquadSpawn {
   return {
     anchor: new THREE.Vector2(x, z),
@@ -192,6 +200,7 @@ function enemySquad(x: number, z: number, count: number, wanderRadius: number, h
     faction: 'enemy',
     color: armyColorAt(x, z),
     holdWhile,
+    base: strongholdAt(x, z),
     antiAir: 1, // one man in every squad has a launcher (a bow for the knights) for your choppers
   };
 }
@@ -670,6 +679,7 @@ function placeEnemySpawns(holds: HoldFor): EnemySpawnPoint[] {
         color: armyColorAt(p.x, p.z),
         helicopter: false,
         holdWhile,
+        base: site.kind === 'enemyBase' || site.kind === 'fortress' ? { x: site.cx, z: site.cz, radius: site.halfX } : undefined,
       });
     }
   }

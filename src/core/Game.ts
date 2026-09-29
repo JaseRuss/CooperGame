@@ -25,7 +25,7 @@ import type { Tank, Faction } from '../entities/Tank';
 import { EnemyTank } from '../entities/EnemyTank';
 import { HelicopterEnemy } from '../entities/HelicopterEnemy';
 import { BuddyTank, RedTank, type AllyTarget, type BuddyVehicle } from '../entities/AllyTank';
-import { TroopManager } from '../entities/TroopManager';
+import { TroopManager, type BaseArea } from '../entities/TroopManager';
 import { ZOMBIE_COLOR, type Shot, type ZombieKind } from '../entities/Soldier';
 import { HitRegistry } from '../combat/HitRegistry';
 import { ProjectileManager } from '../combat/ProjectileManager';
@@ -45,7 +45,7 @@ import { CameraRig } from '../camera/CameraRig';
 import { HUD, type HUDState } from '../ui/HUD';
 import { WorldMap, type MapMarker, type MapView } from '../ui/WorldMap';
 import { AimGuide, type AimTarget } from '../ui/AimGuide';
-import { FRIENDLY_BASES, FORTRESS_HALF, nearestFriendlyBase, BASE_RADIUS, MISSION, MISSIONS, NIGHT, JUNGLE, KNIGHTS, ZOMBIES, startMission, type FriendlyBase, type Mission } from '../core/config';
+import { FRIENDLY_BASES, FORTRESS_HALF, WORLD_HALF, nearestFriendlyBase, BASE_RADIUS, MISSION, MISSIONS, NIGHT, JUNGLE, KNIGHTS, ZOMBIES, startMission, type FriendlyBase, type Mission } from '../core/config';
 import { ZombieWaves } from '../world/ZombieWaves';
 import { OverrunTowns } from '../world/OverrunTowns';
 import { FlamePit, FLAME_RANGE, FLAME_HALF_ANGLE } from '../world/FlamePit';
@@ -85,7 +85,7 @@ const AA_BLAST_RADIUS = 10;
 const RED_RESPAWN_DELAY = 40;
 const GARRISON_SQUAD_SIZE = 6;
 // Paratroopers: once every jet at the airbase is out, allied troops drop in whenever the player is attacking a base.
-const PARA_TRIGGER_MARGIN = 130; // how far outside a base's edge counts as attacking it
+const PARA_TRIGGER_MARGIN = 130; // how far outside a base's edge counts as attacking it (paratroopers and enemy reinforcements)
 const PARA_FIRST_DROP = 3; // seconds after arriving (or the jets going down) before the first drop
 const PARA_INTERVAL = 35; // seconds between drops
 const PARA_MAX_WAVES = 4; // per base, so the battlefield doesn't fill up
@@ -357,6 +357,7 @@ export class Game {
   private paraTimer = PARA_FIRST_DROP;
   private paraWaves = new Map<object, number>();
   private airbaseCleared = false;
+  private reinforceCalloutAt = -Infinity;
   private buildings: Building[] = [];
   private trees!: TreeManager;
   private enemySlots: EnemySlot[] = [];
@@ -565,6 +566,7 @@ export class Game {
     this.buildings = [...content.buildings, ...content.bunkers.map((b) => b.building)];
     this.troops = new TroopManager(this.scene, content.squads, Math.random);
     // Nobody wanders into the moat; zombies go round it to the causeways.
+    this.troops.reinforcePoint = (base) => this.reinforcementPoint(base);
     this.troops.route = { outOfBounds: (x, z) => inMoat(x, z, 1), zombieWaypoint };
     // The Fortress's garrison lounging in the moat: tan and blue, or on the zombie mission ours.
     this.moat = new Moat(this.scene, ZOMBIES ? [ARMY_GREEN, ARMY_RED] : [ARMY_TAN, ARMY_BLUE]);
@@ -673,7 +675,11 @@ export class Game {
   // ---------- spawning ----------
 
   private spawnEnemy(slot: EnemySlot): void {
-    const { x, z, patrolCenter, patrolRadius, color } = slot.spawn;
+    const { patrolCenter, patrolRadius, color } = slot.spawn;
+    // A tank guarding a base under attack rolls in from outside it instead of appearing inside.
+    const from = slot.spawn.base ? this.reinforcementPoint(slot.spawn.base) : null;
+    const x = from?.x ?? slot.spawn.x;
+    const z = from?.y ?? slot.spawn.z;
     const tank = slot.spawn.helicopter
       ? new HelicopterEnemy(this.world, x, z, patrolCenter, patrolRadius, Math.random, color)
       : new EnemyTank(this.world, x, z, patrolCenter, patrolRadius, Math.random, color);
@@ -1530,6 +1536,33 @@ export class Game {
     }
     this.sound.play('launch', { volume: 0.55, rate: 1.25, fadeAfter: 0.9 });
     this.missileCharge = 0;
+  }
+
+  /**
+   * While the player is attacking a base, its replacement troops and tanks turn up on the far side
+   * of it, outside the walls, and march in as reinforcements. Null (appear at the post as usual)
+   * when nobody is attacking it.
+   */
+  private reinforcementPoint(base: BaseArea): THREE.Vector2 | null {
+    if (!this.player) return null; // still setting the world up
+    const p = this.player.position;
+    if (Math.hypot(base.x - p.x, base.z - p.z) > base.radius + PARA_TRIGGER_MARGIN) return null;
+    const away = Math.atan2(p.z - base.z, p.x - base.x) + Math.PI;
+    for (const turn of [0, 0.5, -0.5, 1, -1, 1.5, -1.5]) {
+      const a = away + turn + (Math.random() - 0.5) * 0.3;
+      const r = base.radius * 1.7 + Math.random() * 30;
+      const x = base.x + Math.cos(a) * r;
+      const z = base.z + Math.sin(a) * r;
+      if (Math.abs(x) > WORLD_HALF - 25 || Math.abs(z) > WORLD_HALF - 25) continue;
+      if (inMoat(x, z, 4) || waterDepthAt(x, z) > 0.4) continue;
+      const now = performance.now();
+      if (now - this.reinforceCalloutAt > 10000) {
+        this.reinforceCalloutAt = now;
+        this.hud.showCallout('ENEMY REINFORCEMENTS ARRIVING!', '#ff8a7a');
+      }
+      return new THREE.Vector2(x, z);
+    }
+    return null;
   }
 
   // ---------- air support ----------
