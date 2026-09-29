@@ -206,7 +206,7 @@ sound on.
 ## Jeep, chopper and motorbike stations
 
 Every family base has a changing station just outside the gate: Cooper's,
-Dad's and Auntie Claire's have a **motorbike station**, Mum's and Inness's a
+Dad's and Auntie Claire's have a **motorbike station**, Mum's and Innes' a
 **jeep station**, and Granny's, Grandpa's and Uncle Steven's a **chopper
 station**. Each enemy base gets one too once you've captured it. Jeep stations
 show as a blue **J** on the maps, chopper stations as an orange **H** and

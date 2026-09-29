@@ -112,7 +112,7 @@ function barbecue(g: THREE.Group): void {
   add(g, new THREE.BoxGeometry(0.8, 0.05, 1), plastic(0xc0c0c0), 3.35, y + 4, 0.8);
 }
 
-/** Inness: a toy T-rex, roaring at the road. */
+/** Innes: a toy T-rex, roaring at the road. */
 function dinosaur(g: THREE.Group): void {
   const skin = plastic(0x4caf50);
   const belly = plastic(0xc5e17a);
