@@ -14,7 +14,7 @@ import type { Building } from '../world/Building';
 import { Bunker } from '../world/Bunker';
 import type { EnemyBase } from '../world/EnemyBase';
 import type { Fortress } from '../world/Fortress';
-import { ENEMY_BASE_HALF, siteToWorld, siteYaw } from '../world/Landmarks';
+import { ENEMY_BASE_HALF, SITES, siteToWorld, siteYaw } from '../world/Landmarks';
 import { LaunchPad } from '../world/MoonRocket';
 import { MoonBase } from '../world/MoonBase';
 import { TreeManager } from '../world/TreeManager';
@@ -2229,6 +2229,11 @@ export class Game {
       })(),
       fortress: { x: f.center.x, z: f.center.z, name: f.name, title: f.title, locked: f.locked, destroyed: f.isDestroyed, friendly: ZOMBIES },
       stations: this.stations.map((s) => ({ x: s.center.x, z: s.center.z, kind: s.kind })),
+      airbase: (() => {
+        const air = this.airSupport();
+        const site = SITES.find((t) => t.kind === 'airport');
+        return air && site ? { x: site.cx, z: site.cz, total: air.total, left: air.left } : null;
+      })(),
     };
     return this.cachedMapView;
   }

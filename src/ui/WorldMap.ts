@@ -56,6 +56,8 @@ export interface MapView {
   fortress: MapBase & { title: string; locked: boolean; destroyed: boolean; friendly: boolean };
   /** Changing stations that turn the tank into a jeep or a chopper. */
   stations: { x: number; z: number; kind: 'jeep' | 'chopper' | 'motorbike' }[];
+  /** The enemy airbase: destroy every jet and allied paratroopers drop in when you attack a base. Null where there's none. */
+  airbase: { x: number; z: number; total: number; left: number } | null;
 }
 
 export interface MapDrawOptions {
@@ -287,6 +289,25 @@ export class WorldMap {
       ctx.fillText(jeep ? 'J' : bike ? 'M' : 'H', st.x, st.z + r * 0.1);
     }
 
+    // The airbase: a round plane badge, red while jets remain, green once they're all down.
+    if (view.airbase) {
+      const a = view.airbase;
+      const r = Math.max(30, 8 / s);
+      const cleared = a.left === 0;
+      ctx.fillStyle = cleared ? 'rgba(80,160,80,0.9)' : 'rgba(210,60,50,0.9)';
+      ctx.strokeStyle = '#1a1a1a';
+      ctx.lineWidth = 2 / s;
+      ctx.beginPath();
+      ctx.arc(a.x, a.z, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = '#ffffff';
+      ctx.font = `900 ${r * 1.5}px "Segoe UI", sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('✈', a.x, a.z + r * 0.05);
+    }
+
     // Enemy bases: red squares (green tick once destroyed).
     for (const b of view.enemyBases) {
       const r = Math.max(30, 7 / s);
@@ -422,6 +443,20 @@ export class WorldMap {
         fz.friendly ? `${fz.title}: defend it!` : `${fz.title}${fz.destroyed ? ' ✓' : fz.locked ? ' (locked)' : ''}`,
         fz.destroyed || fz.friendly ? '#9be27a' : fz.locked ? '#e8d9a4' : '#ff8a7a',
       );
+      if (view.airbase) {
+        const a = view.airbase;
+        const [lx, lz] = toScreen(a.x, a.z);
+        const lines = a.left === 0
+          ? [['Airbase cleared ✓', '#9be27a'], ['Paratroopers drop in when you attack a base', '#c8f5a8']]
+          : [[`Enemy Airbase: ${a.left} of ${a.total} jets left`, '#ff8a7a'], ['Destroy every jet: allied paratroopers', '#e8d9a4'], ['will then drop in when you attack a base', '#e8d9a4']];
+        ctx.textBaseline = 'alphabetic';
+        lines.forEach(([text, color], i) => {
+          const y = lz - 16 - (lines.length - 1 - i) * 14;
+          ctx.fillStyle = color;
+          ctx.strokeText(text, lx, y);
+          ctx.fillText(text, lx, y);
+        });
+      }
       ctx.font = '700 11px "Segoe UI", system-ui, sans-serif';
       for (const b of view.buddies) label(b.x, b.z + 2 / s, b.name, '#c8f5a8');
     }
