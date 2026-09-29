@@ -6,6 +6,7 @@ import { isOnRoad } from '../world/RoadNetwork';
 import { clamp } from '../utils/math';
 import { plastic, shade } from '../utils/plastic';
 import { PartBuilder, tubeX, tubeZ } from '../utils/modelKit';
+import { RepairBot } from './RepairBot';
 import { createJammedTag, createMuzzleGlob } from '../combat/JamCannon';
 
 export const HULL_HALF_EXTENTS = { x: 1.15, y: 0.5, z: 1.9 };
@@ -31,6 +32,10 @@ const GROUND_SEEK = 6; // m/s downward search bias fed to the character controll
  */
 const MOAT_CLEARANCE = 2.2;
 
+/** Health regained per second once a vehicle has gone a few seconds without being hit. */
+const REGEN_RATE = 1.5;
+const REGEN_DELAY = 4;
+
 /** Shared hull+turret+barrel tank rig: visuals, kinematic movement/collision, health, firing. */
 /** Stand-in materials marking which shade each part gets; swapped for the army's plastic. */
 const SLOT = { body: new THREE.MeshBasicMaterial(), dark: new THREE.MeshBasicMaterial(), deep: new THREE.MeshBasicMaterial() };
@@ -55,6 +60,9 @@ export class Tank {
   /** Multiplies how fast the hull can turn (the jeep is nimbler than a tank). */
   protected turnRateScale = 1;
   private roadBoost = 1;
+  /** Claude the helper robot, who turns up to fix the hull while it regenerates. */
+  protected readonly repairBot = new RepairBot();
+  private sinceHit = REGEN_DELAY;
 
   fireCooldown = 0;
   /** Seconds left with jam gumming up the barrel (friendly fire from the jam cannon). */
@@ -100,6 +108,8 @@ export class Tank {
     this.root.position.set(spawnX, groundY, spawnZ);
     this.hullYaw = facingRadians;
     this.root.quaternion.setFromAxisAngle(Y_AXIS, facingRadians);
+    this.repairBot.place(0, 0.63, 1.5, Math.PI * 0.85); // on the engine deck
+    this.root.add(this.repairBot.group);
     if (tankBody) this.buildVisuals(plasticColor);
 
     const bodyDesc = RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(
@@ -537,6 +547,7 @@ export class Tank {
   /** Applies damage, scaled by armour when the hit point is known. Returns the face that was hit. */
   takeDamage(amount: number, hitPoint?: THREE.Vector3): ArmorZone | null {
     if (!this.alive || this.shielded) return null;
+    this.sinceHit = 0;
     const zone = hitPoint ? this.hitZone(hitPoint) : null;
     this.health = Math.max(0, this.health - amount * (zone ? ARMOR_MULTIPLIER[zone] : 1));
     return zone;
@@ -691,6 +702,12 @@ export class Tank {
   }
 
   update(dt: number): void {
+    // Slow self-repair, with Claude on deck while it lasts.
+    this.sinceHit += dt;
+    const hurt = this.alive && this.health > 0 && this.health < this.maxHealth;
+    if (hurt && this.sinceHit >= REGEN_DELAY) this.heal(REGEN_RATE * dt);
+    this.repairBot.active = hurt && this.sinceHit >= REGEN_DELAY;
+    this.repairBot.update(dt);
     if (this.fireCooldown > 0) this.fireCooldown = Math.max(0, this.fireCooldown - dt);
     if (this.gunJamTime > 0) {
       this.gunJamTime -= dt;

@@ -183,6 +183,8 @@ export class HelicopterEnemy extends Tank {
     }
     this.orbitPhase = rng() * Math.PI * 2;
 
+    this.repairBot.place(0, 1.95, 2.0, Math.PI * 0.85);
+    if (this.dragon) this.repairBot.enabled = false; // no flat spot on a dragon
     this.healthCanvas = document.createElement('canvas');
     this.healthCanvas.width = 128;
     this.healthCanvas.height = 14;

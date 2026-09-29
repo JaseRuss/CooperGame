@@ -184,7 +184,7 @@ export class PlayerTank extends Tank {
     this.setRocketReady(false);
     this.buildJamCannon();
     this.buildAAPod();
-    this.tankParts = [...this.root.children];
+    this.tankParts = this.root.children.filter((c) => c !== this.repairBot.group);
     this.buildJeepRig();
     this.buildChopperRig();
     this.buildBikeRig();
@@ -416,6 +416,11 @@ export class PlayerTank extends Tank {
       this.bikeAirY = null;
       this.bikeAirVelocity = 0;
     }
+    // Claude perches wherever the vehicle has a flat spot: engine deck, load bed, roof, or rear seat.
+    if (jeep) this.repairBot.place(0.5, 0.62, 1.5, Math.PI * 0.85);
+    else if (chopper) this.repairBot.place(0.45, 2.05, 1.5, Math.PI * 0.85);
+    else if (bike) this.repairBot.place(0, 1.02, 1.0, Math.PI * 0.85, 0.32);
+    else this.repairBot.place(0, 0.63, 1.5, Math.PI * 0.85, 0.4);
     this.boostTime = 0;
     this.rocketJumping = this.rocketApexPending = this.rocketLandingPending = false;
     for (const flame of this.bikeParts.flames) flame.visible = false;
