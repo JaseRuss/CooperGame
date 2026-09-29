@@ -2132,6 +2132,10 @@ export class Game {
       buddies: this.buddies.map((b) => ({ x: b.position.x, z: b.position.z, name: b.name })),
       markers: this.collectMarkers(),
       objective,
+      home: (() => {
+        const h = nearestFriendlyBase(this.player.position.x, this.player.position.z);
+        return { x: h.x, z: h.z, name: h.name };
+      })(),
       fortress: { x: f.center.x, z: f.center.z, name: f.name, title: f.title, locked: f.locked, destroyed: f.isDestroyed, friendly: ZOMBIES },
       stations: this.stations.map((s) => ({ x: s.center.x, z: s.center.z, kind: s.kind })),
     };

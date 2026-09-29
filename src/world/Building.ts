@@ -22,40 +22,58 @@ const CRACK_VARIANTS = 3;
 let crackMaterials: THREE.MeshBasicMaterial[] | null = null;
 const crackGeometry = new THREE.PlaneGeometry(1, 1);
 
-/** A jagged crack drawn on a canvas: dark splits with a hot orange glow in the middle, so it reads as "hit here". */
+/**
+ * A jagged crack drawn on a canvas so it reads from across a base: a wide hot-orange halo, then the
+ * splits drawn three times over (a dark edge, an orange body, a yellow-white core), so they glow
+ * like broken glass with light behind it rather than looking like thin pencil lines.
+ */
 function crackTexture(seed: number): THREE.CanvasTexture {
   let s = seed * 9301 + 49297;
   const rand = () => ((s = (s * 9301 + 49297) % 233280) / 233280);
+  const size = 512;
+  const mid = size / 2;
   const c = document.createElement('canvas');
-  c.width = c.height = 256;
+  c.width = c.height = size;
   const ctx = c.getContext('2d') as CanvasRenderingContext2D;
-  const glow = ctx.createRadialGradient(128, 128, 4, 128, 128, 70);
-  glow.addColorStop(0, 'rgba(255,150,40,0.75)');
-  glow.addColorStop(1, 'rgba(255,120,30,0)');
+  const glow = ctx.createRadialGradient(mid, mid, 6, mid, mid, mid * 0.85);
+  glow.addColorStop(0, 'rgba(255,190,60,0.95)');
+  glow.addColorStop(0.35, 'rgba(255,120,30,0.55)');
+  glow.addColorStop(1, 'rgba(255,90,20,0)');
   ctx.fillStyle = glow;
-  ctx.fillRect(0, 0, 256, 256);
+  ctx.fillRect(0, 0, size, size);
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
+  // The splits, as polylines: arms from the middle, forking as they go.
+  const lines: { pts: [number, number][]; width: number }[] = [];
   const branch = (x: number, y: number, angle: number, width: number, depth: number) => {
-    ctx.beginPath();
-    ctx.moveTo(x, y);
-    const steps = 3 + Math.floor(rand() * 3);
+    const pts: [number, number][] = [[x, y]];
+    const steps = 4 + Math.floor(rand() * 3);
     for (let i = 0; i < steps; i++) {
       angle += (rand() - 0.5) * 0.9;
-      x += Math.cos(angle) * (14 + rand() * 12);
-      y += Math.sin(angle) * (14 + rand() * 12);
-      ctx.lineTo(x, y);
+      x += Math.cos(angle) * (22 + rand() * 20);
+      y += Math.sin(angle) * (22 + rand() * 20);
+      pts.push([x, y]);
     }
-    ctx.strokeStyle = '#17110c';
-    ctx.lineWidth = width;
-    ctx.stroke();
+    lines.push({ pts, width });
     if (depth > 0) {
-      branch(x, y, angle + 0.6, width * 0.6, depth - 1);
-      if (rand() > 0.4) branch(x, y, angle - 0.7, width * 0.55, depth - 1);
+      branch(x, y, angle + 0.6, width * 0.65, depth - 1);
+      if (rand() > 0.35) branch(x, y, angle - 0.7, width * 0.6, depth - 1);
     }
   };
-  const arms = 5 + Math.floor(rand() * 2);
-  for (let i = 0; i < arms; i++) branch(128, 128, (i / arms) * Math.PI * 2 + rand() * 0.5, 7, 2);
+  const arms = 6 + Math.floor(rand() * 2);
+  for (let i = 0; i < arms; i++) branch(mid, mid, (i / arms) * Math.PI * 2 + rand() * 0.5, 20, 2);
+  const stroke = (color: string, extra: number, scale: number) => {
+    ctx.strokeStyle = color;
+    for (const { pts, width } of lines) {
+      ctx.lineWidth = Math.max(2, width * scale + extra);
+      ctx.beginPath();
+      pts.forEach(([px, py], i) => (i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py)));
+      ctx.stroke();
+    }
+  };
+  stroke('#1a0f08', 8, 1); // dark edge
+  stroke('#ff7a1c', 0, 0.8); // orange body
+  stroke('#fff3b0', 0, 0.3); // hot core
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
   return tex;
@@ -241,8 +259,9 @@ export class Building {
       const az = Math.abs(rel.z) / this.halfExtents.z;
       normal = ax >= ay && ax >= az ? new THREE.Vector3(Math.sign(rel.x), 0, 0) : ay >= az ? new THREE.Vector3(0, Math.sign(rel.y), 0) : new THREE.Vector3(0, 0, Math.sign(rel.z));
     }
+    // Big enough to spot from the range you shoot at: about half the building's smallest dimension.
     const smallest = Math.min(this.halfExtents.x, this.halfExtents.y, this.halfExtents.z) * 2;
-    const size = THREE.MathUtils.clamp(smallest * 0.35, 2, 4);
+    const size = THREE.MathUtils.clamp(smallest * 0.55, 3.5, 9);
     const mesh = new THREE.Mesh(crackGeometry, crackMaterial());
     mesh.position.copy(at).addScaledVector(normal, 0.06);
     mesh.lookAt(mesh.position.clone().add(normal));
@@ -250,7 +269,7 @@ export class Building {
     mesh.scale.setScalar(size);
     mesh.renderOrder = 2;
     this.scene.add(mesh);
-    this.cracks.push({ mesh, radius: Math.max(2.2, size * 0.75) });
+    this.cracks.push({ mesh, radius: Math.max(2.2, size * 0.6) });
   }
 
   /** Goes up at once, with the bigger weak-point blast. */

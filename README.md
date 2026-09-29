@@ -115,7 +115,8 @@ sound on.
 - **Who's who:** green (you and your buddies) and **red** are friendly; **tan**
   and **blue** are the enemy.
 - There are **5 enemy bases** to destroy, held by the **tan** and **blue**
-  armies. The red arrow on the minimap points to the nearest one. Get close and
+  armies. The red arrow on the minimap points to the nearest one, and the gold
+  arrow to the nearest family base (with the distance to each). Get close and
   a checklist shows what's left to knock down.
 - Once a base falls, **green troops and bunkers** move in and fight anything
   nearby.
