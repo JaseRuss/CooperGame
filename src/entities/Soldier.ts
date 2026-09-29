@@ -523,7 +523,10 @@ export class Soldier {
     zombie: ZombieKind | null = null,
     /** An anti-aircraft trooper: shoots unguided rockets at choppers, and at nothing else. */
     readonly antiAir = false,
+    /** Hits it takes before going down (zombies use their own stats). */
+    hp = 1,
   ) {
+    this.hp = hp;
     this.zombie = zombie;
     this.pose = zombie ? (zombie === 'walker' ? (rng() < 0.3 ? 1 : 0) : 1) : rng() < 0.35 && !antiAir ? 1 : 0;
     const figures = zombie ? ZOMBIE_FIGURES : faction === 'enemy' ? KNIGHT_FIGURES : FIGURES;

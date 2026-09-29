@@ -79,8 +79,11 @@ interface PointerStyle {
   /** How far inside the rim it stands. */
   inset: number;
   avoid?: { x: number; z: number };
+  /** Draw a little aeroplane instead of the arrowhead. */
+  plane?: boolean;
 }
 const ENEMY_POINTER: PointerStyle = { fill: '#ff5a4a', edge: '#2a0a0a', text: '#ffd0c8', inset: 0 };
+const AIRBASE_POINTER: PointerStyle = { fill: '#ffa53a', edge: '#2a1605', text: '#ffe0b8', inset: 0, plane: true };
 const HOME_POINTER: PointerStyle = { fill: '#ffcc33', edge: '#2a2005', text: '#fff0b8', inset: 0 };
 
 const LAYER_SIZE = 1024;
@@ -468,6 +471,11 @@ export class WorldMap {
       if (home && Math.hypot(home.x - view.playerX, home.z - view.playerZ) > BASE_RADIUS) {
         this.drawRimPointer(ctx, width, height, toScreen(home.x, home.z), view, home, { ...HOME_POINTER, avoid: view.objective ?? undefined });
       }
+      // The airbase, while it still has jets: a plane pointing the way.
+      const air = view.airbase;
+      if (air && air.left > 0) {
+        this.drawRimPointer(ctx, width, height, toScreen(air.x, air.z), view, { x: air.x, z: air.z, name: 'Airbase' }, { ...AIRBASE_POINTER, avoid: view.objective ?? undefined });
+      }
     }
 
     // Player arrow. On the big map it's much bigger, with a white halo, so it's easy to find.
@@ -588,9 +596,29 @@ export class WorldMap {
     ctx.strokeStyle = style.edge;
     ctx.lineWidth = 1.5;
     ctx.beginPath();
-    ctx.moveTo(0, -10);
-    ctx.lineTo(8, 6);
-    ctx.lineTo(-8, 6);
+    if (style.plane) {
+      // Nose at the top: fuselage, swept wings and a tail plane.
+      ctx.moveTo(0, -12);
+      ctx.lineTo(2.5, -4);
+      ctx.lineTo(11, 2);
+      ctx.lineTo(11, 4.5);
+      ctx.lineTo(2.5, 2);
+      ctx.lineTo(2, 8);
+      ctx.lineTo(5.5, 11);
+      ctx.lineTo(5.5, 12.5);
+      ctx.lineTo(0, 11);
+      ctx.lineTo(-5.5, 12.5);
+      ctx.lineTo(-5.5, 11);
+      ctx.lineTo(-2, 8);
+      ctx.lineTo(-2.5, 2);
+      ctx.lineTo(-11, 4.5);
+      ctx.lineTo(-11, 2);
+      ctx.lineTo(-2.5, -4);
+    } else {
+      ctx.moveTo(0, -10);
+      ctx.lineTo(8, 6);
+      ctx.lineTo(-8, 6);
+    }
     ctx.closePath();
     ctx.fill();
     ctx.stroke();

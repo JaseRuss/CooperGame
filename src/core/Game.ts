@@ -89,7 +89,8 @@ const PARA_TRIGGER_MARGIN = 130; // how far outside a base's edge counts as atta
 const PARA_FIRST_DROP = 3; // seconds after arriving (or the jets going down) before the first drop
 const PARA_INTERVAL = 35; // seconds between drops
 const PARA_MAX_WAVES = 4; // per base, so the battlefield doesn't fill up
-const PARA_SQUAD_SIZE = 6;
+const PARA_SQUAD_SIZE = 8;
+const PARA_HP = 3; // hits each paratrooper takes before going down (ordinary soldiers take one)
 const PARA_AHEAD = 45; // how far ahead of the player, toward the base, they come down
 // Final assault on the Fortress.
 const FORTRESS_CHECKLIST_RANGE = 480;
@@ -1605,6 +1606,7 @@ export class Game {
         color: ARMY_GREEN,
         holdWhile: null,
         once: true,
+        hp: PARA_HP,
       });
     });
   }
