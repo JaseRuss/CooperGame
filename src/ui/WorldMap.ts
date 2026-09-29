@@ -1,4 +1,4 @@
-import { WORLD_SIZE, WORLD_HALF, TERRAIN_HEIGHT } from '../core/config';
+import { WORLD_SIZE, WORLD_HALF, TERRAIN_HEIGHT, BASE_RADIUS } from '../core/config';
 import { heightAt } from '../world/Terrain';
 import { ROAD_WIDTH, type Town } from '../world/TownPlan';
 import { HIGHWAY_WIDTH, type Polyline } from '../world/RoadNetwork';
@@ -50,6 +50,8 @@ export interface MapView {
   markers: MapMarker[];
   /** Nearest enemy base still standing (or the Fortress once they're all down); the minimap points at it. */
   objective: MapBase | null;
+  /** The family base nearest the player (where the Back / R button sends them); the minimap points at it too. */
+  home: MapBase | null;
   /** `friendly`: on the zombie mission it's everyone's stronghold. */
   fortress: MapBase & { title: string; locked: boolean; destroyed: boolean; friendly: boolean };
   /** Changing stations that turn the tank into a jeep or a chopper. */
@@ -66,6 +68,18 @@ export interface MapDrawOptions {
   /** Show enemies as a heatmap of where they're gathered instead of individual dots. */
   heatmap: boolean;
 }
+
+/** How a rim pointer looks: red for the enemy, gold (with a little house on its label) for home. */
+interface PointerStyle {
+  fill: string;
+  edge: string;
+  text: string;
+  /** How far inside the rim it stands. */
+  inset: number;
+  avoid?: { x: number; z: number };
+}
+const ENEMY_POINTER: PointerStyle = { fill: '#ff5a4a', edge: '#2a0a0a', text: '#ffd0c8', inset: 0 };
+const HOME_POINTER: PointerStyle = { fill: '#ffcc33', edge: '#2a2005', text: '#fff0b8', inset: 0 };
 
 const LAYER_SIZE = 1024;
 const TERRAIN_SAMPLES = 192;
@@ -412,16 +426,33 @@ export class WorldMap {
       for (const b of view.buddies) label(b.x, b.z + 2 / s, b.name, '#c8f5a8');
     }
 
-    if (opts.rimPointer && view.objective) this.drawRimPointer(ctx, width, height, toScreen(view.objective.x, view.objective.z), view);
+    if (opts.rimPointer) {
+      if (view.objective) this.drawRimPointer(ctx, width, height, toScreen(view.objective.x, view.objective.z), view, view.objective, ENEMY_POINTER);
+      // Not while you're in the base: you're already home.
+      const home = view.home;
+      if (home && Math.hypot(home.x - view.playerX, home.z - view.playerZ) > BASE_RADIUS) {
+        this.drawRimPointer(ctx, width, height, toScreen(home.x, home.z), view, home, { ...HOME_POINTER, avoid: view.objective ?? undefined });
+      }
+    }
 
-    // Player arrow.
+    // Player arrow. On the big map it's much bigger, with a white halo, so it's easy to find.
     const [px, pz] = toScreen(view.playerX, view.playerZ);
     const k = opts.arrowScale;
+    if (k > 1.5) {
+      ctx.setTransform(1, 0, 0, 1, px, pz);
+      const halo = ctx.createRadialGradient(0, 0, 4 * k, 0, 0, 12 * k);
+      halo.addColorStop(0, 'rgba(255,255,255,0.75)');
+      halo.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = halo;
+      ctx.beginPath();
+      ctx.arc(0, 0, 12 * k, 0, Math.PI * 2);
+      ctx.fill();
+    }
     ctx.setTransform(k, 0, 0, k, px, pz);
     ctx.rotate(-view.playerYaw);
     ctx.fillStyle = '#5fe05f';
-    ctx.strokeStyle = '#0d2a0d';
-    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = k > 1.5 ? '#ffffff' : '#0d2a0d';
+    ctx.lineWidth = k > 1.5 ? 2 : 1.5;
     ctx.beginPath();
     ctx.moveTo(0, -9);
     ctx.lineTo(6, 7);
@@ -475,8 +506,10 @@ export class WorldMap {
   }
 
   /**
-   * On a round minimap: when the objective is off the edge, a red arrow on the rim points at it
-   * with the distance; when it's on the map, a pulsing ring marks it.
+   * On a round minimap: when `target` is off the edge, an arrow on the rim points at it with the
+   * distance; when it's on the map, a pulsing ring marks it. The enemy pointer is red; the one
+   * for the nearest home base is gold, and stands a little inside the rim when the two point the
+   * same way so they don't sit on top of each other.
    */
   private drawRimPointer(
     ctx: CanvasRenderingContext2D,
@@ -484,18 +517,20 @@ export class WorldMap {
     height: number,
     [tx, tz]: readonly [number, number],
     view: MapView,
+    target: MapBase,
+    style: PointerStyle,
   ): void {
     const cx = width / 2;
     const cz = height / 2;
     const dx = tx - cx;
     const dz = tz - cz;
-    const r = Math.min(width, height) / 2 - 12;
-    const dist = view.objective ? Math.round(Math.hypot(view.objective.x - view.playerX, view.objective.z - view.playerZ)) : 0;
+    const r = Math.min(width, height) / 2 - 12 - style.inset;
+    const dist = Math.round(Math.hypot(target.x - view.playerX, target.z - view.playerZ));
     ctx.setTransform(1, 0, 0, 1, 0, 0);
 
     if (Math.hypot(dx, dz) < r) {
       const pulse = 8 + 4 * Math.sin(performance.now() / 200);
-      ctx.strokeStyle = '#ff5a4a';
+      ctx.strokeStyle = style.fill;
       ctx.lineWidth = 2.5;
       ctx.beginPath();
       ctx.arc(tx, tz, pulse, 0, Math.PI * 2);
@@ -503,13 +538,19 @@ export class WorldMap {
       return;
     }
 
-    const a = Math.atan2(dz, dx);
+    let a = Math.atan2(dz, dx);
+    // Off to one side of the enemy arrow if they'd overlap.
+    if (style.avoid) {
+      const other = Math.atan2(style.avoid.z - view.playerZ, style.avoid.x - view.playerX);
+      const off = Math.atan2(Math.sin(a - other), Math.cos(a - other));
+      if (Math.abs(off) < 0.32) a = other + (off >= 0 ? 0.32 : -0.32);
+    }
     const ax = cx + Math.cos(a) * r;
     const az = cz + Math.sin(a) * r;
     ctx.setTransform(1, 0, 0, 1, ax, az);
     ctx.rotate(a + Math.PI / 2);
-    ctx.fillStyle = '#ff5a4a';
-    ctx.strokeStyle = '#2a0a0a';
+    ctx.fillStyle = style.fill;
+    ctx.strokeStyle = style.edge;
     ctx.lineWidth = 1.5;
     ctx.beginPath();
     ctx.moveTo(0, -10);
@@ -527,7 +568,7 @@ export class WorldMap {
     ctx.textBaseline = 'middle';
     ctx.lineWidth = 3;
     ctx.strokeStyle = 'rgba(0,0,0,0.8)';
-    ctx.fillStyle = '#ffd0c8';
+    ctx.fillStyle = style.text;
     const text = dist >= 1000 ? `${(dist / 1000).toFixed(1)}km` : `${dist}m`;
     ctx.strokeText(text, lx, lz);
     ctx.fillText(text, lx, lz);

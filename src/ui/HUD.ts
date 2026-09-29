@@ -1205,7 +1205,7 @@ export class HUD {
         this.bigMapCanvas.height = size;
       }
       if (mapChanged || resized) {
-        this.worldMap.draw(this.bigMapCtx, size, size, 0, 0, WORLD_SIZE, state.map, { arrowScale: 2.6, labels: true, rimPointer: false, heatmap: true });
+        this.worldMap.draw(this.bigMapCtx, size, size, 0, 0, WORLD_SIZE, state.map, { arrowScale: 3.8, labels: true, rimPointer: false, heatmap: true });
         this.lastDrawnMap = state.map;
       }
     }
