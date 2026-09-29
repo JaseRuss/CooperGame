@@ -122,6 +122,8 @@ function toyJet(color: number): THREE.Group {
 /** Builds lakes, shopping malls and the airfield. Returns their destructible pieces. */
 export class LandmarkSet {
   readonly buildings: Building[] = [];
+  /** The enemy jets parked on the airfield apron (none where there's no airfield). */
+  readonly jets: Building[] = [];
   /** Car-park lamp posts, which topple like trees. */
   readonly lampPosts: Tree[] = [];
   private lampBody!: RAPIER.RigidBody;
@@ -419,6 +421,7 @@ export class LandmarkSet {
       jet.rotation.y = Math.PI + (rng() - 0.5) * 0.3; // noses toward the taxiway
       g.add(jet);
       const plane = this.destructible(g, jet, 70, ARMY_TAN);
+      this.jets.push(plane);
       // Weak points: the wing-tip missiles and the drop tanks under the wings.
       const spot = (x: number, y: number, z: number, r: number, label: string) => {
         const c = jet.localToWorld(new THREE.Vector3(x, y, z));
