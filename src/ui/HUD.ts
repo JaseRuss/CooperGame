@@ -109,6 +109,8 @@ export interface HUDState {
   enemyBasesTotal: number;
   /** When close to an enemy base: what still needs destroying there. */
   nearbyBase: { name: string; distance: number; objectives: ObjectiveLine[] } | null;
+  /** The enemy jets at the airbase; once they're all down, paratroopers back up attacks on bases. Null with no airbase. */
+  airSupport: { total: number; left: number; ready: boolean } | null;
   driveStyle: Settings['driveStyle'];
   /** Remind the player to click so the browser hands over the mouse for aiming. */
   mouseCaptureHint: boolean;
@@ -1230,7 +1232,7 @@ export class HUD {
         ? `FINAL ASSAULT <span style="color:#ff8a7a">DESTROY ${fort.title.toUpperCase()}</span>`
         : `ENEMY ${KNIGHTS ? 'CASTLES' : 'BASES'} LEFT <span style="color:#ff8a7a">${state.enemyBasesLeft}</span> / ${state.enemyBasesTotal}`;
     const fortFlag = `<div class="flag" style="color:${fortColor}; margin-left:6px; padding-left:10px; border-left:1px solid rgba(214,196,138,0.35)">${fortIcon}${fort.name.toUpperCase()}</div>`;
-    this.setHTML(this.baseCounter, `<div class="stencil title">${title}</div><div class="flags">${flags}${fortFlag}</div>${ARMY_KEY}`);
+    this.setHTML(this.baseCounter, `<div class="stencil title">${title}</div><div class="flags">${flags}${fortFlag}</div>${this.airSupportLine(state)}${ARMY_KEY}`);
     this.updateChecklist(state);
   }
 
@@ -1259,6 +1261,16 @@ export class HUD {
     );
   }
 
+  /** "✈ JETS LEFT 3 / 5 · PARATROOPERS LOCKED", or "✈ PARATROOPERS READY" once the airbase is cleared. */
+  private airSupportLine(state: HUDState, compact = false): string {
+    const air = state.airSupport;
+    if (!air) return '';
+    const text = air.ready
+      ? `✈ AIRBASE CLEARED · <b style="color:#9be27a">PARATROOPERS READY</b>`
+      : `✈ AIRBASE JETS LEFT <b style="color:#ff8a7a">${air.left}</b> / ${air.total} · destroy them to call in paratroopers`;
+    return `<div class="airsupport" style="font-size:${compact ? 11 : 12}px; margin-top:4px; opacity:0.95">${text}</div>`;
+  }
+
   private updateChecklist(state: HUDState): void {
     const base = state.nearbyBase;
     if (!base) {
@@ -1272,7 +1284,8 @@ export class HUD {
       `<div class="head"><div class="stencil" style="font-size:13px">${base.name.toUpperCase()}</div>` +
         `<div style="font-size:11px; opacity:0.9">${Math.round(base.distance)} m · ${left} target${left === 1 ? '' : 's'} left</div></div>` +
         `<div style="height:6px"></div>` +
-        base.objectives.map((o) => `<div class="line${o.done ? ' done' : ''}">${o.done ? '☑' : '☐'} ${o.label}</div>`).join(''),
+        base.objectives.map((o) => `<div class="line${o.done ? ' done' : ''}">${o.done ? '☑' : '☐'} ${o.label}</div>`).join('') +
+        this.airSupportLine(state, true),
     );
   }
 }

@@ -37,6 +37,7 @@ import { Moat } from '../world/Moat';
 import { Warfront } from '../world/Warfront';
 import { inMoat, routeRoundMoat, zombieWaypoint } from '../world/MoatShape';
 import { RepairCrates, REPAIR_AMOUNT } from '../world/RepairCrates';
+import { Paratroopers } from '../world/Paratroopers';
 import { AAMissiles, AA_SALVO, AA_CAPACITY, type AirTrack } from '../combat/AAMissiles';
 import { AntiAir } from '../combat/AntiAir';
 import { Wrecks, pickWreckGag } from '../combat/Wrecks';
@@ -44,7 +45,7 @@ import { CameraRig } from '../camera/CameraRig';
 import { HUD, type HUDState } from '../ui/HUD';
 import { WorldMap, type MapMarker, type MapView } from '../ui/WorldMap';
 import { AimGuide, type AimTarget } from '../ui/AimGuide';
-import { FRIENDLY_BASES, nearestFriendlyBase, BASE_RADIUS, MISSION, MISSIONS, NIGHT, JUNGLE, KNIGHTS, ZOMBIES, startMission, type FriendlyBase, type Mission } from '../core/config';
+import { FRIENDLY_BASES, FORTRESS_HALF, nearestFriendlyBase, BASE_RADIUS, MISSION, MISSIONS, NIGHT, JUNGLE, KNIGHTS, ZOMBIES, startMission, type FriendlyBase, type Mission } from '../core/config';
 import { ZombieWaves } from '../world/ZombieWaves';
 import { OverrunTowns } from '../world/OverrunTowns';
 import { FlamePit, FLAME_RANGE, FLAME_HALF_ANGLE } from '../world/FlamePit';
@@ -83,6 +84,13 @@ const AA_DAMAGE = 50; // a helicopter has 85 HP: any two darts that get close, w
 const AA_BLAST_RADIUS = 10;
 const RED_RESPAWN_DELAY = 40;
 const GARRISON_SQUAD_SIZE = 6;
+// Paratroopers: once every jet at the airbase is out, allied troops drop in whenever the player is attacking a base.
+const PARA_TRIGGER_MARGIN = 130; // how far outside a base's edge counts as attacking it
+const PARA_FIRST_DROP = 3; // seconds after arriving (or the jets going down) before the first drop
+const PARA_INTERVAL = 35; // seconds between drops
+const PARA_MAX_WAVES = 4; // per base, so the battlefield doesn't fill up
+const PARA_SQUAD_SIZE = 6;
+const PARA_AHEAD = 45; // how far ahead of the player, toward the base, they come down
 // Final assault on the Fortress.
 const FORTRESS_CHECKLIST_RANGE = 480;
 const ESCORT_TANKS = 8; // form up behind the player
@@ -344,6 +352,10 @@ export class Game {
   private highways: Polyline[] = [];
   private enemyBases: EnemyBase[] = [];
   private announcedBases = new Set<EnemyBase>();
+  private paratroopers!: Paratroopers;
+  private paraTimer = PARA_FIRST_DROP;
+  private paraWaves = new Map<object, number>();
+  private airbaseCleared = false;
   private buildings: Building[] = [];
   private trees!: TreeManager;
   private enemySlots: EnemySlot[] = [];
@@ -491,6 +503,7 @@ export class Game {
     this.impacts = new ImpactEffects(this.scene);
     this.jam = new JamCannon(this.scene);
     this.crates = new RepairCrates(this.scene);
+    this.paratroopers = new Paratroopers(this.scene);
     this.aa = new AAMissiles(this.scene);
     this.antiAir = new AntiAir(
       this.scene,
@@ -1518,6 +1531,84 @@ export class Game {
     this.missileCharge = 0;
   }
 
+  // ---------- air support ----------
+
+  /** Enemy jets on the airbase apron: total and how many are still standing. Null where there's no airbase to raid. */
+  private airSupport(): { total: number; left: number; ready: boolean } | null {
+    const jets = this.landmarks.jets;
+    if (KNIGHTS || ZOMBIES || jets.length === 0) return null;
+    const left = jets.filter((j) => !j.destroyed).length;
+    return { total: jets.length, left, ready: left === 0 };
+  }
+
+  /**
+   * Take out every jet at the airbase and allied paratroopers drop in whenever the player is
+   * attacking an enemy base (or, in the final assault, the Fortress).
+   */
+  private updateAirSupport(dt: number): void {
+    this.paratroopers.update(dt);
+    const air = this.airSupport();
+    if (!air?.ready) return;
+    if (!this.airbaseCleared) {
+      this.airbaseCleared = true;
+      this.paraTimer = PARA_FIRST_DROP;
+      this.hud.showBanner('AIRBASE CLEARED!', 'Every enemy jet is down · allied paratroopers will drop in when you attack a base');
+      this.sound.music.stinger();
+    }
+    // The base being attacked: the nearest standing one within reach of the player.
+    const p = this.player.position;
+    const targets: { key: object; x: number; z: number; radius: number }[] = this.enemyBases
+      .filter((b) => !b.isDestroyed)
+      .map((b) => ({ key: b, x: b.center.x, z: b.center.z, radius: ENEMY_BASE_HALF }));
+    if (!this.fortress.locked && !this.fortress.isDestroyed) {
+      targets.push({ key: this.fortress, x: this.fortress.center.x, z: this.fortress.center.z, radius: FORTRESS_HALF });
+    }
+    let target: (typeof targets)[number] | null = null;
+    let best = Infinity;
+    for (const t of targets) {
+      const d = Math.hypot(t.x - p.x, t.z - p.z);
+      if (d < t.radius + PARA_TRIGGER_MARGIN && d < best) {
+        best = d;
+        target = t;
+      }
+    }
+    if (!target) {
+      this.paraTimer = Math.max(this.paraTimer, PARA_FIRST_DROP); // a fresh attack starts with a short wait
+      return;
+    }
+    this.paraTimer -= dt;
+    const waves = this.paraWaves.get(target.key) ?? 0;
+    if (this.paraTimer > 0 || waves >= PARA_MAX_WAVES) return;
+    this.paraTimer = PARA_INTERVAL;
+    this.paraWaves.set(target.key, waves + 1);
+    this.dropParatroopers(target, p);
+  }
+
+  /** A squad of green paratroopers comes down ahead of the player, toward the base being attacked. */
+  private dropParatroopers(target: { key: object; x: number; z: number }, from: THREE.Vector3): void {
+    const toward = new THREE.Vector2(target.x - from.x, target.z - from.z);
+    const away = toward.length() > 1 ? toward.normalize() : new THREE.Vector2(0, 1);
+    // Ahead of the player, pulled back toward them if that would land in the moat.
+    let ahead = Math.min(PARA_AHEAD, Math.hypot(target.x - from.x, target.z - from.z));
+    while (ahead > 0 && inMoat(from.x + away.x * ahead, from.z + away.y * ahead, 3)) ahead -= 10;
+    const x = from.x + away.x * Math.max(ahead, 0);
+    const z = from.z + away.y * Math.max(ahead, 0);
+    this.hud.showCallout('PARATROOPERS INBOUND!', '#9be27a');
+    this.sound.play('uiOpen', { volume: 0.8 });
+    this.paratroopers.drop(x, z, PARA_SQUAD_SIZE, () => {
+      this.impacts.splash(new THREE.Vector3(x, surfaceHeightAt(x, z), z), 0.6);
+      this.troops.addSquad({
+        anchor: new THREE.Vector2(x, z),
+        count: PARA_SQUAD_SIZE,
+        wanderRadius: 10,
+        faction: 'player',
+        color: ARMY_GREEN,
+        holdWhile: null,
+        once: true,
+      });
+    });
+  }
+
   /** A captured base gets a station as the garrison moves in: a jeep station at every other one, a chopper station at the rest. */
   private addBaseStation(base: EnemyBase): Station['kind'] {
     const index = this.enemyBases.indexOf(base);
@@ -2232,6 +2323,7 @@ export class Game {
       enemyBasesLeft: this.enemyBases.filter((b) => !b.isDestroyed).length,
       enemyBasesTotal: this.enemyBases.length,
       nearbyBase: checklist,
+      airSupport: this.airSupport(),
     };
   }
 
@@ -2523,6 +2615,7 @@ export class Game {
     }
     for (const building of this.buildings) building.update(dt);
     this.updateEnemyBases(dt);
+    this.updateAirSupport(dt);
 
     // The war around you: raids on your bases, and your squads going after theirs.
     if (this.warfront) {
