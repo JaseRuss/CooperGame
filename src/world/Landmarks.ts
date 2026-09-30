@@ -91,7 +91,9 @@ function plan(): { sites: Site[]; lakes: Lake[] } {
     if (enemyBases().some((b) => Math.hypot(b.cx - x, b.cz - z) < ENEMY_BASE_MIN_SPACING)) continue;
     if (clearOfEverything(x, z, h, h, 50)) {
       const name = ENEMY_BASE_NAMES[enemyBases().length];
-      sites.push({ kind: 'enemyBase', name, cx: x, cz: z, halfX: h, halfZ: h, rotated: false, flip: rng() < 0.5 ? 1 : -1 });
+      rng(); // (the gate used to face a random way; it now faces Cooper's Base, but the layout's random stream is kept)
+      // The checkpoint gate is on the site's local +Z edge, so it faces the starting base (down the map) when that's +Z.
+      sites.push({ kind: 'enemyBase', name, cx: x, cz: z, halfX: h, halfZ: h, rotated: false, flip: z < FRIENDLY_BASES[0].z ? 1 : -1 });
     }
   }
 

@@ -5,6 +5,8 @@ shipped once so it doesn't ship again.
 
 ## Working in this repo
 
+- When a change is finished and `npm run build` passes, open the PR and **merge it into `main`
+  without asking**, unless the owner says otherwise for that task.
 - `main` auto-deploys to GitHub Pages (`.github/workflows/deploy-pages.yml`), so every push is a
   release. Run `npm run build` (it type-checks with `tsc`, including `noUnusedLocals`) before
   pushing.
