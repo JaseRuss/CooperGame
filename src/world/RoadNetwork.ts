@@ -3,7 +3,7 @@ import { TOWNS, ROAD_WIDTH, type Town } from './TownPlan';
 import { SITES, LAKES, siteEntries, distanceToSite, type Site } from './Landmarks';
 import { inMoat } from './MoatShape';
 import { surfaceHeightAt } from './Terrain';
-import { FRIENDLY_BASES, BASE_RADIUS, JUNGLE, KNIGHTS } from '../core/config';
+import { FRIENDLY_BASES, BASE_RADIUS, JUNGLE, KNIGHTS, MISSION } from '../core/config';
 
 /** Road surface colour: asphalt, packed red-brown earth in the jungle, a dusty cart track for the knights. */
 export const ROAD_COLOR = JUNGLE ? 0x7a5634 : KNIGHTS ? 0x9a7c52 : 0x45484d;
@@ -134,6 +134,29 @@ function connect(a: Node, b: Node, desperate = false): Polyline | null {
   return null;
 }
 
+/**
+ * A road from `home` to a node whose single entrance may face away from it (an enemy base's
+ * checkpoint gate): it swings out to a point in front of the gate, to one side, and comes in
+ * from there, keeping clear of houses if any route allows. Empty if it can't be driven without
+ * crossing a lake, site or the moat.
+ */
+function roadViaGate(home: Node, to: Node): Polyline[] {
+  const gate = to.entries[0];
+  const side = new THREE.Vector2(-gate.dir.y, gate.dir.x);
+  for (const ignoreHouses of [false, true]) {
+    for (const sign of [1, -1]) {
+      const via = gate.point.clone().addScaledVector(gate.dir, 130).addScaledVector(side, sign * 130);
+      const heading = via.clone().sub(new THREE.Vector2(home.x, home.z)).normalize();
+      for (const out of home.entries.slice().sort((p, q) => p.point.distanceTo(via) - q.point.distanceTo(via)).slice(0, 4)) {
+        const first = curveBetween(out, { point: via, dir: heading.clone().negate() });
+        const second = curveBetween({ point: via, dir: heading }, gate);
+        if (!crossesHouses(first, ignoreHouses) && !crossesHouses(second, ignoreHouses)) return [first, second];
+      }
+    }
+  }
+  return [];
+}
+
 /** Plans highways linking every town and the home base (Kruskal MST + a couple of loops). */
 export function planHighways(): Polyline[] {
   const nodes: Node[] = [
@@ -189,6 +212,16 @@ export function planHighways(): Polyline[] {
       if (linked) break;
     }
     if (find(i) !== find(0)) console.warn('No road could be planned to node', i);
+  }
+
+  // The first mission is a drive from Cooper's Base to the enemy bases, so each of them gets a
+  // road of its own from home (the spanning tree above routes most of them through towns).
+  if (MISSION === 1) {
+    nodes.forEach((node, n) => {
+      const site = SITES[n - FRIENDLY_BASES.length - TOWNS.length];
+      if (site?.kind !== 'enemyBase') return;
+      for (const path of roadViaGate(nodes[0], node)) roads.push(path);
+    });
   }
 
   let loops = 0;

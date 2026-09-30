@@ -39,8 +39,10 @@ import { JamCannon } from '../combat/JamCannon';
 import { Moat } from '../world/Moat';
 import { Warfront } from '../world/Warfront';
 import { inMoat, routeRoundMoat, zombieWaypoint } from '../world/MoatShape';
-import { RepairCrates, REPAIR_AMOUNT } from '../world/RepairCrates';
+import { RepairCrates, REPAIR_AMOUNT, type CrateKind } from '../world/RepairCrates';
 import { Paratroopers } from '../world/Paratroopers';
+import { BombCharge } from '../world/BombCharge';
+import type { SquadSpawn } from '../entities/TroopManager';
 import { AAMissiles, AA_SALVO, AA_CAPACITY, type AirTrack } from '../combat/AAMissiles';
 import { AntiAir } from '../combat/AntiAir';
 import { Wrecks, pickWreckGag } from '../combat/Wrecks';
@@ -95,6 +97,9 @@ const PARA_MAX_WAVES = 4; // per base, so the battlefield doesn't fill up
 const PARA_SQUAD_SIZE = 8;
 const PARA_HP = 3; // hits each paratrooper takes before going down (ordinary soldiers take one)
 const PARA_AHEAD = 45; // how far ahead of the player, toward the base, they come down
+const BOMBER_SPEED = 6; // m/s, a jog
+const BOMBER_PLANT_RANGE = 7; // how close to the wall he has to get to stick the charge on
+const BOMB_DAMAGE = 10000; // the charge flattens whatever it's on
 // Final assault on the Fortress.
 const FORTRESS_CHECKLIST_RANGE = 480;
 const ESCORT_TANKS = 8; // form up behind the player
@@ -115,6 +120,17 @@ const CRATE_CHANCE_TANK = 0.35;
 const CRATE_CHANCE_BUNKER = 0.25;
 /** Only the big zombies drop them, or the Fortress would be knee-deep in crates. */
 const CRATE_CHANCE_BRUTE = 0.4;
+/**
+ * When no repair crate drops, the chance of an orange power crate instead (helicopters: whenever
+ * one's repair crate is on its way anyway, a second roll). It doubles everything the player's
+ * guns, rockets and missiles do for DOUBLE_DAMAGE_TIME seconds; another one tops the time up.
+ */
+const POWER_CHANCE_TANK = 0.15;
+const POWER_CHANCE_HELI = 0.3;
+const POWER_CHANCE_BUNKER = 0.12;
+const POWER_CHANCE_BRUTE = 0.1;
+const DOUBLE_DAMAGE_TIME = 20;
+const DOUBLE_DAMAGE_MAX = 40;
 const CHARGE_PER_BUILDING = 0.08;
 const CHARGE_PER_TROOP = 0.02;
 const CHARGE_PER_ENEMY_BASE = 0.5;
@@ -366,6 +382,8 @@ export class Game {
   private jam!: JamCannon;
   private moat!: Moat;
   private crates!: RepairCrates;
+  /** Seconds left of double damage from a power crate. */
+  private damageBoost = 0;
   private aa!: AAMissiles;
   private antiAir!: AntiAir;
   private aaWarning = 0;
@@ -386,6 +404,9 @@ export class Game {
   private paraTimer = PARA_FIRST_DROP;
   private paraWaves = new Map<object, number>();
   private airbaseCleared = false;
+  /** Paratroopers sent with a bomb for one building of a base: one per base, and only once it's gone off. */
+  private bombers: { base: EnemyBase; building: Building; spawn: SquadSpawn; charge: BombCharge | null }[] = [];
+  private bombedBases = new Set<EnemyBase>();
   private buildings: Building[] = [];
   private trees!: TreeManager;
   private enemySlots: EnemySlot[] = [];
@@ -605,7 +626,9 @@ export class Game {
     if (!ZOMBIES) this.warfront = new Warfront(this.troops, this.enemyBases, Math.random);
     this.troops.shielded = (p) => this.sealedInFortress(p);
     this.troops.onZombieDown = (z) => {
-      if (z.zombie === 'brute' && Math.random() < CRATE_CHANCE_BRUTE) this.dropCrate(z.position);
+      if (z.zombie !== 'brute') return;
+      if (Math.random() < CRATE_CHANCE_BRUTE) this.dropCrate(z.position);
+      else if (Math.random() < POWER_CHANCE_BRUTE) this.dropCrate(z.position, 'power');
     };
     this.hud.setWorldMap(
       new WorldMap(
@@ -859,7 +882,11 @@ export class Game {
     else if (gag === 'firework') this.wrecks.firework(tank.root);
     else keepHull = false;
     this.addRocketCharge(CHARGE_PER_TANK);
-    if (tank instanceof HelicopterEnemy || Math.random() < CRATE_CHANCE_TANK) this.dropCrate(tank.position);
+    if (tank instanceof HelicopterEnemy) {
+      this.dropCrate(tank.position);
+      if (Math.random() < POWER_CHANCE_HELI) this.dropCrate(tank.position, 'power');
+    } else if (Math.random() < CRATE_CHANCE_TANK) this.dropCrate(tank.position);
+    else if (Math.random() < POWER_CHANCE_TANK) this.dropCrate(tank.position, 'power');
     this.hitRegistry.unregister(tank.physicsCollider);
     if (!keepHull) this.scene.remove(tank.root);
     tank.dispose();
@@ -988,13 +1015,21 @@ export class Game {
     this.impacts.addSmokeSource(building.groundCenter, footprint * 0.6);
     if (attacker === 'player') this.addRocketCharge(this.isBunker(building) ? CHARGE_PER_BUNKER : CHARGE_PER_BUILDING);
     if (building.fuel) this.fuelBlast(building, attacker);
-    if (this.isBunker(building) && Math.random() < CRATE_CHANCE_BUNKER) this.dropCrate(building.center);
+    if (this.isBunker(building)) {
+      if (Math.random() < CRATE_CHANCE_BUNKER) this.dropCrate(building.center);
+      else if (Math.random() < POWER_CHANCE_BUNKER) this.dropCrate(building.center, 'power');
+    }
   }
 
-  /** A repair crate pops out beside a wreck (or falls from a helicopter) for the player to pick up. */
-  private dropCrate(at: THREE.Vector3): void {
+  /** A crate pops out beside a wreck (or falls from a helicopter) for the player to pick up. */
+  private dropCrate(at: THREE.Vector3, kind: CrateKind = 'repair'): void {
     const a = Math.random() * Math.PI * 2;
-    this.crates.drop(at.clone().add(new THREE.Vector3(Math.cos(a) * 3, 1, Math.sin(a) * 3)));
+    this.crates.drop(at.clone().add(new THREE.Vector3(Math.cos(a) * 3, 1, Math.sin(a) * 3)), kind);
+  }
+
+  /** What the player's shots, rockets and missiles are multiplied by (2 with a power crate). */
+  private get playerDamageScale(): number {
+    return this.damageBoost > 0 ? 2 : 1;
   }
 
   /** A fuel tank goes up: a ring of fireballs and a blast that can set its neighbours off too. */
@@ -1051,7 +1086,7 @@ export class Game {
       shot.origin,
       shot.direction,
       tank.muzzleSpeed,
-      tank.shellDamage,
+      tank === this.player ? tank.shellDamage * this.playerDamageScale : tank.shellDamage,
       tank.physicsCollider,
       (point, result) => {
         if (result.collapsedBuilding) this.collapseBuilding(result.collapsedBuilding, tank.faction);
@@ -1149,7 +1184,7 @@ export class Game {
       shot.origin,
       shot.direction,
       CHOPPER_GUN_SPEED,
-      CHOPPER_GUN_DAMAGE,
+      CHOPPER_GUN_DAMAGE * (byPlayer ? this.playerDamageScale : 1),
       shooter,
       (point, result) => {
         if (result.collapsedBuilding) this.collapseBuilding(result.collapsedBuilding, 'player');
@@ -1410,6 +1445,7 @@ export class Game {
 
   /** Big blast: wrecks tanks, buildings and troops around the impact (the rocket; smaller for the jeep's and chopper's missiles). */
   private rocketBlast(point: THREE.Vector3, damage = ROCKET_DAMAGE, radius = ROCKET_BLAST_RADIUS, size = 3.4): void {
+    damage *= this.playerDamageScale;
     this.explode(point, size, 'player');
     this.impacts.addSmokeSource(point.clone(), size * 0.9, 25);
 
@@ -1723,6 +1759,7 @@ export class Game {
    */
   private updateAirSupport(dt: number): void {
     this.paratroopers.update(dt);
+    this.updateBombers(dt);
     const air = this.airSupport();
     if (!air?.ready) return;
     if (!this.airbaseCleared) {
@@ -1769,9 +1806,12 @@ export class Game {
     while (ahead > 0 && inMoat(from.x + away.x * ahead, from.z + away.y * ahead, 3)) ahead -= 10;
     const x = from.x + away.x * Math.max(ahead, 0);
     const z = from.z + away.y * Math.max(ahead, 0);
-    this.hud.showCallout('PARATROOPERS INBOUND!', '#9be27a');
+    // One of the drop carries a bomb for a building of the base, if none has been blown there yet.
+    const base = this.enemyBases.find((b) => b === target.key);
+    const bombTarget = base && !this.bombedBases.has(base) && !this.bombers.some((b) => b.base === base) ? this.bombTarget(base) : null;
+    this.hud.showCallout(bombTarget ? 'PARATROOPERS INBOUND! ONE HAS A BOMB' : 'PARATROOPERS INBOUND!', '#9be27a');
     this.sound.play('uiOpen', { volume: 0.8 });
-    this.paratroopers.drop(x, z, PARA_SQUAD_SIZE, () => {
+    this.paratroopers.drop(x, z, PARA_SQUAD_SIZE + (bombTarget ? 1 : 0), () => {
       this.impacts.splash(new THREE.Vector3(x, surfaceHeightAt(x, z), z), 0.6);
       this.troops.addSquad({
         anchor: new THREE.Vector2(x, z),
@@ -1783,7 +1823,84 @@ export class Game {
         once: true,
         hp: PARA_HP,
       });
+      if (base && bombTarget) this.sendBomber(base, bombTarget, x, z);
     });
+  }
+
+  /** The building a bomber should go for: the toughest one still standing (the factory, usually). */
+  private bombTarget(base: EnemyBase): Building | null {
+    let best: Building | null = null;
+    for (const b of base.buildings) {
+      if (b.destroyed || b.locked || b.fuel) continue;
+      if (!best || b.maxHealth > best.maxHealth) best = b;
+    }
+    return best;
+  }
+
+  /** One paratrooper jogs from the landing spot to the wall of `building` to plant a bomb. */
+  private sendBomber(base: EnemyBase, building: Building, x: number, z: number): void {
+    if (building.destroyed) return;
+    // He stops at the wall on the side he's coming from, not in the middle of the building.
+    const edge = new THREE.Vector2(x - building.center.x, z - building.center.z);
+    const reach = Math.max(building.halfExtents.x, building.halfExtents.z) + 2;
+    edge.setLength(Math.min(edge.length(), reach));
+    const spawn: SquadSpawn = {
+      anchor: new THREE.Vector2(x, z),
+      count: 1,
+      wanderRadius: 2,
+      faction: 'player',
+      color: ARMY_GREEN,
+      holdWhile: null,
+      once: true,
+      hp: PARA_HP,
+      march: { route: [new THREE.Vector2(building.center.x + edge.x, building.center.z + edge.y)], speed: BOMBER_SPEED, next: 0, arrived: false },
+    };
+    this.troops.addSquad(spawn);
+    this.bombers.push({ base, building, spawn, charge: null });
+  }
+
+  /** Bombers walk up to their building, plant the charge and get clear; it goes off when the fuse is out. */
+  private updateBombers(dt: number): void {
+    for (let i = this.bombers.length - 1; i >= 0; i--) {
+      const b = this.bombers[i];
+      if (b.building.destroyed) {
+        // Shot down by someone else first: the charge (if any) is wasted.
+        b.charge?.remove();
+        this.bombers.splice(i, 1);
+        continue;
+      }
+      if (!b.charge) {
+        const men = this.troops.soldiersOf(b.spawn);
+        if (men.length === 0) {
+          this.bombers.splice(i, 1); // the bomber was shot before he got there
+          this.hud.showCallout('THE BOMBER WAS SHOT DOWN', '#ff8a7a');
+          continue;
+        }
+        const man = men[0];
+        const box = new THREE.Box3().setFromCenterAndSize(b.building.center, b.building.halfExtents.clone().multiplyScalar(2));
+        const close = box.clampPoint(man.position, new THREE.Vector3()).setY(man.position.y).distanceTo(man.position) < BOMBER_PLANT_RANGE;
+        if (!(b.spawn.march?.arrived || close)) continue;
+        b.charge = new BombCharge(this.scene, man.position.clone());
+        this.hud.showCallout(`BOMB PLANTED ON THE ${b.base.title.toUpperCase()} ${this.buildingLabel(b.base, b.building)}!`, '#ffd24a');
+        this.sound.play('clang', { at: man.position, volume: 0.7 });
+        continue;
+      }
+      if (!b.charge.update(dt)) continue;
+      const at = b.building.center.clone();
+      this.bombers.splice(i, 1);
+      this.bombedBases.add(b.base);
+      b.building.takeDamage(BOMB_DAMAGE);
+      this.cameraRig.addShake(0.4);
+      this.sound.play('boom', { at, volume: 1 });
+      this.collapseBuilding(b.building, 'player');
+      this.hud.showCallout('BOOM! THE BOMBER BLEW THE BUILDING UP', '#ffd24a');
+    }
+  }
+
+  /** What a building in a base is called (its objective's label), or "BUILDING". */
+  private buildingLabel(base: EnemyBase, building: Building): string {
+    const o = base.objectives.find((ob) => ob.position.distanceTo(building.center) < 0.01);
+    return o ? o.label.toUpperCase() : 'BUILDING';
   }
 
   /** A captured base gets a station as the garrison moves in: a jeep station at every other one, a chopper station at the rest. */
@@ -2495,6 +2612,7 @@ export class Game {
       health: this.player.health,
       maxHealth: this.player.maxHealth,
       reloadFraction: vehicle !== 'tank' ? 0 : this.player.fireCooldown / this.player.fireInterval,
+      damageBoost: this.damageBoost,
       ride:
         vehicle !== 'tank'
           ? {
@@ -2588,6 +2706,7 @@ export class Game {
     const inSequence = this.rocketSeq !== null || this.ending !== null || (this.tanker?.cinematic ?? false);
     // On the bomb tanker the rig does the driving: the player only aims and fires.
     const riding = this.tanker?.riding ?? false;
+    this.player.setDeckMount(riding);
     const input = inSequence
       ? { ...rawInput, throttle: 0, steer: 0, moveX: 0, moveY: 0, aimYawDelta: 0, aimPitchDelta: 0, firing: false, jamFiring: false }
       : riding
@@ -2854,10 +2973,19 @@ export class Game {
     }
     if (insideBase && !besieged) this.player.heal(BASE_HEAL_RATE * dt);
     const crates = this.crates.update(dt, this.player);
-    if (crates > 0) {
-      this.player.heal(REPAIR_AMOUNT * crates);
-      this.hud.showCallout(`+${REPAIR_AMOUNT * crates} REPAIR!`, '#8fe07a');
+    if (crates.repair > 0) {
+      this.player.heal(REPAIR_AMOUNT * crates.repair);
+      this.hud.showCallout(`+${REPAIR_AMOUNT * crates.repair} REPAIR!`, '#8fe07a');
       this.sound.play('uiConfirm', { volume: 0.8 });
+    }
+    if (crates.power > 0) {
+      this.damageBoost = Math.min(DOUBLE_DAMAGE_MAX, this.damageBoost + DOUBLE_DAMAGE_TIME * crates.power);
+      this.hud.showCallout(`DOUBLE DAMAGE! ${Math.ceil(this.damageBoost)}s`, '#ff9a3d');
+      this.sound.play('uiConfirm', { volume: 0.9, rate: 1.3 });
+      this.cameraRig.addShake(0.2);
+    } else if (this.damageBoost > 0) {
+      this.damageBoost = Math.max(0, this.damageBoost - dt);
+      if (this.damageBoost === 0) this.hud.showCallout('DOUBLE DAMAGE WORE OFF', '#eef3f8');
     }
     const repairingAt = insideBase && !besieged && this.player.health < this.player.maxHealth ? home : null;
     for (const fb of this.familyBases) fb.camp.update(dt, fb.info === repairingAt, this.camera.position, this.player.position);

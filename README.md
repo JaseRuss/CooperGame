@@ -162,6 +162,10 @@ sound on.
   the big zombies). Drive over one, or fly low over it in the chopper, to patch
   up 25 hull points. It only gets picked up if you're damaged, and it glows so
   you can spot it, then blinks and vanishes after 30 seconds.
+- **Power crates**: an orange crate with a yellow lightning bolt, dropped now and
+  then by knocked-out tanks, bunkers, big zombies and (often) helicopters. Drive
+  over one for **double damage** from your guns, rockets and missiles for 20
+  seconds (another crate tops it up, to 40). The HUD counts it down.
 - The **jam cannon** sprays a stream of strawberry jam that lands in a line along
   your aim; sweep the turret to hose down a whole squad. The jam drips as it
   flies, so anything under its path gets it too, even if you shoot over their
@@ -232,7 +236,9 @@ don't open when the bases fall. You get in by building a **bomb tanker** and dri
   across the whole map to the Fortress while you aim and fire the tank's gun. The homing
   rocket fires without the rocket cam up there, so you never lose sight of the rig, and it
   reloads in 12 seconds instead of 75. Raider jeeps
-  (tan and blue) come at it, shooting and some ramming, explosions go off along the road, and
+  (tan and blue) come at it, shooting and some ramming (a rammer bounces off, swerves out wide
+  for a few seconds, which gives you a clear shot, then has another go; the third ram wrecks
+  it). Up on the deck your gun dips far enough to hit jeeps alongside. Explosions go off along the road, and
   the rig bowls over anything in the way: soldiers, enemy tanks and trees. Nothing can stop the
   rig, so there's no game over.
 - **The bomb.** At the Fortress gate the rig blows the gates off and everyone bails out. The

@@ -76,6 +76,11 @@ const CHOPPER_GUN_INTERVAL = 0.1;
 const CHOPPER_GUN_SPREAD = 0.02;
 const CHOPPER_PITCH_MIN = -1.2;
 const CHOPPER_START_PITCH = -0.35;
+/**
+ * Riding the bomb tanker, the gun sits on a deck cradle that dips far enough to hit raiders
+ * alongside (the deck is about 4 m up, so a jeep 6 m out is some 0.6 rad below level).
+ */
+const DECK_PITCH_MIN = -0.75;
 /** It can't fly off the edge of the map: it stops this far inside. */
 const CHOPPER_EDGE = EDGE_LIMIT;
 /** The model's cabin sits over the collider, with the skids on the ground under it. */
@@ -154,6 +159,7 @@ export class PlayerTank extends Tank {
   private podSide = 0;
   /** How far the tank's (and jeep's) gun can dip, put back after flying. */
   private readonly groundPitchMin = this.barrelPitchMin;
+  private deckMounted = false;
 
   constructor(
     world: RAPIER.World,
@@ -384,6 +390,14 @@ export class PlayerTank extends Tank {
     this.root.position.copy(position);
   }
 
+  /** Puts the gun on (or takes it off) the bomb tanker's deck cradle, which lets it aim low. */
+  setDeckMount(on: boolean): void {
+    if (on === this.deckMounted || this.isChopper) return;
+    this.deckMounted = on;
+    this.barrelPitchMin = on ? DECK_PITCH_MIN : this.groundPitchMin;
+    this.aim(0, 0); // clamps the aim into the new limits
+  }
+
   /** Time's up: bring the chopper down onto whatever is below. */
   beginLanding(): void {
     if (this.isChopper) this.landingMode = true;
@@ -442,6 +456,7 @@ export class PlayerTank extends Tank {
     this.lastJeepPosition.copy(this.position);
     // The chin gun can look well down at the ground (and starts off looking at it); the tank's gun can't.
     this.barrelPitchMin = chopper ? CHOPPER_PITCH_MIN : this.groundPitchMin;
+    this.deckMounted = false;
     this.aim(0, chopper ? CHOPPER_START_PITCH - this.barrelPitch : 0); // also clamps the aim into the new limits
     this.flyVelocity.set(0, 0, 0);
     this.rotorSpeed = 0;
