@@ -364,11 +364,6 @@ export class Tank {
     this.turretPivot.add(figure);
   }
 
-  /** A crewman in the given army's colours: the commander figure, for standing a gun post on another vehicle. */
-  static crewman(color: number): THREE.Group {
-    return Tank.createCommander(color);
-  }
-
   /** The commander figure (belt at y 0.9 × its scale, facing -Z), in the given army's colours. */
   protected static createCommander(color: number): THREE.Group {
     Tank.commanderShapes ??= Tank.buildCommander().buildGeometries();

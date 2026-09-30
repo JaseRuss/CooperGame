@@ -105,6 +105,8 @@ const FUEL_BLAST_DAMAGE = 120;
 
 // Homing rocket: fills on a timer, faster when the player wrecks things.
 const ROCKET_RECHARGE_TIME = 75;
+/** Riding the bomb tanker the rocket fires without the rocket cam and reloads far faster. */
+const ROCKET_RIDE_RECHARGE_TIME = 12;
 const CHARGE_PER_TANK = 0.25;
 const CHARGE_PER_BUNKER = 0.2;
 // Repair crates: the chance each knocked-out enemy leaves one (helicopters always do).
@@ -427,6 +429,8 @@ export class Game {
   private rocketJumpCharge = 1;
   private bikeVolleyPending = false;
   private missiles: HomingRocket[] = [];
+  /** Full-size rockets fired from the bomb tanker's deck, which fly without the rocket cam. */
+  private rideRockets: HomingRocket[] = [];
   /** The night mission's headlight, which the chopper points down at the ground. */
   private headlight: THREE.SpotLight | null = null;
   /** Seconds until the "Fortress is locked" callout can show again. */
@@ -1325,6 +1329,11 @@ export class Game {
     this.sound.play('launch', { volume: 0.75, fadeAfter: 1.4 });
     this.rocketCharge = 0;
     this.player.setRocketReady(false);
+    // On the bomb tanker the camera stays with the rig: cutting away mid-ride is disorienting.
+    if (this.tanker?.riding) {
+      this.rideRockets.push(rocket);
+      return;
+    }
     this.player.invulnerable = true;
     this.rocketSeq = { rocket, phase: 'flight', timer: 0, point: new THREE.Vector3(), orbit: 0 };
   }
@@ -1557,6 +1566,12 @@ export class Game {
       if (!hit) continue;
       this.rocketBlast(hit, MISSILE_DAMAGE, MISSILE_RADIUS, MISSILE_BLAST);
       this.missiles.splice(i, 1);
+    }
+    for (let i = this.rideRockets.length - 1; i >= 0; i--) {
+      const hit = this.rideRockets[i].update(dt, this.world, (p) => this.impacts.trailPuff(p));
+      if (!hit) continue;
+      this.rocketBlast(hit);
+      this.rideRockets.splice(i, 1);
     }
   }
 
@@ -2599,7 +2614,7 @@ export class Game {
       this.megaJamCharge = Math.min(1, this.megaJamCharge + dt / MEGA_JAM_RECHARGE);
       // A buddy rolls in by themselves as soon as the meter's full.
       if (this.buddyCharge >= 1 && this.buddies.length < MAX_BUDDIES && !this.tanker?.active) this.spawnBuddy();
-      this.addRocketCharge(dt / ROCKET_RECHARGE_TIME);
+      this.addRocketCharge(dt / (riding ? ROCKET_RIDE_RECHARGE_TIME : ROCKET_RECHARGE_TIME));
       this.buddyCharge = Math.min(1, this.buddyCharge + dt / BUDDY_RECHARGE_TIME);
     } else if (this.ending && input.mapTogglePressed) {
       this.hud.toggleBigMap(); // the level select, from the end screen

@@ -628,7 +628,7 @@ export class TankerRun {
       const gunAt = this.rig.gunPosition(g);
       if (shooting) {
         for (const raid of this.raiders) {
-          if (raid.jeep.isDestroyed) continue;
+          if (raid.jeep.isDestroyed || !this.rig.covers(g, raid.jeep.position)) continue;
           const d = raid.jeep.position.distanceTo(gunAt);
           if (d < bestD) {
             bestD = d;
