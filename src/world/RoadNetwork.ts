@@ -2,8 +2,8 @@ import * as THREE from 'three';
 import { TOWNS, ROAD_WIDTH, type Town } from './TownPlan';
 import { SITES, LAKES, siteEntries, distanceToSite, type Site } from './Landmarks';
 import { inMoat } from './MoatShape';
-import { surfaceHeightAt } from './Terrain';
-import { FRIENDLY_BASES, BASE_RADIUS, JUNGLE, KNIGHTS, MISSION } from '../core/config';
+import { surfaceHeightAt, heightAt } from './Terrain';
+import { FRIENDLY_BASES, BASE_RADIUS, JUNGLE, KNIGHTS, MISSION, WORLD_HALF } from '../core/config';
 
 /** Road surface colour: asphalt, packed red-brown earth in the jungle, a dusty cart track for the knights. */
 export const ROAD_COLOR = JUNGLE ? 0x7a5634 : KNIGHTS ? 0x9a7c52 : 0x45484d;
@@ -134,27 +134,250 @@ function connect(a: Node, b: Node, desperate = false): Polyline | null {
   return null;
 }
 
-/**
- * A road from `home` to a node whose single entrance may face away from it (an enemy base's
- * checkpoint gate): it swings out to a point in front of the gate, to one side, and comes in
- * from there, keeping clear of houses if any route allows. Empty if it can't be driven without
- * crossing a lake, site or the moat.
- */
-function roadViaGate(home: Node, to: Node): Polyline[] {
-  const gate = to.entries[0];
-  const side = new THREE.Vector2(-gate.dir.y, gate.dir.x);
-  for (const ignoreHouses of [false, true]) {
-    for (const sign of [1, -1]) {
-      const via = gate.point.clone().addScaledVector(gate.dir, 130).addScaledVector(side, sign * 130);
-      const heading = via.clone().sub(new THREE.Vector2(home.x, home.z)).normalize();
-      for (const out of home.entries.slice().sort((p, q) => p.point.distanceTo(via) - q.point.distanceTo(via)).slice(0, 4)) {
-        const first = curveBetween(out, { point: via, dir: heading.clone().negate() });
-        const second = curveBetween({ point: via, dir: heading }, gate);
-        if (!crossesHouses(first, ignoreHouses) && !crossesHouses(second, ignoreHouses)) return [first, second];
-      }
+// ---------- grid roads (mission 1: home to each enemy base) ----------
+
+/** Lattice lines are at least this far apart unless something (a town street, a gate) sits on one. */
+const GRID_STEP = 100;
+const GRID_SAMPLE = 8;
+const GRID_TURN_COST = 45;
+/** Metres of extra cost for each sample on ground steeper than this (rise over run). */
+const GRID_SLOPE_LIMIT = 0.085;
+const GRID_SLOPE_COST = 70;
+const GRID_SHARED_DISCOUNT = 0.3;
+const GRID_CORNER_RADIUS = 24;
+const GRID_CLEAR_LAKE = 28;
+const GRID_CLEAR_SITE = 22;
+const GRID_CLEAR_MOAT = 32;
+const GRID_CLEAR_BASE = BASE_RADIUS + 24;
+const GRID_GATE_LEAD = 45;
+
+/** True when (x, z) is in a town (with a little margin) and a road there at this x or z isn't on one of its streets. */
+function offStreets(x: number, z: number, vertical: boolean): boolean {
+  for (const t of TOWNS) {
+    if (x < t.minX - 6 || x > t.maxX + 6 || z < t.minZ - 6 || z > t.maxZ + 6) continue;
+    const lines = vertical ? t.crossXs : t.streetZs;
+    if (!lines.some((l) => Math.abs((vertical ? x : z) - l) < 1)) return true;
+  }
+  return false;
+}
+
+/** Cost of driving the straight run from (x0, z0) to (x1, z1), or Infinity when it can't be built there. */
+function gridRunCost(x0: number, z0: number, x1: number, z1: number): number {
+  const vertical = x0 === x1;
+  const length = Math.abs(vertical ? z1 - z0 : x1 - x0);
+  const n = Math.max(1, Math.ceil(length / GRID_SAMPLE));
+  let steep = 0;
+  let prev = heightAt(x0, z0);
+  for (let i = 0; i <= n; i++) {
+    const x = x0 + ((x1 - x0) * i) / n;
+    const z = z0 + ((z1 - z0) * i) / n;
+    if (Math.abs(x) > WORLD_HALF - 90 || Math.abs(z) > WORLD_HALF - 90) return Infinity;
+    if (LAKES.some((l) => Math.hypot(x - l.cx, z - l.cz) < l.radius + GRID_CLEAR_LAKE)) return Infinity;
+    if (SITES.some((s) => distanceToSite(s, x, z) < GRID_CLEAR_SITE)) return Infinity;
+    if (inMoat(x, z, GRID_CLEAR_MOAT)) return Infinity;
+    if (FRIENDLY_BASES.some((b, k) => k > 0 && Math.hypot(x - b.x, z - b.z) < GRID_CLEAR_BASE)) return Infinity;
+    if (offStreets(x, z, vertical)) return Infinity;
+    if (i > 0) {
+      const h = heightAt(x, z);
+      if (Math.abs(h - prev) / (length / n) > GRID_SLOPE_LIMIT) steep++;
+      prev = h;
     }
   }
-  return [];
+  return length + steep * GRID_SLOPE_COST;
+}
+
+/** Sorted lattice lines: an even spacing, with the coordinates that have to be hit (a gate, a town street) kept exactly. */
+function gridLines(required: number[], low: number, high: number): number[] {
+  const out = required.slice();
+  for (let v = Math.ceil(low / GRID_STEP) * GRID_STEP; v <= high; v += GRID_STEP) {
+    if (!required.some((r) => Math.abs(r - v) < 28)) out.push(v);
+  }
+  return out.sort((a, b) => a - b);
+}
+
+/** Min-heap of [cost, state] pairs, enough for one search. */
+class SearchQueue {
+  private readonly items: [number, number][] = [];
+  get size(): number {
+    return this.items.length;
+  }
+  push(cost: number, state: number): void {
+    const a = this.items;
+    a.push([cost, state]);
+    let i = a.length - 1;
+    while (i > 0) {
+      const p = (i - 1) >> 1;
+      if (a[p][0] <= a[i][0]) break;
+      [a[p], a[i]] = [a[i], a[p]];
+      i = p;
+    }
+  }
+  pop(): [number, number] {
+    const a = this.items;
+    const top = a[0];
+    const last = a.pop() as [number, number];
+    if (a.length > 0) {
+      a[0] = last;
+      let i = 0;
+      for (;;) {
+        const l = 2 * i + 1;
+        const r = l + 1;
+        let m = i;
+        if (l < a.length && a[l][0] < a[m][0]) m = l;
+        if (r < a.length && a[r][0] < a[m][0]) m = r;
+        if (m === i) break;
+        [a[m], a[i]] = [a[i], a[m]];
+        i = m;
+      }
+    }
+    return top;
+  }
+}
+
+/** Corners of a polyline with its collinear points dropped. */
+function straighten(points: THREE.Vector2[]): THREE.Vector2[] {
+  const out = [points[0]];
+  for (let i = 1; i < points.length - 1; i++) {
+    const a = out[out.length - 1];
+    const b = points[i];
+    const c = points[i + 1];
+    if ((b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x) !== 0) out.push(b);
+  }
+  out.push(points[points.length - 1]);
+  return out;
+}
+
+/** The corners joined by straights sampled every few metres, with each right angle rounded off. */
+function roundedPolyline(corners: THREE.Vector2[]): Polyline {
+  const pts: Polyline = [corners[0].clone()];
+  const lineTo = (to: THREE.Vector2) => {
+    const from = pts[pts.length - 1];
+    const steps = Math.max(1, Math.ceil(from.distanceTo(to) / SAMPLE_STEP));
+    for (let i = 1; i <= steps; i++) pts.push(from.clone().lerp(to, i / steps));
+  };
+  for (let i = 1; i < corners.length - 1; i++) {
+    const a = corners[i - 1];
+    const b = corners[i];
+    const c = corners[i + 1];
+    const r = Math.min(GRID_CORNER_RADIUS, a.distanceTo(b) / 2, b.distanceTo(c) / 2);
+    const p1 = b.clone().addScaledVector(a.clone().sub(b).normalize(), r);
+    const p2 = b.clone().addScaledVector(c.clone().sub(b).normalize(), r);
+    lineTo(p1);
+    for (let k = 1; k <= 6; k++) {
+      const t = k / 6;
+      const u = 1 - t;
+      pts.push(new THREE.Vector2(u * u * p1.x + 2 * u * t * b.x + t * t * p2.x, u * u * p1.y + 2 * u * t * b.y + t * t * p2.y));
+    }
+  }
+  lineTo(corners[corners.length - 1]);
+  return pts;
+}
+
+/**
+ * Roads from Cooper's Base to each enemy base's gate that run only north-south and east-west, like
+ * a street grid. They keep off lakes, other sites, the moat and steep ground, run along the
+ * streets of any town they have to cross (never through its houses), and share stretches of road
+ * with each other where they can. Returns the road for each base (by its index in SITES), or null
+ * when none could be found.
+ */
+function planGridRoads(): Map<number, Polyline> {
+  const result = new Map<number, Polyline>();
+  const home = FRIENDLY_BASES[0];
+  const start = new THREE.Vector2(home.x, home.z - (BASE_RADIUS + 22));
+  const gates = SITES.flatMap((site, index) => {
+    if (site.kind !== 'enemyBase') return [];
+    const gate = siteEntries(site)[0];
+    const dir = new THREE.Vector2(gate.dirX, gate.dirZ).normalize();
+    const point = new THREE.Vector2(gate.x, gate.z);
+    return [{ index, point, dir, lead: point.clone().addScaledVector(dir, GRID_GATE_LEAD) }];
+  }).filter((g) => Math.abs(g.dir.x) < 1e-6 || Math.abs(g.dir.y) < 1e-6);
+  if (gates.length === 0) return result;
+
+  const limit = WORLD_HALF - 120;
+  const xs = gridLines([start.x, ...gates.map((g) => g.lead.x), ...TOWNS.flatMap((t) => t.crossXs)], -limit, limit);
+  const zs = gridLines([start.y, ...gates.map((g) => g.lead.y), ...TOWNS.flatMap((t) => t.streetZs)], -limit, limit);
+  const nearest = (lines: number[], v: number) => lines.reduce((best, l, i) => (Math.abs(l - v) < Math.abs(lines[best] - v) ? i : best), 0);
+  const used = new Set<string>();
+  const key = (xi: number, zi: number, xj: number, zj: number) => `${Math.min(xi, xj)},${Math.min(zi, zj)},${Math.max(xi, xj)},${Math.max(zi, zj)}`;
+  const runCache = new Map<string, number>();
+  const runCost = (xi: number, zi: number, xj: number, zj: number) => {
+    const k = key(xi, zi, xj, zj);
+    let c = runCache.get(k);
+    if (c === undefined) {
+      c = gridRunCost(xs[xi], zs[zi], xs[xj], zs[zj]);
+      runCache.set(k, c);
+    }
+    return c;
+  };
+
+  const nx = xs.length;
+  const nz = zs.length;
+  const state = (xi: number, zi: number, dir: number) => (zi * nx + xi) * 3 + dir; // dir: 0 east-west, 1 north-south, 2 start
+  const startX = nearest(xs, start.x);
+  const startZ = nearest(zs, start.y);
+  // Nearest bases first, so the later ones can reuse their roads.
+  const order = gates.slice().sort((a, b) => a.point.distanceTo(start) - b.point.distanceTo(start));
+  for (const gate of order) {
+    const goalX = nearest(xs, gate.lead.x);
+    const goalZ = nearest(zs, gate.lead.y);
+    const cost = new Float64Array(nx * nz * 3).fill(Infinity);
+    const from = new Int32Array(nx * nz * 3).fill(-1);
+    const queue = new SearchQueue();
+    cost[state(startX, startZ, 2)] = 0;
+    queue.push(0, state(startX, startZ, 2));
+    let goalState = -1;
+    while (queue.size > 0) {
+      const [c, s] = queue.pop();
+      if (c > cost[s]) continue;
+      const dir = s % 3;
+      const cell = (s - dir) / 3;
+      const xi = cell % nx;
+      const zi = (cell - xi) / nx;
+      if (xi === goalX && zi === goalZ) {
+        goalState = s;
+        break;
+      }
+      for (const [dxi, dzi] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const xj = xi + dxi;
+        const zj = zi + dzi;
+        if (xj < 0 || xj >= nx || zj < 0 || zj >= nz) continue;
+        const run = runCost(xi, zi, xj, zj);
+        if (!isFinite(run)) continue;
+        const heading = dxi !== 0 ? 0 : 1;
+        const length = Math.abs(xs[xj] - xs[xi]) + Math.abs(zs[zj] - zs[zi]);
+        const stepCost = used.has(key(xi, zi, xj, zj)) ? Math.min(run, length * GRID_SHARED_DISCOUNT) : run;
+        const next = c + stepCost + (dir !== 2 && dir !== heading ? GRID_TURN_COST : 0);
+        const t = state(xj, zj, heading);
+        if (next < cost[t]) {
+          cost[t] = next;
+          from[t] = s;
+          queue.push(next, t);
+        }
+      }
+    }
+    if (goalState < 0) continue;
+    const cells: THREE.Vector2[] = [];
+    for (let s = goalState; s >= 0; s = from[s]) {
+      const cell = (s - (s % 3)) / 3;
+      const xi = cell % nx;
+      const zi = (cell - xi) / nx;
+      cells.push(new THREE.Vector2(xs[xi], zs[zi]));
+      if (from[s] >= 0) {
+        const pc = (from[s] - (from[s] % 3)) / 3;
+        used.add(key(xi, zi, pc % nx, (pc - (pc % nx)) / nx));
+      }
+    }
+    cells.reverse();
+    // From inside home's wall to the lattice, along the lattice, then the straight run into the gate.
+    const corners = straighten([
+      new THREE.Vector2(start.x, start.y + (BASE_RADIUS + 22) - BASE_RADIUS * 0.85 + JOIN_OVERLAP),
+      ...cells,
+      gate.lead,
+      gate.point.clone().addScaledVector(gate.dir, -JOIN_OVERLAP),
+    ]);
+    result.set(gate.index, roundedPolyline(corners));
+  }
+  return result;
 }
 
 /** Plans highways linking every town and the home base (Kruskal MST + a couple of loops). */
@@ -177,6 +400,15 @@ export function planHighways(): Polyline[] {
   const find = (i: number): number => (parent[i] === i ? i : (parent[i] = find(parent[i])));
 
   const roads: Polyline[] = [];
+  // The first mission is a drive from Cooper's Base to the enemy bases, so each of them gets a
+  // gridded road of its own straight from home; the spanning tree only links the rest.
+  if (MISSION === 1) {
+    for (const [siteIndex, road] of planGridRoads()) {
+      roads.push(road);
+      parent[find(FRIENDLY_BASES.length + TOWNS.length + siteIndex)] = find(0);
+    }
+  }
+
   const unused: typeof edges = [];
   for (const e of edges) {
     const ri = find(e.i);
@@ -212,16 +444,6 @@ export function planHighways(): Polyline[] {
       if (linked) break;
     }
     if (find(i) !== find(0)) console.warn('No road could be planned to node', i);
-  }
-
-  // The first mission is a drive from Cooper's Base to the enemy bases, so each of them gets a
-  // road of its own from home (the spanning tree above routes most of them through towns).
-  if (MISSION === 1) {
-    nodes.forEach((node, n) => {
-      const site = SITES[n - FRIENDLY_BASES.length - TOWNS.length];
-      if (site?.kind !== 'enemyBase') return;
-      for (const path of roadViaGate(nodes[0], node)) roads.push(path);
-    });
   }
 
   let loops = 0;
