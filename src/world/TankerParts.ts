@@ -6,9 +6,8 @@ import { surfaceHeightAt } from './Terrain';
 
 /** Drive within this far of a part (metres, across the ground) to pick it up. */
 const PICKUP_RADIUS = 8;
-/** The chopper can scoop one up from a little further, flying low over it. */
+/** The chopper winches one up from a little further, from any height. */
 const CHOPPER_RADIUS = 14;
-const CHOPPER_HEIGHT = 10;
 const HOVER = 1.3;
 const BEAM_HEIGHT = 60;
 /** A part drops in from this high. */
@@ -25,7 +24,7 @@ export interface PartCollector {
 }
 
 /** A chunky toy version of each part, standing on a yellow pallet, about 2.5 m across. */
-function partModel(index: number): THREE.Group {
+export function partModel(index: number): THREE.Group {
   const steel = plastic(0x5b5f58);
   const green = plastic(ARMY_GREEN);
   const yellow = plastic(0xe8b824);
@@ -145,7 +144,7 @@ export class TankerParts {
       p.body.position.y = HOVER * 0.4 + p.fall + (p.fall > 0 ? 0 : Math.sin(this.time * 2 + i) * 0.25);
       if (!who || p.fall > 0) return;
       const across = Math.hypot(who.position.x - p.x, who.position.z - p.z);
-      const reach = who.isChopper && who.heightAboveGround > 2 ? across < CHOPPER_RADIUS && who.position.y - p.groundY < CHOPPER_HEIGHT : across < PICKUP_RADIUS && Math.abs(who.position.y - p.groundY) < 6;
+      const reach = who.isChopper && who.heightAboveGround > 2 ? across < CHOPPER_RADIUS : across < PICKUP_RADIUS && Math.abs(who.position.y - p.groundY) < 6;
       if (!reach) return;
       p.taken = true;
       this.scene.remove(p.root);

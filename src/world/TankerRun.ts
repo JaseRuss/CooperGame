@@ -7,6 +7,7 @@ import type { Building } from './Building';
 import type { Fortress } from './Fortress';
 import { EnemyJeep } from '../entities/EnemyJeep';
 import { TankerParts } from './TankerParts';
+import { PartCargo } from './PartCargo';
 import { TankerRig, TANKER_PARTS, RIG_DECK } from './TankerRig';
 import { planTankerRoute, type RouteObstacles } from './TankerRoute';
 import { siteToWorld } from './Landmarks';
@@ -83,7 +84,7 @@ interface SetPiece {
 
 const CRUISE_SPEED = 24;
 const ACCELERATION = 7;
-/** Fitting a part or all of them at the rig: how close the player has to be. */
+/** Fitting a part or all of them at the rig: how close the player has to be (across the ground, so the chopper can drop them off from cruising height). */
 const DELIVER_RADIUS = 48;
 const ASSEMBLE_TIME = 6.5;
 const BOARD_TIME = 1.4;
@@ -113,6 +114,8 @@ const UP = new THREE.Vector3(0, 1, 0);
 export class TankerRun {
   phase: TankerPhase = 'hunt';
   readonly parts: TankerParts;
+  /** The parts being carried home: on a winch under the chopper, or on a trailer. */
+  private readonly cargo: PartCargo;
   readonly rig = new TankerRig();
   private readonly garage: THREE.Vector3;
   private readonly installed = TANKER_PARTS.map(() => false);
@@ -158,6 +161,7 @@ export class TankerRun {
     garage: { x: number; z: number; yaw: number },
   ) {
     this.parts = new TankerParts(host.scene);
+    this.cargo = new PartCargo(host.scene);
     this.garage = new THREE.Vector3(garage.x, heightAt(garage.x, garage.z), garage.z);
     this.rigYaw = garage.yaw;
     this.rig.root.position.copy(this.garage);
@@ -267,13 +271,16 @@ export class TankerRun {
         this.host.play('uiConfirm', undefined, 0.8);
         this.host.banner(
           `${TANKER_PARTS[i].toUpperCase()} FOUND!`,
-          missing > 0 ? `Take it back to the bomb tanker outside Cooper's Base · ${missing} more to come from the other bases` : 'That\'s all five! Drive back to the bomb tanker outside Cooper\'s Base',
+          missing > 0 ? `Take it back to the bomb tanker outside Cooper's Base · ${missing} more to come from the other bases` : 'That\'s all five! Bring them back to the bomb tanker outside Cooper\'s Base',
         );
       }
-      if (this.carried.length > 0 && player.position.distanceTo(this.rig.root.position) < DELIVER_RADIUS) this.fit();
+      const rig = this.rig.root.position;
+      if (this.carried.length > 0 && Math.hypot(player.position.x - rig.x, player.position.z - rig.z) < DELIVER_RADIUS) this.fit();
+      this.cargo.update(dt, player, this.carried);
       return;
     }
     this.parts.update(dt, null);
+    this.cargo.update(dt, player, this.carried);
     if (this.phase === 'assemble') this.updateAssemble(dt);
     else if (this.phase === 'run') this.updateRun(dt);
     else if (this.phase === 'breach') this.updateBreach(dt);

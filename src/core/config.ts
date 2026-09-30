@@ -1,6 +1,10 @@
 /** World is a square of this size in meters, centered on the origin. */
 export const WORLD_SIZE = 3000;
 export const WORLD_HALF = WORLD_SIZE / 2;
+/** Nothing drives or flies further than this from the centre on either axis. */
+export const EDGE_LIMIT = WORLD_HALF - 30;
+/** The barrier round the edge of the map stands along this line, just outside EDGE_LIMIT. */
+export const EDGE_WALL = WORLD_HALF - 26;
 
 /** Heightfield resolution (samples per side). */
 export const TERRAIN_SEGMENTS = 256;
