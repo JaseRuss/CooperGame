@@ -26,6 +26,9 @@ const FLARE_RISE_SPEED = 48;
 const FLARE_BURN_TIME = 13;
 const FLARE_FADE = 2.5;
 
+/** The firefights round the horizon start once it's this dark. */
+const FIGHT_DARKNESS = 0.6;
+
 const TRACER_RED = new THREE.Color(0xff5a2a);
 const TRACER_AMBER = new THREE.Color(0xffc04a);
 /** Flares over the enemy's troops are red, over your side's green. */
@@ -45,6 +48,8 @@ export interface FlakGun {
 export interface NightBase {
   position: THREE.Vector3;
   gun: FlakGun | null;
+  /** The finale: twice the tracer and bigger, more frequent explosions. */
+  barrage?: boolean;
 }
 
 /** What the night sky marks: where the standing enemy bases are, and where troops are. */
@@ -166,6 +171,10 @@ export class NightSky {
   private readonly matrix = new THREE.Matrix4();
   private readonly quat = new THREE.Quaternion();
   private readonly size = new THREE.Vector3(1, 1, 1);
+  private readonly starMaterial: THREE.PointsMaterial;
+  private readonly moonMaterial: THREE.SpriteMaterial;
+  /** How dark it is, 0 (day) to 1 (night): the stars and moon fade in and the firefights start as it falls. */
+  private darkness = 1;
 
   constructor(
     private readonly scene: THREE.Scene,
@@ -183,11 +192,13 @@ export class NightSky {
     const starGeo = new THREE.BufferGeometry();
     starGeo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
     starGeo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-    const stars = new THREE.Points(starGeo, new THREE.PointsMaterial({ size: 2, sizeAttenuation: false, vertexColors: true, fog: false }));
+    this.starMaterial = new THREE.PointsMaterial({ size: 2, sizeAttenuation: false, vertexColors: true, fog: false, transparent: true });
+    const stars = new THREE.Points(starGeo, this.starMaterial);
     stars.frustumCulled = false;
     this.sky.add(stars);
 
-    const moon = new THREE.Sprite(new THREE.SpriteMaterial({ map: moonTexture(), fog: false, depthWrite: false }));
+    this.moonMaterial = new THREE.SpriteMaterial({ map: moonTexture(), fog: false, depthWrite: false, transparent: true });
+    const moon = new THREE.Sprite(this.moonMaterial);
     moon.position.copy(MOON_DIRECTION).multiplyScalar(SKY_RADIUS * 0.95);
     moon.scale.setScalar(260);
     this.sky.add(moon);
@@ -207,10 +218,21 @@ export class NightSky {
     }
   }
 
+  setDarkness(d: number): void {
+    this.darkness = d;
+    const shown = THREE.MathUtils.smoothstep(d, 0.55, 0.95);
+    this.starMaterial.opacity = shown;
+    this.moonMaterial.opacity = shown;
+    this.sky.visible = shown > 0.01;
+  }
+
   update(dt: number, camera: THREE.Camera, player: THREE.Vector3): void {
     this.sky.position.copy(camera.position);
-    this.updateBaseGuns(dt, player);
-    this.updateTroopFlares(dt, player);
+    // Tracer and flares only show up against a dark sky; whatever's already in the air burns out.
+    if (this.darkness > FIGHT_DARKNESS) {
+      this.updateBaseGuns(dt, player);
+      this.updateTroopFlares(dt, player);
+    }
     this.updateBursts(dt);
     this.updateRounds(dt, player, camera.position);
     this.updateFlares(dt);
@@ -219,7 +241,7 @@ export class NightSky {
 
   /** Every standing enemy base keeps firing tracer, so its position shows from across the map. */
   private updateBaseGuns(dt: number, player: THREE.Vector3): void {
-    for (const { position: base, gun } of this.targets.bases()) {
+    for (const { position: base, gun, barrage } of this.targets.bases()) {
       let guns = this.baseGuns.get(base);
       if (!guns) {
         guns = { nextBurst: rand(0, 1.5), nextFlash: rand(1, 5) };
@@ -229,13 +251,14 @@ export class NightSky {
       if (!gun?.alive && base.distanceTo(player) < BASE_QUIET_DIST) continue;
       guns.nextBurst -= dt;
       if (guns.nextBurst <= 0) {
-        guns.nextBurst = rand(0.5, 1.8);
+        guns.nextBurst = barrage ? rand(0.25, 0.9) : rand(0.5, 1.8);
         this.startBurst(base, gun?.alive ? gun : null, player);
       }
       guns.nextFlash -= dt;
       if (guns.nextFlash <= 0) {
-        guns.nextFlash = rand(3, 8);
-        this.flash(base.clone().add(new THREE.Vector3(rand(-50, 50), 0, rand(-50, 50))));
+        guns.nextFlash = barrage ? rand(0.3, 1.1) : rand(3, 8);
+        const spread = barrage ? 110 : 50;
+        this.flash(base.clone().add(new THREE.Vector3(rand(-spread, spread), 0, rand(-spread, spread))), barrage ? 1.8 : 1);
       }
     }
   }
@@ -378,13 +401,13 @@ export class NightSky {
   }
 
   /** Something going up on the horizon: an orange glow that swells and fades. */
-  private flash(at: THREE.Vector3): void {
+  private flash(at: THREE.Vector3, scale = 1): void {
     const sprite = new THREE.Sprite(
       new THREE.SpriteMaterial({ map: this.glow, color: 0xff9a40, fog: false, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }),
     );
     sprite.position.copy(at).setY(surfaceHeightAt(at.x, at.z) + 6);
     this.scene.add(sprite);
-    this.flashes.push({ sprite, age: 0, life: rand(0.5, 0.9), size: rand(30, 55) });
+    this.flashes.push({ sprite, age: 0, life: rand(0.5, 0.9), size: rand(30, 55) * scale });
   }
 
   private updateFlashes(dt: number): void {

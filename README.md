@@ -103,8 +103,8 @@ sharper shadows and extra resolution on Retina / high DPI screens. Enable
 **Show FPS** to display frames per second at the top-right of the minimap (off
 by default). Changes take effect immediately and are remembered between visits.
 
-**Sound:** each level has its own music: a march for the day battle, a sneaky
-tune for the night raid, bongos in the jungle, a jig for the castles and a spooky
+**Sound:** each level has its own music: a march for the day battle (which
+turns into a sneaky tune once night falls), bongos in the jungle, a jig for the castles and a spooky
 xylophone for the zombies. Browsers keep a page quiet
 until you click or press a key, and a controller button doesn't count, so if
 you're playing on a controller, click the game or press a key once to turn the
@@ -129,6 +129,11 @@ sound on.
   marching on the nearest enemy base to soften it up (they can't take it on
   their own), and you'll hear when they get there so you can go and help.
   Knock out enemy bases and the raids dry up.
+- **Day to night:** the first mission starts in bright sunshine, and every base you
+  take sends the sun lower: orange dusk, then dark. By the final assault (or the
+  bomb tanker's run) it's a night raid: stars, flares over the troops, tracer from
+  the guns and a barrage of explosions round the Fortress. Your tank's headlight
+  switches on as it gets dark.
 - **The Fortress** in the middle of the map is locked until all five enemy
   bases are down, and nothing inside can be shot until then. Then its gates
   open and a column of green and red tanks and troops joins you for the final
@@ -294,22 +299,14 @@ rocket down each side.
 - After **3 minutes** (it uses the **Jeep time** option) it turns back into the
   tank. Drive through a motorbike station to top the time back up.
 
-## Mission 2: Night Raid
+## Mission 2: Jungle Strike
 
-Win the first mission and the night raid starts on its own: a new battlefield
-under the stars. Every enemy base's flak gun hoses tracer into the sky, so
-you can see where the bases are from across the map. Flares go up over troops in the distance: red over
-the enemy, green over your side. Your tank has a headlight. To jump between
-missions at any time, use **Level select** (see below).
-
-## Mission 3: Jungle Strike
-
-Win the night raid and the jungle is next: thick jungle on a fresh battlefield,
+Win the first mission and the jungle is next: thick jungle on a fresh battlefield,
 with villages of wooden huts and shacks joined by dirt tracks. The trees hide
 the enemy until you're close, so drive through them or blast them over with the
 main gun to clear a path.
 
-## Mission 4: Castle Siege
+## Mission 3: Castle Siege
 
 Win the jungle and you ride into the land of knights. You're still in your tank,
 but the enemy bases are stone **castles** with towers, a gatehouse, a keep, a
@@ -321,7 +318,7 @@ tanks are old **cannons** pushed about by two gunners, and their helicopters are
 The pillboxes are stone guardhouses with a ballista. The villages are thatched
 cottages on dirt tracks, and the Fortress in the middle is the **Great Castle**.
 
-## Mission 5: Zombie Attack
+## Mission 4: Zombie Attack
 
 The last level, at night. Green, red, tan and blue have all joined up to defend
 the **Fortress**, and waves of glow-in-the-dark plastic **zombies** are coming. A
@@ -354,7 +351,7 @@ knocked over. Press A or Enter to play again.
 
 Pause, open **Options** and pick a level under **Level select** at the bottom,
 then press A or Enter (or click it). It starts that mission from the beginning.
-You can also open the game with `?mission=2` up to `?mission=5`.
+You can also open the game with `?mission=2` up to `?mission=4`.
 
 ## Credits
 

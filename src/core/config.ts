@@ -9,30 +9,31 @@ export const TERRAIN_SEGMENTS = 256;
 export const TERRAIN_HEIGHT = 18;
 
 /**
- * Which mission is playing, from the page's `?mission=` parameter. Mission 1 is the daytime
- * battle; mission 2 is the night raid, on a fresh battlefield (its own seed) under flares;
- * mission 3 is a steamy jungle of thick trees and villages of wooden huts; mission 4 is a land of
- * knights and castles; mission 5 is the last stand, every army together against waves of zombies.
+ * Which mission is playing, from the page's `?mission=` parameter. Mission 1 is the big battle:
+ * it starts in sunshine and the day darkens as enemy bases fall, until the Fortress is stormed
+ * at night under flares, tracer and explosions; mission 2 is a steamy jungle of thick trees and
+ * villages of wooden huts; mission 3 is a land of knights and castles; mission 4 is the last
+ * stand, every army together against waves of zombies.
  */
-export type Mission = 1 | 2 | 3 | 4 | 5;
+export type Mission = 1 | 2 | 3 | 4;
 
 /** Every mission in play order, as the level select lists them. */
 export const MISSIONS: { mission: Mission; title: string; blurb: string }[] = [
-  { mission: 1, title: 'Day Battle', blurb: 'Sunny fields and towns. Knock out five enemy bases, then storm the Fortress.' },
-  { mission: 2, title: 'Night Raid', blurb: 'New ground under the moon. Flares light up the enemy and flak guns guard their bases.' },
-  { mission: 3, title: 'Jungle Strike', blurb: 'Thick jungle and wooden hut villages. Smash through the trees to find the enemy bases.' },
-  { mission: 4, title: 'Castle Siege', blurb: 'Knights, cannons and dragons! Knock down five enemy castles, then the Great Castle.' },
-  { mission: 5, title: 'Zombie Attack', blurb: 'Every army together at the Fortress against wave after wave of zombies. How long can you hold out?' },
+  { mission: 1, title: 'Day to Night', blurb: 'Starts in sunny fields and towns, but the sun sets as each of the five enemy bases falls. Then storm the Fortress in a night raid.' },
+  { mission: 2, title: 'Jungle Strike', blurb: 'Thick jungle and wooden hut villages. Smash through the trees to find the enemy bases.' },
+  { mission: 3, title: 'Castle Siege', blurb: 'Knights, cannons and dragons! Knock down five enemy castles, then the Great Castle.' },
+  { mission: 4, title: 'Zombie Attack', blurb: 'Every army together at the Fortress against wave after wave of zombies. How long can you hold out?' },
 ];
 
 const missionParam = Number(new URLSearchParams(window.location.search).get('mission'));
 export const MISSION: Mission = MISSIONS.find((m) => m.mission === missionParam)?.mission ?? 1;
-export const NIGHT = MISSION === 2;
-export const JUNGLE = MISSION === 3;
-export const KNIGHTS = MISSION === 4;
-export const ZOMBIES = MISSION === 5;
+/** The day darkens into night as bases fall (it starts in full daylight). */
+export const NIGHT = MISSION === 1;
+export const JUNGLE = MISSION === 2;
+export const KNIGHTS = MISSION === 3;
+export const ZOMBIES = MISSION === 4;
 
-const SEEDS: Record<Mission, number> = { 1: 1337, 2: 2468, 3: 3579, 4: 4680, 5: 5791 };
+const SEEDS: Record<Mission, number> = { 1: 1337, 2: 3579, 3: 4680, 4: 5791 };
 export const WORLD_SEED = SEEDS[MISSION];
 
 /** Reloads the page into another mission (a fresh world, from the start). */

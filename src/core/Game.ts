@@ -179,8 +179,26 @@ const nextMission = MISSIONS.find((m) => m.mission === MISSION + 1);
 /** Where the jungle haze turns fully opaque. */
 const JUNGLE_FOG_FAR = 950;
 const DAY_FOG_FAR = 1700;
-/** The night raid and the zombie attack are both played by moonlight. */
-const DARK = NIGHT || ZOMBIES;
+/** The zombie attack is played by moonlight from the start. */
+const DARK = ZOMBIES;
+/** The first mission starts in daylight and darkens into night; the zombie one is night all along. */
+const HAS_NIGHT_SKY = NIGHT || ZOMBIES;
+/** How long the sky takes to go from day to full night (seconds), and how dark each fallen base makes it. */
+const DUSK_SECONDS = 30;
+const DARKNESS_PER_BASE = 0.8;
+const DAY_SKY = new THREE.Color(0x9fd3f0);
+const DUSK_SKY = new THREE.Color(0xe0946a);
+const NIGHT_SKY = new THREE.Color(0x0d1733);
+const DAY_SUN = new THREE.Vector3(120, 220, 90);
+const DUSK_SUN = new THREE.Vector3(240, 70, 120);
+/** Interpolates a value through day, dusk and night keys as the darkness goes from 0 to 1. */
+const ramp = (day: number, dusk: number, night: number, d: number) => (d < 0.5 ? day + (dusk - day) * d * 2 : dusk + (night - dusk) * (d - 0.5) * 2);
+const rampColor = (out: THREE.Color, keys: readonly [THREE.Color, THREE.Color, THREE.Color], d: number) =>
+  d < 0.5 ? out.lerpColors(keys[0], keys[1], d * 2) : out.lerpColors(keys[1], keys[2], (d - 0.5) * 2);
+const SKY_KEYS = [DAY_SKY, DUSK_SKY, NIGHT_SKY] as const;
+const HEMI_SKY = [new THREE.Color(0xbfd9ff), new THREE.Color(0xf0b890), new THREE.Color(0x7088c4)] as const;
+const HEMI_GROUND = [new THREE.Color(0x3a3226), new THREE.Color(0x4a3428), new THREE.Color(0x1d1b26)] as const;
+const SUN_COLOR = [new THREE.Color(0xfff2d9), new THREE.Color(0xff9a55), new THREE.Color(0xaec4ff)] as const;
 
 // The zombie mission: every army holds the Fortress while waves of zombies come at it. Zombies
 // that reach the wall batter it; when the wall's strength runs out, the zombies are in and the
@@ -332,6 +350,12 @@ export class Game {
   private readonly lastPlayerPosition = new THREE.Vector3();
   private readonly loadingLabel: HTMLDivElement;
   private readonly sun: THREE.DirectionalLight;
+  private readonly hemi: THREE.HemisphereLight;
+  private readonly fog: THREE.Fog;
+  /** Where the shadow-casting light sits relative to the player: the sun by day, the moon by night. */
+  private readonly sunOffset = DARK ? MOON_DIRECTION.clone().multiplyScalar(266) : DAY_SUN.clone();
+  /** How dark the first mission's sky is, 0 (day) to 1 (night); it falls as enemy bases do. */
+  private darkness = 0;
 
   private world!: RAPIER.World;
   private projectiles!: ProjectileManager;
@@ -462,24 +486,24 @@ export class Game {
     this.loadingLabel.textContent = 'Loading world…';
     container.appendChild(this.loadingLabel);
 
-    // Daylight, or moonlight on the night raid (dark enough for the flares to show, light enough to play).
+    // Daylight (which darkens into moonlight as the first mission goes on: dark enough for the flares to show, light enough to play).
     // The jungle is a steamy haze: close green-grey fog and warm, filtered sun.
     // The zombies come at night too, under a slightly greener, spookier sky, glowing as they come.
-    const sky = NIGHT ? 0x0d1733 : ZOMBIES ? 0x101a2c : JUNGLE ? 0xa9c4a2 : KNIGHTS ? 0xa8d9f4 : 0x9fd3f0;
+    const sky = ZOMBIES ? 0x101a2c : JUNGLE ? 0xa9c4a2 : KNIGHTS ? 0xa8d9f4 : 0x9fd3f0;
     this.scene.background = new THREE.Color(sky);
-    this.scene.fog = DARK
+    this.fog = DARK
       ? new THREE.Fog(sky, 280, 1250)
       : JUNGLE
         ? new THREE.Fog(sky, 180, JUNGLE_FOG_FAR)
         : new THREE.Fog(sky, 500, DAY_FOG_FAR);
+    this.scene.fog = this.fog;
 
-    this.scene.add(
-      DARK
-        ? new THREE.HemisphereLight(ZOMBIES ? 0x7898c0 : 0x7088c4, 0x1d1b26, 0.5)
-        : JUNGLE
-          ? new THREE.HemisphereLight(0xd8ecc8, 0x2e3a1c, 0.95)
-          : new THREE.HemisphereLight(0xbfd9ff, 0x3a3226, 0.9),
-    );
+    this.hemi = DARK
+      ? new THREE.HemisphereLight(0x7898c0, 0x1d1b26, 0.5)
+      : JUNGLE
+        ? new THREE.HemisphereLight(0xd8ecc8, 0x2e3a1c, 0.95)
+        : new THREE.HemisphereLight(0xbfd9ff, 0x3a3226, 0.9);
+    this.scene.add(this.hemi);
     this.sun = DARK
       ? new THREE.DirectionalLight(0xaec4ff, 0.55)
       : JUNGLE
@@ -624,13 +648,13 @@ export class Game {
     });
     this.applySettings();
     this.hud.setMissionStart((m) => startMission(m));
-    if (DARK) {
+    if (HAS_NIGHT_SKY) {
       this.nightSky = new NightSky(this.scene, {
         // Tracer marks every standing enemy base (and the Fortress); flares go up over the troops.
         // On the zombie mission the Fortress is ours, so there's no tracer, just the flares.
         bases: () => ZOMBIES ? [] : [
           ...this.enemyBases.filter((b) => !b.isDestroyed).map((b) => ({ position: b.center, gun: b.aaGun })),
-          ...(this.fortress.isDestroyed ? [] : [{ position: this.fortress.center, gun: null }]),
+          ...(this.fortress.isDestroyed ? [] : [{ position: this.fortress.center, gun: null, barrage: this.finalAssault }]),
         ],
         troops: () => [
           ...this.troops.activeSoldiers('enemy').map((s) => ({ position: s.position, friendly: false })),
@@ -640,15 +664,21 @@ export class Game {
         ],
       });
       this.fitHeadlights();
+      if (NIGHT) {
+        this.applyDarkness();
+      } else {
+        this.darkness = 1; // the zombies' night has its own colours, set up above
+        this.nightSky.setDarkness(1);
+        this.aimHeadlight();
+      }
     }
 
     this.loadingLabel.remove();
     this.ready = true;
-    if (MISSION === 2) this.hud.showBanner('MISSION 2: NIGHT RAID', 'The enemy has dug in on new ground. Knock out their bases under the flares!');
-    else if (MISSION === 3) this.hud.showBanner('MISSION 3: JUNGLE STRIKE', 'The enemy is hiding in the jungle. Drive or blast through the trees to find their bases!');
-    else if (MISSION === 4) this.hud.showBanner('MISSION 4: CASTLE SIEGE', 'Knights, cannons and dragons! Knock down their castles, then the Great Castle');
-    else if (MISSION === 5) this.hud.showBanner('MISSION 5: ZOMBIE ATTACK!', 'Every army together! Keep the zombies away from the Fortress wall');
-    else this.hud.showBanner('GREEN & RED ARE FRIENDS', 'Tan and blue are the enemy. Knock out their bases, or find the parts to build a bomb tanker!');
+    if (MISSION === 2) this.hud.showBanner('MISSION 2: JUNGLE STRIKE', 'The enemy is hiding in the jungle. Drive or blast through the trees to find their bases!');
+    else if (MISSION === 3) this.hud.showBanner('MISSION 3: CASTLE SIEGE', 'Knights, cannons and dragons! Knock down their castles, then the Great Castle');
+    else if (MISSION === 4) this.hud.showBanner('MISSION 4: ZOMBIE ATTACK!', 'Every army together! Keep the zombies away from the Fortress wall');
+    else this.hud.showBanner('GREEN & RED ARE FRIENDS', 'Tan and blue are the enemy. Knock out their bases before the sun goes down, or find the parts to build a bomb tanker!');
     if (import.meta.env.DEV) {
       (window as unknown as { game: Game }).game = this;
       if (new URLSearchParams(window.location.search).get('tanker') === 'run') this.tanker?.skipToRun();
@@ -657,6 +687,39 @@ export class Game {
     this.sound.music.start();
     this.clock.start();
     requestAnimationFrame(this.animate);
+  }
+
+  /** The day darkens as enemy bases fall, and goes fully dark for the final assault or the bomb tanker's run. */
+  private updateDusk(dt: number): void {
+    if (!NIGHT) return;
+    const total = Math.max(1, this.enemyBases.length);
+    const target = this.finalAssault || this.tanker?.active ? 1 : DARKNESS_PER_BASE * (this.announcedBases.size / total);
+    if (this.darkness >= target) return;
+    this.darkness = Math.min(target, this.darkness + dt / DUSK_SECONDS);
+    this.applyDarkness();
+  }
+
+  /** Sets the sky, fog, sun and moon, stars, headlight and music for how dark it is. */
+  private applyDarkness(): void {
+    const d = this.darkness;
+    const sky = this.scene.background as THREE.Color;
+    rampColor(sky, SKY_KEYS, d);
+    this.fog.color.copy(sky);
+    this.fog.near = ramp(500, 380, 280, d);
+    this.fog.far = ramp(1700, 1500, 1250, d);
+    rampColor(this.hemi.color, HEMI_SKY, d);
+    rampColor(this.hemi.groundColor, HEMI_GROUND, d);
+    this.hemi.intensity = ramp(0.9, 0.8, 0.5, d);
+    rampColor(this.sun.color, SUN_COLOR, d);
+    this.sun.intensity = ramp(1.7, 1.3, 0.55, d);
+    // The sun sinks to the horizon, then the moon takes over its job.
+    const day = DAY_SUN.clone().normalize();
+    const dusk = DUSK_SUN.clone().normalize();
+    const dir = d < 0.5 ? day.lerp(dusk, d * 2) : dusk.lerp(MOON_DIRECTION, (d - 0.5) * 2);
+    this.sunOffset.copy(dir.normalize().multiplyScalar(266));
+    this.nightSky?.setDarkness(d);
+    this.aimHeadlight();
+    if (NIGHT) this.sound.music.setNight(d > 0.6);
   }
 
   /** Night driving: a headlight beam from the front of the hull, lighting the ground ahead. */
@@ -675,7 +738,8 @@ export class Game {
     lamp.position.set(0, chopper ? 0.3 : 0.8, chopper ? -2.8 : -2.1);
     lamp.target.position.set(0, chopper ? -60 : -3, chopper ? -45 : -30);
     lamp.distance = chopper ? 170 : 120;
-    lamp.intensity = chopper ? 120 : 45;
+    // The headlight only comes on as it gets dark.
+    lamp.intensity = (chopper ? 120 : 45) * THREE.MathUtils.smoothstep(this.darkness, 0.35, 0.75);
   }
 
   // ---------- the bomb tanker ----------
@@ -1747,11 +1811,10 @@ export class Game {
       this.fortressAnnounced = true;
       this.troops.blast(this.fortress.center, 150, 'player'); // the last defenders scatter
       const message: Record<Mission, string> = {
-        1: 'The Fortress has fallen and every enemy base is yours. The toy box is saved!',
-        2: 'Night raid complete! The flares are out and every enemy base is yours.',
-        3: 'Jungle strike complete! Every enemy base in the jungle is yours.',
-        4: 'The Great Castle has fallen! Every knight is bowled over and every dragon is down.',
-        5: '',
+        1: 'The Fortress has fallen in the night raid and every enemy base is yours. The toy box is saved!',
+        2: 'Jungle strike complete! Every enemy base in the jungle is yours.',
+        3: 'The Great Castle has fallen! Every knight is bowled over and every dragon is down.',
+        4: '',
       };
       const bombed = MISSION === 1 && this.tanker?.active;
       this.hud.showVictory(bombed ? 'The bomb tanker blew the Fortress sky-high! The toy box is saved!' : message[MISSION], nextMission ? '' : 'Keep driving around and enjoy it!');
@@ -2812,8 +2875,8 @@ export class Game {
     }
 
     // The shadow-casting light: the sun by day, the moon by night.
-    const sunOffset = DARK ? MOON_DIRECTION.clone().multiplyScalar(266) : new THREE.Vector3(120, 220, 90);
-    this.sun.position.copy(this.player.position).add(sunOffset);
+    this.updateDusk(dt);
+    this.sun.position.copy(this.player.position).add(this.sunOffset);
     this.nightSky?.update(dt, this.camera, this.player.position);
     this.sun.target.position.copy(this.player.position);
     this.sun.target.updateMatrixWorld();

@@ -40,6 +40,26 @@ const D = 50;
 const A = 45;
 const G = 43;
 
+/** Night Raid: slower and sneakier in D minor, a pulsing bass, soft pads and a lonely flute. The day battle switches to it as dark falls. */
+const NIGHT_SONG: Song = {
+  bpm: 92,
+  chords: [[D, 'min'], [D, 'min'], [D - 4, 'maj'], [D - 5, 'min'], [D, 'min'], [D - 2, 'maj'], [D - 4, 'maj'], [D - 5, 'min']],
+  drums: {
+    kick: ['x.........x.....'],
+    hat: ['..o...o...o...o.'],
+    tom: ['................', '................', '................', '............o.o.'],
+  },
+  bass: 'r.o.f.o.r.o.f.o.',
+  bassWave: 'triangle',
+  lead: 'flute',
+  rhythm: ['x.......x.......', '....x...........', 'x...x...x.......', '................'],
+  key: D,
+  tuneNotes: [0, 3, 5, 7, 10, 12],
+  tuneOctave: 2,
+  pad: true,
+  seed: 29,
+};
+
 const SONGS: Record<Mission, Song> = {
   // Day Battle: a jaunty toy-soldier march in C major, with a bugle playing the tune.
   1: {
@@ -59,27 +79,8 @@ const SONGS: Record<Mission, Song> = {
     pad: false,
     seed: 11,
   },
-  // Night Raid: slower and sneakier in D minor, a pulsing bass, soft pads and a lonely flute.
-  2: {
-    bpm: 92,
-    chords: [[D, 'min'], [D, 'min'], [D - 4, 'maj'], [D - 5, 'min'], [D, 'min'], [D - 2, 'maj'], [D - 4, 'maj'], [D - 5, 'min']],
-    drums: {
-      kick: ['x.........x.....'],
-      hat: ['..o...o...o...o.'],
-      tom: ['................', '................', '................', '............o.o.'],
-    },
-    bass: 'r.o.f.o.r.o.f.o.',
-    bassWave: 'triangle',
-    lead: 'flute',
-    rhythm: ['x.......x.......', '....x...........', 'x...x...x.......', '................'],
-    key: D,
-    tuneNotes: [0, 3, 5, 7, 10, 12],
-    tuneOctave: 2,
-    pad: true,
-    seed: 29,
-  },
   // Jungle Strike: bongos and shakers under a marimba tune in A minor pentatonic.
-  3: {
+  2: {
     bpm: 116,
     chords: [[A, 'min'], [A, 'min'], [A - 2, 'maj'], [A, 'min'], [A - 4, 'maj'], [A - 2, 'maj'], [A, 'min'], [A - 5, 'min']],
     drums: {
@@ -99,7 +100,7 @@ const SONGS: Record<Mission, Song> = {
     seed: 47,
   },
   // Castle Siege: a lively jig in G major, a plucked lute over a drone bass, tabor and tambourine.
-  4: {
+  3: {
     bpm: 126,
     chords: [[G, 'maj'], [G, 'maj'], [G + 5, 'maj'], [G + 7, 'maj'], [G, 'maj'], [G - 3, 'min'], [G + 5, 'maj'], [G + 7, 'maj']],
     drums: {
@@ -117,7 +118,7 @@ const SONGS: Record<Mission, Song> = {
     seed: 61,
   },
   // Zombie Attack: a creepy minor march on a bony xylophone, a heartbeat kick and dark pads.
-  5: {
+  4: {
     bpm: 96,
     chords: [[A, 'min'], [A, 'min'], [A - 4, 'maj'], [A - 7, 'min'], [A, 'min'], [A - 2, 'maj'], [A - 7, 'min'], [A + 7, 'maj']],
     drums: {
@@ -151,16 +152,16 @@ interface TuneNote {
 }
 
 export class Music {
-  private readonly song: Song;
-  private readonly tune: TuneNote[];
-  private readonly loopSteps: number;
+  private song: Song;
+  private tune: TuneNote[];
+  private loopSteps: number;
   private readonly noise: AudioBuffer;
   private readonly out: GainNode;
   private timer: number | null = null;
   private step = 0;
   private nextTime = 0;
 
-  constructor(private readonly ctx: AudioContext, destination: AudioNode, mission: Mission) {
+  constructor(private readonly ctx: AudioContext, destination: AudioNode, private readonly mission: Mission) {
     this.song = SONGS[mission];
     // The tune runs twice round the chords: the second time starts like the first and then goes its own way.
     this.loopSteps = this.song.chords.length * 16 * 2;
@@ -175,6 +176,16 @@ export class Music {
 
   private get stepTime(): number {
     return 60 / this.song.bpm / 4;
+  }
+
+  /** Swaps to the night song (or back to the mission's own) from the top of its loop. */
+  setNight(night: boolean): void {
+    const song = night ? NIGHT_SONG : SONGS[this.mission];
+    if (song === this.song) return;
+    this.song = song;
+    this.loopSteps = song.chords.length * 16 * 2;
+    this.tune = this.makeTune();
+    this.step = 0;
   }
 
   start(): void {
