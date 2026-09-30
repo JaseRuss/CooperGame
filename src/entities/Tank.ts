@@ -4,6 +4,7 @@ import { heightAt, waterDepthAt } from '../world/Terrain';
 import { inMoat } from '../world/MoatShape';
 import { isOnRoad } from '../world/RoadNetwork';
 import { clamp } from '../utils/math';
+import { EDGE_LIMIT } from '../core/config';
 import { plastic, shade } from '../utils/plastic';
 import { PartBuilder, tubeX, tubeZ } from '../utils/modelKit';
 import { RepairBot } from './RepairBot';
@@ -630,6 +631,10 @@ export class Tank {
       else if (!inMoat(t.x, newPos.z, MOAT_CLEARANCE)) newPos.x = t.x;
       else newPos.set(t.x, newPos.y, t.z);
     }
+
+    // The barrier round the edge of the map: nothing drives off it.
+    newPos.x = clamp(newPos.x, -EDGE_LIMIT, EDGE_LIMIT);
+    newPos.z = clamp(newPos.z, -EDGE_LIMIT, EDGE_LIMIT);
 
     // A kinematic body under the one-sided heightfield can never climb back out, so recover it.
     const floorY = heightAt(newPos.x, newPos.z) + HULL_HALF_EXTENTS.y;

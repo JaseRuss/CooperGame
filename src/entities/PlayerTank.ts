@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { Tank, HULL_HALF_EXTENTS, type ArmorZone } from './Tank';
 import type { InputState } from '../input/InputManager';
-import { PLAYER_MAX_HEALTH, PLAYER_MAX_SPEED, WORLD_HALF } from '../core/config';
+import { PLAYER_MAX_HEALTH, PLAYER_MAX_SPEED, EDGE_LIMIT } from '../core/config';
 import { ARMY_GREEN, plastic, shade } from '../utils/plastic';
 import { PartBuilder, tubeZ } from '../utils/modelKit';
 import { buildRocketModel } from '../combat/HomingRocket';
@@ -77,7 +77,7 @@ const CHOPPER_GUN_SPREAD = 0.02;
 const CHOPPER_PITCH_MIN = -1.2;
 const CHOPPER_START_PITCH = -0.35;
 /** It can't fly off the edge of the map: it stops this far inside. */
-const CHOPPER_EDGE = WORLD_HALF - 30;
+const CHOPPER_EDGE = EDGE_LIMIT;
 /** The model's cabin sits over the collider, with the skids on the ground under it. */
 const CHOPPER_MOUNT = new THREE.Vector3(0, -HULL_HALF_EXTENTS.y + CHOPPER_SKID_DEPTH, 1.0);
 

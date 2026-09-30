@@ -3,6 +3,7 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import { initPhysics, createWorld } from '../physics/PhysicsWorld';
 import { InputManager, type InputState } from '../input/InputManager';
 import { buildTerrain, surfaceHeightAt, waterDepthAt } from '../world/Terrain';
+import { buildEdgeBarrier } from '../world/EdgeBarrier';
 import { AssetLibrary } from '../world/AssetLibrary';
 import { generateWorld, type EnemySpawnPoint } from '../world/WorldGenerator';
 import { HomeBase, isInsideBase } from '../world/Base';
@@ -560,6 +561,7 @@ export class Game {
 
     const terrain = buildTerrain();
     this.scene.add(terrain.mesh);
+    this.scene.add(buildEdgeBarrier());
     const terrainBody = this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
     const terrainCollider = this.world.createCollider(terrain.colliderDesc, terrainBody);
     this.hitRegistry.register(terrainCollider, { kind: 'terrain' });

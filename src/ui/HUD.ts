@@ -1269,7 +1269,7 @@ export class HUD {
       const list = t.parts.map((p) => `<div class="part ${p.fitted ? 'fitted' : p.found || p.lying ? 'found' : ''}"><i></i>${p.name.toUpperCase()}${status(p)}</div>`).join('');
       const note =
         t.carried > 0
-          ? 'Drive up to the bomb tanker outside Cooper\'s Base to fit them'
+          ? 'Bring them home to the bomb tanker outside Cooper\'s Base to fit them'
           : found === t.parts.length
             ? 'Every part fitted!'
             : 'Every enemy base drops a part · fit them at the rig outside Cooper\'s Base';
