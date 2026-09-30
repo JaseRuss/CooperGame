@@ -1264,13 +1264,15 @@ export class HUD {
   private tankerPanel(t: TankerHUD): string {
     const found = t.parts.filter((p) => p.found).length;
     if (t.phase === 'hunt') {
-      const list = t.parts.map((p) => `<div class="part ${p.fitted ? 'fitted' : p.found ? 'found' : ''}"><i></i>${p.name.toUpperCase()}${p.fitted ? ' · FITTED' : p.found ? ' · CARRYING' : ''}</div>`).join('');
+      const status = (p: TankerHUD['parts'][number]) =>
+        p.fitted ? ' · FITTED' : p.found ? ' · CARRYING' : p.lying ? ` · GRAB IT IN ${p.source.toUpperCase()}'S RUINS` : ` · DESTROY BASE ${p.source.toUpperCase()}`;
+      const list = t.parts.map((p) => `<div class="part ${p.fitted ? 'fitted' : p.found || p.lying ? 'found' : ''}"><i></i>${p.name.toUpperCase()}${status(p)}</div>`).join('');
       const note =
         t.carried > 0
           ? 'Drive up to the bomb tanker outside Cooper\'s Base to fit them'
           : found === t.parts.length
             ? 'Every part fitted!'
-            : 'Or build a bomb tanker instead: find the parts, then fit them at the rig outside Cooper\'s Base';
+            : 'Every enemy base drops a part · fit them at the rig outside Cooper\'s Base';
       return `<div class="tanker"><div class="head"><span>BOMB TANKER PARTS</span><b>${found} / ${t.parts.length}</b></div>${list}<div class="note">${note}</div></div>`;
     }
     const crew = t.crew.length ? `<div class="note">GUNNERS · ${t.crew.join(' · ').toUpperCase()}</div>` : '';

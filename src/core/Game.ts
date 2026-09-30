@@ -745,17 +745,14 @@ export class Game {
   // ---------- the bomb tanker ----------
 
   /**
-   * The first mission's other way to win: five parts lie in five of the towns, and the rig they go
-   * on is parked on the highway just outside Cooper's Base.
+   * The first mission's finale: each enemy base drops a part of the bomb tanker when it falls, and
+   * the rig they go on is parked on the highway just outside Cooper's Base. The Fortress stays
+   * locked; only the tanker gets in.
    */
   private setupTanker(): void {
     const home = this.familyBases[0];
     const out = BASE_RADIUS + 40;
     const garage = { x: home.info.x + Math.cos(home.gate) * out, z: home.info.z + Math.sin(home.gate) * out, yaw: home.spawnYaw };
-    // The parts: the towns sorted by distance from home, taking every other one or so, so they're spread out and need a drive.
-    const towns = [...TOWNS].sort((a, b) => Math.hypot(a.cx - home.info.x, a.cz - home.info.z) - Math.hypot(b.cx - home.info.x, b.cz - home.info.z));
-    const chosen = [0, 2, 3, 5, 7].map((i) => towns[Math.min(i, towns.length - 1)]);
-    const spots = chosen.map((town, i) => ({ x: town.cx + (i % 2 === 0 ? -1 : 1) * town.halfLen * 0.35, z: town.streetZs[0] }));
     const host: TankerHost = {
       scene: this.scene,
       world: this.world,
@@ -789,7 +786,7 @@ export class Game {
       buddyNames: () => this.settings.buddyNames,
       nameTags: () => this.settings.nameTags,
     };
-    this.tanker = new TankerRun(host, spots, garage);
+    this.tanker = new TankerRun(host, this.enemyBases.map((b) => b.name), garage);
   }
 
   /** The player climbs aboard the rig as the tank, and any buddies already out go up on its guns. */
@@ -1797,7 +1794,16 @@ export class Game {
       const station = this.addBaseStation(base);
       this.sound.music.stinger();
       const left = this.enemyBases.length - this.announcedBases.size;
-      if (left === 0) {
+      if (this.tanker) {
+        // Each base drops a part of the bomb tanker; once they're all down the Fortress is still sealed.
+        const part = this.tanker.partDropped(this.enemyBases.indexOf(base), base.center);
+        this.hud.showBanner(
+          `${base.title.toUpperCase()} DESTROYED!`,
+          left === 0
+            ? `The ${part} dropped in the ruins · the Fortress is sealed: fit the parts to the bomb tanker to blow it open`
+            : `The ${part} dropped in the ruins, in a beam of light · ${left} base${left > 1 ? 's' : ''} to go`,
+        );
+      } else if (left === 0) {
         this.startFinalAssault();
       } else {
         this.hud.showBanner(
@@ -2439,7 +2445,7 @@ export class Game {
             name: f.title,
             distance: fortressDist,
             objectives: f.locked
-              ? [{ label: `Locked! Destroy all ${this.enemyBases.length} enemy bases to open the gates`, done: false }]
+              ? [{ label: this.tanker ? 'Sealed! Destroy the enemy bases for the parts, then blow the gates with the bomb tanker' : `Locked! Destroy all ${this.enemyBases.length} enemy bases to open the gates`, done: false }]
               : f.objectives.map((o) => ({ label: o.label, done: o.isDestroyed() })),
           }
         : near && near.distance < CHECKLIST_RANGE

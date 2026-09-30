@@ -1,6 +1,6 @@
 import { mulberry32 } from '../utils/rng';
 import { randRange } from '../utils/math';
-import { WORLD_HALF, WORLD_SEED, FRIENDLY_BASES, ENEMY_BASE_COUNT, FORTRESS_HALF, KNIGHTS, distanceToFriendlyBase } from '../core/config';
+import { WORLD_HALF, WORLD_SEED, FRIENDLY_BASES, ENEMY_BASE_COUNT, FORTRESS_HALF, FORTRESS_CENTER, KNIGHTS, distanceToFriendlyBase } from '../core/config';
 import { TOWNS } from './TownPlan';
 import type { EnemyArmy } from '../utils/plastic';
 
@@ -66,8 +66,8 @@ function plan(): { sites: Site[]; lakes: Lake[] } {
     return true;
   };
 
-  // The Fortress holds the middle of the map; everything else keeps clear of it.
-  sites.push({ kind: 'fortress', name: 'Fortress', cx: 0, cz: 0, halfX: FORTRESS_HALF, halfZ: FORTRESS_HALF, rotated: false, flip: 1 });
+  // The Fortress holds its ground (the middle of the map, or a corner on the first mission); everything else keeps clear of it.
+  sites.push({ kind: 'fortress', name: 'Fortress', cx: FORTRESS_CENTER.x, cz: FORTRESS_CENTER.z, halfX: FORTRESS_HALF, halfZ: FORTRESS_HALF, rotated: false, flip: 1 });
 
   // Airport next: it needs the most room.
   for (let attempt = 0; attempt < 400 && !KNIGHTS && !sites.some((s) => s.kind === 'airport'); attempt++) {

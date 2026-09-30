@@ -1,6 +1,6 @@
 import { mulberry32 } from '../utils/rng';
 import { randRange } from '../utils/math';
-import { WORLD_HALF, WORLD_SEED, FORTRESS_HALF, distanceToFriendlyBase } from '../core/config';
+import { WORLD_HALF, WORLD_SEED, FORTRESS_HALF, FORTRESS_CENTER, distanceToFriendlyBase } from '../core/config';
 
 export const ROAD_WIDTH = 12;
 const TOWN_COUNT = 8;
@@ -101,7 +101,7 @@ function generateTowns(): Town[] {
     const x = randRange(rng, -WORLD_HALF + 260, WORLD_HALF - 260);
     const z = randRange(rng, -WORLD_HALF + 260, WORLD_HALF - 260);
     if (distanceToFriendlyBase(x, z) < TOWN_MIN_DIST_FROM_BASE) continue;
-    if (Math.max(Math.abs(x), Math.abs(z)) < FORTRESS_HALF + 240) continue; // the middle is the Fortress's
+    if (Math.max(Math.abs(x - FORTRESS_CENTER.x), Math.abs(z - FORTRESS_CENTER.z)) < FORTRESS_HALF + 240) continue; // that patch is the Fortress's
     if (towns.some((t) => Math.hypot(x - t.cx, z - t.cz) < TOWN_MIN_SPACING)) continue;
     towns.push(buildTown(x, z, rng));
   }
