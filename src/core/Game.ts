@@ -14,12 +14,14 @@ import type { Building } from '../world/Building';
 import { Bunker } from '../world/Bunker';
 import type { EnemyBase } from '../world/EnemyBase';
 import type { Fortress } from '../world/Fortress';
-import { ENEMY_BASE_HALF, SITES, siteToWorld, siteYaw } from '../world/Landmarks';
+import { ENEMY_BASE_HALF, SITES, siteToWorld, siteYaw, isInLandmark } from '../world/Landmarks';
 import { LaunchPad } from '../world/MoonRocket';
 import { MoonBase } from '../world/MoonBase';
 import { TreeManager } from '../world/TreeManager';
 import type { LandmarkSet } from '../world/LandmarkBuilders';
 import { TOWNS } from '../world/TownPlan';
+import { TankerRun, type TankerHost } from '../world/TankerRun';
+import type { EnemyJeep } from '../entities/EnemyJeep';
 import { MOTORBIKE_AIRBORNE_HEIGHT, PlayerTank, type Vehicle } from '../entities/PlayerTank';
 import type { Tank, Faction } from '../entities/Tank';
 import { EnemyTank } from '../entities/EnemyTank';
@@ -434,6 +436,8 @@ export class Game {
   private escapeLeft: number | null = null;
   private ending: Ending | null = null;
   private moonBase: MoonBase | null = null;
+  /** The bomb tanker objective on the first mission: parts to find, then the ride to the Fortress. */
+  private tanker: TankerRun | null = null;
 
   constructor(container: HTMLElement) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -612,6 +616,7 @@ export class Game {
     this.player = new PlayerTank(this.world, start.x, start.z, start.yaw);
     this.scene.add(this.player.root);
     this.hitRegistry.register(this.player.physicsCollider, { kind: 'tank', tank: this.player });
+    if (MISSION === 1) this.setupTanker();
     this.hud.setSettings(this.settings, (s) => {
       this.settings = s;
       saveSettings(s);
@@ -643,8 +648,11 @@ export class Game {
     else if (MISSION === 3) this.hud.showBanner('MISSION 3: JUNGLE STRIKE', 'The enemy is hiding in the jungle. Drive or blast through the trees to find their bases!');
     else if (MISSION === 4) this.hud.showBanner('MISSION 4: CASTLE SIEGE', 'Knights, cannons and dragons! Knock down their castles, then the Great Castle');
     else if (MISSION === 5) this.hud.showBanner('MISSION 5: ZOMBIE ATTACK!', 'Every army together! Keep the zombies away from the Fortress wall');
-    else this.hud.showBanner('GREEN & RED ARE FRIENDS', 'Tan and blue are the enemy. Knock out their bases!');
-    if (import.meta.env.DEV) (window as unknown as { game: Game }).game = this;
+    else this.hud.showBanner('GREEN & RED ARE FRIENDS', 'Tan and blue are the enemy. Knock out their bases, or find the parts to build a bomb tanker!');
+    if (import.meta.env.DEV) {
+      (window as unknown as { game: Game }).game = this;
+      if (new URLSearchParams(window.location.search).get('tanker') === 'run') this.tanker?.skipToRun();
+    }
     this.lastPlayerPosition.copy(this.player.position);
     this.sound.music.start();
     this.clock.start();
@@ -668,6 +676,94 @@ export class Game {
     lamp.target.position.set(0, chopper ? -60 : -3, chopper ? -45 : -30);
     lamp.distance = chopper ? 170 : 120;
     lamp.intensity = chopper ? 120 : 45;
+  }
+
+  // ---------- the bomb tanker ----------
+
+  /**
+   * The first mission's other way to win: five parts lie in five of the towns, and the rig they go
+   * on is parked on the highway just outside Cooper's Base.
+   */
+  private setupTanker(): void {
+    const home = this.familyBases[0];
+    const out = BASE_RADIUS + 40;
+    const garage = { x: home.info.x + Math.cos(home.gate) * out, z: home.info.z + Math.sin(home.gate) * out, yaw: home.spawnYaw };
+    // The parts: the towns sorted by distance from home, taking every other one or so, so they're spread out and need a drive.
+    const towns = [...TOWNS].sort((a, b) => Math.hypot(a.cx - home.info.x, a.cz - home.info.z) - Math.hypot(b.cx - home.info.x, b.cz - home.info.z));
+    const chosen = [0, 2, 3, 5, 7].map((i) => towns[Math.min(i, towns.length - 1)]);
+    const spots = chosen.map((town, i) => ({ x: town.cx + (i % 2 === 0 ? -1 : 1) * town.halfLen * 0.35, z: town.streetZs[0] }));
+    const host: TankerHost = {
+      scene: this.scene,
+      world: this.world,
+      player: this.player,
+      fortress: this.fortress,
+      obstacles: {
+        blocked: (x, z) =>
+          isInLandmark(x, z, 16) || waterDepthAt(x, z) > 0.2 || inMoat(x, z, 14) || FRIENDLY_BASES.some((b) => Math.hypot(x - b.x, z - b.z) < BASE_RADIUS + 30),
+        buildings: this.buildings.map((b) => ({ x: b.center.x, z: b.center.z, hx: b.halfExtents.x, hz: b.halfExtents.z })),
+      },
+      register: (jeep) => {
+        this.scene.add(jeep.root);
+        this.hitRegistry.register(jeep.physicsCollider, { kind: 'tank', tank: jeep });
+      },
+      remove: (jeep, blast) => this.removeRaider(jeep, blast),
+      explode: (at, size) => this.explode(at, size, 'player'),
+      smoke: (at) => this.impacts.trailPuff(at),
+      dust: (at) => this.impacts.dustPuff(at),
+      flash: (origin, direction, scale) => this.impacts.muzzleFlash(origin, direction, scale),
+      tracer: (origin, direction, faction, exclude) => this.fireBullet({ origin, direction }, exclude, faction),
+      shake: (amount) => this.cameraRig.addShake(amount),
+      play: (name, at, volume, rate, minGap) => this.sound.play(name, { at, volume, rate, minGap }),
+      callout: (text, color) => this.hud.showCallout(text, color),
+      banner: (title, sub) => this.hud.showBanner(title, sub),
+      crush: (at, radius) => this.crushAt(at, radius),
+      board: () => this.boardTanker(),
+      collapse: (building) => {
+        building.takeDamage(1e6);
+        if (building.destroyed) this.collapseBuilding(building, 'player');
+      },
+      buddyNames: () => this.settings.buddyNames,
+      nameTags: () => this.settings.nameTags,
+    };
+    this.tanker = new TankerRun(host, spots, garage);
+  }
+
+  /** The player climbs aboard the rig as the tank, and any buddies already out go up on its guns. */
+  private boardTanker(): void {
+    if (this.player.vehicle !== 'tank' || this.pendingSwap) {
+      this.pendingSwap = null;
+      this.player.setVehicle('tank');
+      this.rideTime = 0;
+      this.aimHeadlight();
+    }
+    for (const buddy of this.buddies) {
+      this.impacts.changePuff(buddy.position.clone());
+      this.hitRegistry.unregister(buddy.physicsCollider);
+      this.scene.remove(buddy.root);
+      buddy.dispose();
+    }
+    this.buddies = [];
+  }
+
+  /** A raider's jeep is knocked out (with a blast, and now and then a gag) or drives off. */
+  private removeRaider(jeep: EnemyJeep, blast: boolean): void {
+    const roll = Math.random();
+    const gag = blast ? (roll < 0.3 ? 'turtle' : roll < 0.42 ? 'firework' : null) : null;
+    if (blast) this.explode(jeep.position.clone(), gag === 'firework' ? 1.2 : 2.6, null);
+    if (gag === 'turtle') this.wrecks.turtle(jeep.root);
+    else if (gag === 'firework') this.wrecks.firework(jeep.root);
+    if (blast) this.addRocketCharge(CHARGE_PER_TANK);
+    this.hitRegistry.unregister(jeep.physicsCollider);
+    if (!gag) this.scene.remove(jeep.root);
+    jeep.dispose();
+  }
+
+  /** Whatever's in the tanker's way gets bowled over: soldiers, enemy tanks and helicopters. */
+  private crushAt(at: THREE.Vector3, radius: number): void {
+    this.troops.blast(at, radius, 'player');
+    for (const enemy of this.targetableEnemies) {
+      if (enemy.position.distanceTo(at) < radius + 3) enemy.takeDamage(300);
+    }
   }
 
   // ---------- spawning ----------
@@ -1355,8 +1451,9 @@ export class Game {
     const p = this.player.position;
     const flying = this.player.isChopper;
     // The chopper flies straight over jeep stations, and tops up anywhere over its own pad.
-    const station =
-      this.stations.find((s) => (s.kind === 'chopper' ? s.contains(p, flying ? CHOPPER_TOP_UP_REACH : 0) : !flying && s.contains(p))) ?? null;
+    const station = this.tanker?.riding
+      ? null
+      : this.stations.find((s) => (s.kind === 'chopper' ? s.contains(p, flying ? CHOPPER_TOP_UP_REACH : 0) : !flying && s.contains(p))) ?? null;
     if (station && station !== this.inStation && !this.pendingSwap) {
       station.celebrate();
       if (this.player.vehicle === station.kind) {
@@ -1656,7 +1753,8 @@ export class Game {
         4: 'The Great Castle has fallen! Every knight is bowled over and every dragon is down.',
         5: '',
       };
-      this.hud.showVictory(message[MISSION], nextMission ? '' : 'Keep driving around and enjoy it!');
+      const bombed = MISSION === 1 && this.tanker?.active;
+      this.hud.showVictory(bombed ? 'The bomb tanker blew the Fortress sky-high! The toy box is saved!' : message[MISSION], nextMission ? '' : 'Keep driving around and enjoy it!');
       this.sound.music.fanfare();
       this.victoryTimer = nextMission ? NEXT_MISSION_DELAY : VICTORY_SCREEN_TIME;
     }
@@ -2109,12 +2207,32 @@ export class Game {
   private rocketWaypoint(): HUDState['waypoint'] {
     const pad = this.launchPad;
     if (!pad || this.escapeLeft === null || this.ending) return null;
-    const view = pad.middle.applyMatrix4(this.camera.matrixWorldInverse);
+    const distance = Math.hypot(this.player.position.x - pad.position.x, this.player.position.z - pad.position.z);
+    return this.waypointTo(pad.middle, `ROCKET ${Math.round(distance)} m`);
+  }
+
+  /** The bomb tanker's finale: the camera cuts to the gate to watch the rig go in and the Fortress go up. */
+  private updateTankerCamera(dt: number): boolean {
+    const shot = this.tanker?.cameraShot();
+    if (!shot) return false;
+    this.cameraRig.updateCinematic(shot.position, shot.look, dt, 2.5);
+    return true;
+  }
+
+  /** The bomb tanker's pointer: the next part to find, or the rig once there's something to fit. */
+  private tankerWaypoint(): HUDState['waypoint'] {
+    const way = this.tanker?.waypoint(this.player.position);
+    return way ? this.waypointTo(way.position, way.label) : null;
+  }
+
+  /** A pointer to a spot in the world: over it on screen, or pinned to the screen edge toward it. */
+  private waypointTo(point: THREE.Vector3, label: string): HUDState['waypoint'] {
+    const view = point.clone().applyMatrix4(this.camera.matrixWorldInverse);
     let x = view.x;
     let y = view.y;
     let onScreen = false;
     if (view.z < -1) {
-      const ndc = pad.middle.project(this.camera);
+      const ndc = point.clone().project(this.camera);
       x = ndc.x;
       y = ndc.y;
       onScreen = Math.abs(x) < 0.92 && Math.abs(y) < 0.8;
@@ -2126,13 +2244,12 @@ export class Game {
       x /= k;
       y /= k;
     }
-    const distance = Math.hypot(this.player.position.x - pad.position.x, this.player.position.z - pad.position.z);
     return {
       x: ((x + 1) / 2) * window.innerWidth,
       y: ((1 - y) / 2) * window.innerHeight,
       onScreen,
       angle: Math.atan2(-y, x),
-      label: `ROCKET ${Math.round(distance)} m`,
+      label,
     };
   }
 
@@ -2236,6 +2353,7 @@ export class Game {
         const site = SITES.find((t) => t.kind === 'airport');
         return air && site ? { x: site.cx, z: site.cz, total: air.total, left: air.left } : null;
       })(),
+      tanker: this.tanker && this.tanker.phase === 'hunt' ? this.tanker.mapMarkers() : null,
     };
     return this.cachedMapView;
   }
@@ -2325,12 +2443,13 @@ export class Game {
       soundLocked: this.sound.locked && (this.settings.sfxVolume > 0 || this.settings.musicVolume > 0),
       buddyMax: MAX_BUDDIES,
       cinematic,
-      cinematicLabel: this.ending ? '' : '● ROCKET CAM',
-      waypoint: cinematic ? null : this.rocketWaypoint(),
+      cinematicLabel: this.ending ? '' : this.tanker?.cinematic ? '● BOMB CAM' : '● ROCKET CAM',
+      waypoint: cinematic ? null : this.rocketWaypoint() ?? this.tankerWaypoint(),
       enemyBasesLeft: this.enemyBases.filter((b) => !b.isDestroyed).length,
       enemyBasesTotal: this.enemyBases.length,
       nearbyBase: checklist,
       airSupport: this.airSupport(),
+      tanker: this.tanker?.hud() ?? null,
     };
   }
 
@@ -2380,10 +2499,14 @@ export class Game {
     }
 
     // The tank sits still (and can't be hurt) while the rocket cam or the zombie mission's ending plays.
-    const inSequence = this.rocketSeq !== null || this.ending !== null;
+    const inSequence = this.rocketSeq !== null || this.ending !== null || (this.tanker?.cinematic ?? false);
+    // On the bomb tanker the rig does the driving: the player only aims and fires.
+    const riding = this.tanker?.riding ?? false;
     const input = inSequence
       ? { ...rawInput, throttle: 0, steer: 0, moveX: 0, moveY: 0, aimYawDelta: 0, aimPitchDelta: 0, firing: false, jamFiring: false }
-      : rawInput;
+      : riding
+        ? { ...rawInput, throttle: 0, steer: 0, moveX: 0, moveY: 0, resetPressed: false }
+        : rawInput;
 
     if (!inSequence) {
       if (input.cameraTogglePressed) this.cameraRig.toggle();
@@ -2406,7 +2529,7 @@ export class Game {
       if (input.megaJamPressed && this.player.vehicle !== 'motorbike') this.tryMegaJam();
       this.megaJamCharge = Math.min(1, this.megaJamCharge + dt / MEGA_JAM_RECHARGE);
       // A buddy rolls in by themselves as soon as the meter's full.
-      if (this.buddyCharge >= 1 && this.buddies.length < MAX_BUDDIES) this.spawnBuddy();
+      if (this.buddyCharge >= 1 && this.buddies.length < MAX_BUDDIES && !this.tanker?.active) this.spawnBuddy();
       this.addRocketCharge(dt / ROCKET_RECHARGE_TIME);
       this.buddyCharge = Math.min(1, this.buddyCharge + dt / BUDDY_RECHARGE_TIME);
     } else if (this.ending && input.mapTogglePressed) {
@@ -2444,8 +2567,10 @@ export class Game {
       if (slot.tank && !(slot.tank instanceof HelicopterEnemy)) slot.tank.shielded = this.sealedInFortress(slot.tank.position);
     }
 
+    this.tanker?.update(dt);
     const before = this.player.position.clone();
     const playerShot = this.player.step(input, dt);
+    this.tanker?.carryPlayer();
     if (this.player.vehicle === 'motorbike') {
       this.bikeDustTimer = Math.max(0, this.bikeDustTimer - dt);
       if (this.player.heightAboveGround < MOTORBIKE_AIRBORNE_HEIGHT && this.bikeDustTimer <= 0) {
@@ -2596,6 +2721,7 @@ export class Game {
     const tankPositions = [...(playerLow ? [this.player] : []), ...this.buddies.filter((b) => !b.flying), ...this.enemySlots.flatMap((slot) => slot.tank ? [slot.tank] : []), ...this.redSlots.flatMap((slot) => slot.tank ? [slot.tank] : [])]
       .filter((tank) => !tank.isDestroyed)
       .map((tank) => tank.position);
+    if (this.tanker) tankPositions.push(...this.tanker.plowPoints());
     this.trees.update(dt, tankPositions);
 
     this.world.step();
@@ -2662,7 +2788,7 @@ export class Game {
       this.impacts.splash(bow, 0.3);
     }
 
-    const cinematic = this.updateEnding(dt) || this.updateRocketSequence(dt);
+    const cinematic = this.updateEnding(dt) || this.updateRocketSequence(dt) || this.updateTankerCamera(dt);
     let aim: ReturnType<Game['updateAim']> = { screen: null, range: null, target: 'none' };
     let lockScreen: { x: number; y: number } | null = null;
     let aaLockScreen: { x: number; y: number } | null = null;
@@ -2672,6 +2798,7 @@ export class Game {
     } else {
       this.cameraRig.setAerial(this.player.isChopper);
       this.cameraRig.setJumpView(this.player.inRocketJump);
+      this.cameraRig.setRideView(this.tanker?.riding ?? false);
       this.cameraRig.update(this.player, dt);
       aim = this.updateAim();
       if (this.player.vehicle !== 'motorbike' && (this.player.vehicle !== 'tank' ? this.missileCharge >= 1 : this.rocketCharge >= 1) && !this.rocketsDamaged) {

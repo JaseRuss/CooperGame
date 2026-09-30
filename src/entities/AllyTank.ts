@@ -50,7 +50,7 @@ function nameTexture(name: string): THREE.CanvasTexture {
 }
 
 /** A floating name tag, readable through walls so you can always spot your buddies. */
-function nameTag(name: string): THREE.Sprite {
+export function nameTag(name: string): THREE.Sprite {
   const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: nameTexture(name), depthTest: false, transparent: true }));
   sprite.scale.set(4.8, 1.2, 1);
   sprite.position.y = 3.6;

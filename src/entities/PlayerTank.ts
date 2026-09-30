@@ -371,6 +371,19 @@ export class PlayerTank extends Tank {
     this.body.setNextKinematicTranslation(this.root.position);
   }
 
+  /**
+   * Rides a moving platform (the bomb tanker): sits at `position` with the hull turned to `yaw`,
+   * while the turret keeps pointing where it was aimed in the world.
+   */
+  rideAt(position: THREE.Vector3, yaw: number): void {
+    const turn = wrap(yaw - this.yaw);
+    this.setHullHeading(yaw);
+    this.aim(-turn, 0);
+    this.body.setTranslation(position, true);
+    this.body.setRotation(this.root.quaternion, true);
+    this.root.position.copy(position);
+  }
+
   /** Time's up: bring the chopper down onto whatever is below. */
   beginLanding(): void {
     if (this.isChopper) this.landingMode = true;

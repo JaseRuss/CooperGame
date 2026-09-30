@@ -204,6 +204,29 @@ sound on.
   factory goes down in 7 shells instead of 13.
 - The pause map shows where the enemy is gathered as a red glow.
 
+## The bomb tanker (Mission 1)
+
+The first mission has a second way to win: instead of flattening the five bases, build a
+**bomb tanker** and blow the Fortress up with it.
+
+- **Find the parts.** Five parts are lying in five of the towns, each on a pallet under a tall
+  beam of light: the **Armoured Engine**, **Bomb Casing**, **Explosives**, **Detonator** and
+  **Turret Guns**. The gold arrow on screen points at the nearest one, and they show on both
+  maps as numbered gold discs. Drive over one (or fly low over it in the chopper) to pick it up.
+- **Fit them.** The rig is parked on the highway just outside Cooper's Base (an orange **B**
+  on the maps). Drive up to it with parts and they're fitted; you can make several trips.
+- **Thunder Road.** Once all five are on, your tank rides the rig's rear deck and the
+  buddies man its four gun posts. The run is on rails: the rig drives itself along the roads to
+  the Fortress while you aim and fire the tank's gun. Raider jeeps (tan and blue) come at it,
+  shooting and some ramming, explosions go off along the road, and the rig bowls over anything
+  in the way: soldiers, enemy tanks and trees. Nothing can stop the rig, so there's no game over.
+- **The bomb.** At the Fortress gate the rig blows the gates off and everyone bails out. The
+  empty tanker rolls on into the courtyard on its own, and a few seconds later the Fortress goes
+  up in a chain of explosions, which wins the mission as usual.
+
+You can still take the five bases and the Fortress the usual way. The other missions don't have
+the tanker.
+
 ## Jeep, chopper and motorbike stations
 
 Every family base has a changing station just outside the gate: Cooper's,

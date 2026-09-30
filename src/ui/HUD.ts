@@ -2,6 +2,7 @@ import type { WorldMap, MapView } from './WorldMap';
 import type { AimTarget } from './AimGuide';
 import type { ArmorZone } from '../entities/Tank';
 import type { MenuInput } from '../input/InputManager';
+import type { TankerHUD } from '../world/TankerRun';
 import { OPTION_ROWS, DEFAULT_BUDDY_NAMES, BUDDY_NAME_MAX, cleanBuddyName, type Settings } from '../core/Settings';
 import { WORLD_SIZE, MISSION, MISSIONS, KNIGHTS, ZOMBIES, type Mission } from '../core/config';
 
@@ -111,6 +112,8 @@ export interface HUDState {
   nearbyBase: { name: string; distance: number; objectives: ObjectiveLine[] } | null;
   /** The enemy jets at the airbase; once they're all down, paratroopers back up attacks on bases. Null with no airbase. */
   airSupport: { total: number; left: number; ready: boolean } | null;
+  /** The bomb tanker objective on the first mission, or null on the others. */
+  tanker: TankerHUD | null;
   driveStyle: Settings['driveStyle'];
   /** Remind the player to click so the browser hands over the mouse for aiming. */
   mouseCaptureHint: boolean;
@@ -280,6 +283,17 @@ const STYLE = `
 .hud .zrocket { margin-top:4px; font-size:13px; letter-spacing:1px; color:#ffb36a; }
 .hud .zrocket b { color:#ffd24a; font-weight:400; }
 .hud .zrocket.go { font-size:17px; color:#ff6a5a; animation:hudPulse 0.4s ease-in-out infinite alternate; }
+.hud .tanker { margin-top:7px; padding-top:6px; border-top:1px solid rgba(214,196,138,0.35); text-align:left; }
+.hud .tanker .head { font-size:13px; letter-spacing:1.5px; color:#ffb36a; display:flex; justify-content:space-between; gap:12px; }
+.hud .tanker .head b { color:#ffd24a; font-weight:400; }
+.hud .tanker .part { display:flex; align-items:center; gap:7px; font-size:11.5px; font-weight:800; letter-spacing:0.5px; color:#b8b09a; margin-top:2px; }
+.hud .tanker .part i { display:inline-block; width:11px; height:11px; border:2px solid #b8b09a; border-radius:2px; box-sizing:border-box; }
+.hud .tanker .part.found { color:#ffd24a; }
+.hud .tanker .part.found i { border-color:#ffd24a; background:#ffd24a; }
+.hud .tanker .part.fitted { color:#9be27a; }
+.hud .tanker .part.fitted i { border-color:#9be27a; background:#9be27a; }
+.hud .tanker .note { margin-top:4px; font-size:11.5px; font-weight:800; letter-spacing:0.5px; color:#c9d3dc; }
+.hud .tanker .go { font-size:17px; color:#ff6a5a; animation:hudPulse 0.4s ease-in-out infinite alternate; margin-top:4px; letter-spacing:1px; }
 .hud .waypoint { position:absolute; left:0; top:0; display:none; pointer-events:none; }
 .hud .waypoint .arrow { position:absolute; left:-13px; top:-30px; width:0; height:0; border-left:13px solid transparent; border-right:13px solid transparent;
   border-top:22px solid #ff6a5a; filter:drop-shadow(0 2px 3px #000); animation:hudPulse 0.4s ease-in-out infinite alternate; }
@@ -1232,8 +1246,45 @@ export class HUD {
         ? `FINAL ASSAULT <span style="color:#ff8a7a">DESTROY ${fort.title.toUpperCase()}</span>`
         : `ENEMY ${KNIGHTS ? 'CASTLES' : 'BASES'} LEFT <span style="color:#ff8a7a">${state.enemyBasesLeft}</span> / ${state.enemyBasesTotal}`;
     const fortFlag = `<div class="flag" style="color:${fortColor}; margin-left:6px; padding-left:10px; border-left:1px solid rgba(214,196,138,0.35)">${fortIcon}${fort.name.toUpperCase()}</div>`;
-    this.setHTML(this.baseCounter, `<div class="stencil title">${title}</div><div class="flags">${flags}${fortFlag}</div>${this.airSupportLine(state)}${ARMY_KEY}`);
+    const tanker = state.tanker;
+    if (tanker && tanker.phase !== 'hunt') {
+      // On the run the rig is the whole mission: nothing else to count.
+      this.setHTML(this.baseCounter, `<div class="stencil title">${fort.destroyed ? `VICTORY! ${fort.title.toUpperCase()} HAS FALLEN` : 'BOMB TANKER RUN'}</div>${fort.destroyed ? '' : this.tankerPanel(tanker)}${ARMY_KEY}`);
+      this.updateChecklist(state);
+      return;
+    }
+    this.setHTML(
+      this.baseCounter,
+      `<div class="stencil title">${title}</div><div class="flags">${flags}${fortFlag}</div>${this.airSupportLine(state)}${tanker && fort.locked ? this.tankerPanel(tanker) : ''}${ARMY_KEY}`,
+    );
     this.updateChecklist(state);
+  }
+
+  /** The bomb tanker: the parts to find, then the ride to the Fortress. */
+  private tankerPanel(t: TankerHUD): string {
+    const found = t.parts.filter((p) => p.found).length;
+    if (t.phase === 'hunt') {
+      const list = t.parts.map((p) => `<div class="part ${p.fitted ? 'fitted' : p.found ? 'found' : ''}"><i></i>${p.name.toUpperCase()}${p.fitted ? ' · FITTED' : p.found ? ' · CARRYING' : ''}</div>`).join('');
+      const note =
+        t.carried > 0
+          ? 'Drive up to the bomb tanker outside Cooper\'s Base to fit them'
+          : found === t.parts.length
+            ? 'Every part fitted!'
+            : 'Or build a bomb tanker instead: find the parts, then fit them at the rig outside Cooper\'s Base';
+      return `<div class="tanker"><div class="head"><span>BOMB TANKER PARTS</span><b>${found} / ${t.parts.length}</b></div>${list}<div class="note">${note}</div></div>`;
+    }
+    const crew = t.crew.length ? `<div class="note">GUNNERS · ${t.crew.join(' · ').toUpperCase()}</div>` : '';
+    if (t.phase === 'assemble') {
+      return `<div class="tanker"><div class="head"><span>THE RIG IS READY</span></div>${t.countdown !== null ? `<div class="go">HOLD ON!</div>` : ''}${crew}</div>`;
+    }
+    if (t.phase === 'run') {
+      return (
+        `<div class="tanker"><div class="head"><span>THUNDER ROAD</span><b>${Math.round(t.metresLeft)} m TO THE FORTRESS</b></div>` +
+        `<div class="bar" style="margin-top:5px"><div class="fill" style="width:${t.progress * 100}%; background:#ffb36a"></div></div>${crew}</div>`
+      );
+    }
+    if (t.phase === 'fuse') return `<div class="tanker"><div class="go">BOMB ARMED! DETONATION IN ${Math.max(1, Math.ceil(t.countdown ?? 0))}</div></div>`;
+    return '<div class="tanker"><div class="go">STAND BACK!</div></div>';
   }
 
   /** The zombie mission's scoreboard: the wave, the next one's countdown, the wall's strength and the score. */

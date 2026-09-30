@@ -56,6 +56,8 @@ export interface MapView {
   fortress: MapBase & { title: string; locked: boolean; destroyed: boolean; friendly: boolean };
   /** Changing stations that turn the tank into a jeep or a chopper. */
   stations: { x: number; z: number; kind: 'jeep' | 'chopper' | 'motorbike' }[];
+  /** The bomb tanker on the first mission: the parts still to find (numbered by part) and where the rig stands. */
+  tanker: { parts: { x: number; z: number; index: number }[]; rig: { x: number; z: number } } | null;
   /** The enemy airbase: destroy every jet and allied paratroopers drop in when you attack a base. Null where there's none. */
   airbase: { x: number; z: number; total: number; left: number } | null;
 }
@@ -290,6 +292,33 @@ export class WorldMap {
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(jeep ? 'J' : bike ? 'M' : 'H', st.x, st.z + r * 0.1);
+    }
+
+    // The bomb tanker: a gold disc with a number for each part still to find, and the rig itself as a striped square.
+    if (view.tanker) {
+      const r = Math.max(16, 6.5 / s);
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.font = `900 ${r * 1.5}px "Segoe UI", sans-serif`;
+      for (const part of view.tanker.parts) {
+        ctx.fillStyle = '#ffd24a';
+        ctx.strokeStyle = '#3a2a05';
+        ctx.lineWidth = 2 / s;
+        ctx.beginPath();
+        ctx.arc(part.x, part.z, r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = '#3a2a05';
+        ctx.fillText(String(part.index + 1), part.x, part.z + r * 0.08);
+      }
+      const rig = view.tanker.rig;
+      ctx.fillStyle = '#e8b824';
+      ctx.strokeStyle = '#1f201d';
+      ctx.lineWidth = 2.5 / s;
+      ctx.fillRect(rig.x - r, rig.z - r, r * 2, r * 2);
+      ctx.strokeRect(rig.x - r, rig.z - r, r * 2, r * 2);
+      ctx.fillStyle = '#1f201d';
+      ctx.fillText('B', rig.x, rig.z + r * 0.08);
     }
 
     // The airbase: a round plane badge, red while jets remain, green once they're all down.

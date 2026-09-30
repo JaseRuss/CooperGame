@@ -20,6 +20,10 @@ const JUMP_VIEW_BACK = 15;
 const JUMP_VIEW_RISE = 8;
 const JUMP_VIEW_LOOK_AHEAD = 12;
 const JUMP_VIEW_LOOK_DROP = 9;
+/** Riding the bomb tanker: well back and up, so the whole rig and its gunners are in the picture. */
+const RIDE_VIEW_BACK = 27;
+const RIDE_VIEW_RISE = 11;
+const RIDE_VIEW_LOOK = 22;
 const UP = new THREE.Vector3(0, 1, 0);
 
 /**
@@ -37,6 +41,8 @@ export class CameraRig {
   private aerial = false;
   /** Following the motorbike's rocket jump (see JUMP_VIEW_BACK). */
   private jumpView = false;
+  /** Riding on the bomb tanker (see RIDE_VIEW_BACK). */
+  private rideView = false;
 
   constructor(private readonly camera: THREE.PerspectiveCamera) {}
 
@@ -53,6 +59,11 @@ export class CameraRig {
   /** Pulls back and up over the motorbike while it rocket jumps, whatever the gun is aimed at. */
   setJumpView(on: boolean): void {
     this.jumpView = on;
+  }
+
+  /** Pulls the chase cam back and up for the bomb tanker's rig. */
+  setRideView(on: boolean): void {
+    this.rideView = on;
   }
 
   toggle(): void {
@@ -132,6 +143,10 @@ export class CameraRig {
       desiredPos.copy(target.position).addScaledVector(aim, -AIR_CHASE_DISTANCE).addScaledVector(up, AIR_CHASE_RISE);
       desiredPos.y = Math.max(desiredPos.y, target.position.y + 1); // never down in the ground on take-off
       desiredLook.copy(desiredPos).addScaledVector(aim, 30);
+    } else if (this.rideView) {
+      desiredPos.copy(target.position).add(new THREE.Vector3(0, RIDE_VIEW_RISE, RIDE_VIEW_BACK).applyQuaternion(aimQuat));
+      desiredLook.copy(target.position).addScaledVector(forward, RIDE_VIEW_LOOK);
+      desiredLook.y += 2 + Math.tan(target.aimPitch) * RIDE_VIEW_LOOK;
     } else if (this.jumpView) {
       desiredPos.copy(target.position).addScaledVector(forward, -JUMP_VIEW_BACK);
       desiredPos.y += JUMP_VIEW_RISE;
