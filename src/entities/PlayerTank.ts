@@ -724,6 +724,9 @@ export class PlayerTank extends Tank {
     const len = Math.min(1, Math.hypot(sx, sy));
     if (this.isChopper) {
       this.fly(sx, sy, len, dt);
+    } else if (this.rocketJumping) {
+      this.idleTime = 0;
+      this.driveRocketJump(input, sx, sy, len, dt);
     } else if (this.driveStyle === 'classic') {
       const stickLen = Math.hypot(input.moveX, input.moveY);
       if (stickLen > 0) this.driveClassic(input.moveX, input.moveY, Math.min(1, stickLen), dt);
@@ -845,6 +848,20 @@ export class PlayerTank extends Tank {
       flame.visible = this.boostTime > 0;
       if (flame.visible) flame.scale.set(1, 1, 0.8 + Math.random() * 0.5 + this.boostTime);
     }
+  }
+
+  /**
+   * The boosters carry the bike forward at full speed for the whole jump. The stick (or left/right
+   * keys) still steers: a stick direction turns the nose towards it, but never reverses.
+   */
+  private driveRocketJump(input: InputState, sx: number, sy: number, len: number, dt: number): void {
+    let steer = input.steer;
+    if (len > 0) {
+      const desiredYaw = this.turretWorldYaw - Math.atan2(sx, sy);
+      steer = clamp(-wrap(desiredYaw - this.yaw) * 2.5, -1, 1);
+    }
+    this.driveDir = 1;
+    this.drive(1, steer, dt, this.maxSpeed);
   }
 
   private driveCameraRelative(sx: number, sy: number, len: number, dt: number): void {
