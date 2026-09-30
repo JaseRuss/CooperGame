@@ -72,19 +72,29 @@ interface JumpHill {
   spread: number;
 }
 
-/** Broad, steep-sided natural mounds seeded per mission, placed clear of bases, towns, sites and lakes. */
+/** How far a hill's slope reaches past its middle, in multiples of its spread (beyond that it adds under 4% of its height). */
+const HILL_REACH = 2.6;
+
+/**
+ * Broad, steep-sided natural mounds seeded per mission, placed clear of bases, towns, sites and
+ * lakes. The clearance is measured from the edge of each town and site (not its middle, which
+ * let hills rise through the airport's runways) and allows for the hill's own slopes.
+ */
 const JUMP_HILLS: JumpHill[] = (() => {
   const rng = mulberry32(WORLD_SEED ^ 0x4a554d50);
   const hills: JumpHill[] = [];
-  for (let tries = 0; tries < 1800 && hills.length < 28; tries++) {
+  for (let tries = 0; tries < 3000 && hills.length < 28; tries++) {
     const x = (rng() * 2 - 1) * (WORLD_SIZE / 2 - 220);
     const z = (rng() * 2 - 1) * (WORLD_SIZE / 2 - 220);
+    const height = 11 + rng() * 7;
+    const spread = 32 + rng() * 15;
+    const reach = spread * HILL_REACH + 15;
     if (FRIENDLY_BASES.some((b) => Math.hypot(x - b.x, z - b.z) < 240)) continue;
-    if (TOWNS.some((t) => Math.hypot(x - t.cx, z - t.cz) < 180)) continue;
-    if (SITES.some((s) => Math.hypot(x - s.cx, z - s.cz) < 180)) continue;
+    if (TOWNS.some((t) => distanceToTown(t, x, z) < reach)) continue;
+    if (SITES.some((s) => distanceToSite(s, x, z) < reach)) continue;
     if (LAKES.some((l) => Math.hypot(x - l.cx, z - l.cz) < l.radius + 110)) continue;
     if (hills.some((h) => Math.hypot(x - h.x, z - h.z) < 150)) continue;
-    hills.push({ x, z, height: 11 + rng() * 7, spread: 32 + rng() * 15 });
+    hills.push({ x, z, height, spread });
   }
   return hills;
 })();

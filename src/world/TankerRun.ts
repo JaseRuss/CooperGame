@@ -74,6 +74,10 @@ interface Raider {
   fire: number;
   pos: THREE.Vector2;
   heading: number;
+  /** Rammers: how many times it has hit the rig, the seconds left backing off after the last hit, and the seconds since it last started a run in. */
+  rams: number;
+  recoil: number;
+  approach: number;
 }
 
 interface SetPiece {
@@ -101,6 +105,15 @@ const FUSE_SPEED = 15;
 const FUSE_MAX = 9;
 const GATE_INSET = 98;
 const DEMOLITION_GAP = 0.22;
+/**
+ * A rammer bounces off the rig and swerves out this far to the side (and drops back a little)
+ * for a few seconds, which gives the player a clear shot, before it comes in again. It's wrecked
+ * on its last ram.
+ */
+const RAM_RECOIL_TIME = 3.2;
+const RAM_RECOIL_LANE = 22;
+const RAM_RECOIL_BACK = 14;
+const RAM_LIMIT = 3;
 
 const UP = new THREE.Vector3(0, 1, 0);
 
@@ -511,7 +524,7 @@ export class TankerRun {
         lane,
         alongStart: rammer ? -(70 + i * 10) : ahead ? 120 : -110,
         alongEnd: rammer ? 0 : ahead ? 8 - i * 4 : -12 + i * 3,
-        life: rammer ? 14 : 26,
+        life: rammer ? 24 : 26,
       });
     }
   }
@@ -538,6 +551,9 @@ export class TankerRun {
       fire: 0.5 + Math.random() * 0.5,
       pos: new THREE.Vector2(x, z),
       heading: this.rigYaw,
+      rams: 0,
+      recoil: 0,
+      approach: 0,
     });
   }
 
@@ -562,11 +578,26 @@ export class TankerRun {
         this.raiders.splice(i, 1);
         continue;
       }
-      const t = clamp(raid.age / 8, 0, 1);
+      raid.approach += dt;
+      // A rammer coming back in after a bounce is quicker about it than its first run.
+      const t = raid.kind === 'rammer' ? clamp(raid.approach / (raid.rams > 0 ? 4 : 8), 0, 1) : clamp(raid.age / 8, 0, 1);
       const ease = t * t * (3 - 2 * t);
       let along = raid.alongStart + (raid.alongEnd - raid.alongStart) * ease;
       let lane = raid.lane + Math.sin(raid.age * 1.6 + raid.phase) * 2.2;
-      if (raid.kind === 'rammer') lane = raid.lane * (1 - ease);
+      if (raid.kind === 'rammer') {
+        lane = raid.lane * (1 - ease);
+        if (raid.recoil > 0) {
+          // Knocked off: it swerves well out and drops back before having another go.
+          raid.recoil -= dt;
+          lane = Math.sign(raid.lane) * RAM_RECOIL_LANE;
+          along = -RAM_RECOIL_BACK;
+          if (raid.recoil <= 0) {
+            raid.approach = 0;
+            raid.alongStart = along;
+            raid.lane = lane;
+          }
+        }
+      }
       if (leaving) {
         along -= (raid.age - Math.min(raid.age, raid.life)) * 30 + 10;
         lane += Math.sign(raid.lane || 1) * (raid.age - Math.min(raid.age, raid.life)) * 5;
@@ -588,11 +619,22 @@ export class TankerRun {
       jeep.place(raid.pos.x, raid.pos.y, raid.heading, dt);
 
       const toRig = Math.hypot(rigPos.x - raid.pos.x, rigPos.z - raid.pos.y);
-      if (raid.kind === 'rammer' && toRig < 6.5 && flying) {
-        // Slams into the side: a blast (as it goes), and the rig shrugs it off.
+      if (raid.kind === 'rammer' && raid.recoil <= 0 && !leaving && toRig < 6.5 && flying) {
+        // Slams into the side and the rig shrugs it off. The jeep bounces away (a clear shot for
+        // the player) and comes back for more, until one ram too many wrecks it.
         this.host.shake(0.7);
+        raid.rams++;
+        if (raid.rams >= RAM_LIMIT) {
+          this.host.callout('THE RAMMER WRECKED ITSELF!', '#ffb050');
+          jeep.health = 0;
+          continue;
+        }
+        const contact = jeep.position.clone().lerp(rigPos, 0.35);
+        contact.y += 1.2;
+        this.host.explode(contact, 0.6);
+        this.host.play('clang', contact, 0.9, 0.8);
         this.host.callout(Math.random() < 0.5 ? 'RAMMER! IT BOUNCED OFF!' : 'WHAM! STILL ROLLING!', '#ffb050');
-        jeep.health = 0;
+        raid.recoil = RAM_RECOIL_TIME;
         continue;
       }
       if (raid.kind === 'shooter' && !leaving && toRig < 75) {

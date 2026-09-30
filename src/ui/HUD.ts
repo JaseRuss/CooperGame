@@ -63,6 +63,8 @@ export interface HUDState {
   health: number;
   maxHealth: number;
   reloadFraction: number; // 0 = ready to fire, 1 = just fired
+  /** Seconds left of a double damage pickup (0 when there's none). */
+  damageBoost: number;
   /**
    * Set while in the jeep, chopper or motorbike from a changing station: seconds left of it, its
    * missile reload (0..1; the motorbike's rocket jump charge), and whether the chopper is coming
@@ -1041,6 +1043,8 @@ export class HUD {
     const chopper = ride?.vehicle === 'chopper';
     const bike = ride?.vehicle === 'motorbike';
     this.gunName.textContent = ride ? (chopper ? 'CHIN GUN' : bike ? 'MACHINE GUN' : 'JAM GUN') : 'MAIN GUN';
+    if (state.damageBoost > 0) this.gunName.textContent += ` · 2× DAMAGE ${Math.ceil(state.damageBoost)}s`;
+    this.gunName.style.color = state.damageBoost > 0 ? '#ff9a3d' : '';
     this.reloadFill.style.width = `${(1 - state.reloadFraction) * 100}%`;
     this.reloadText.textContent = ride ? 'RAPID FIRE' : loaded ? 'LOADED' : 'RELOADING';
     this.reloadText.style.color = ride ? (chopper ? '#ffd24a' : '#ff8aa8') : loaded ? '#ffd24a' : '#eef3f8';
