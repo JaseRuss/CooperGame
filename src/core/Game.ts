@@ -21,7 +21,7 @@ import { MoonBase } from '../world/MoonBase';
 import { TreeManager } from '../world/TreeManager';
 import type { LandmarkSet } from '../world/LandmarkBuilders';
 import { TOWNS } from '../world/TownPlan';
-import { TankerRun, type TankerHost } from '../world/TankerRun';
+import { TankerRun, SHELL_SPLASH_RADIUS, type TankerHost } from '../world/TankerRun';
 import type { EnemyJeep } from '../entities/EnemyJeep';
 import { MOTORBIKE_AIRBORNE_HEIGHT, PlayerTank, type Vehicle } from '../entities/PlayerTank';
 import type { Tank, Faction } from '../entities/Tank';
@@ -798,7 +798,7 @@ export class Game {
       },
       remove: (jeep, blast) => this.removeRaider(jeep, blast),
       explode: (at, size) => this.explode(at, size, 'player'),
-      smoke: (at) => this.impacts.trailPuff(at),
+      smoke: (at, rise) => this.impacts.trailPuff(at, rise),
       dust: (at) => this.impacts.dustPuff(at),
       flash: (origin, direction, scale) => this.impacts.muzzleFlash(origin, direction, scale),
       tracer: (origin, direction, faction, exclude) => this.fireBullet({ origin, direction }, exclude, faction),
@@ -1098,7 +1098,10 @@ export class Game {
           result.tree.knockDown(shot.direction);
           this.impacts.dustPuff(point);
         }
-        else this.explode(point, 1, tank.faction);
+        else {
+          this.explode(point, 1, tank.faction);
+          if (tank === this.player) this.tanker?.splash(point, SHELL_SPLASH_RADIUS);
+        }
         if (tank === this.player && result.tankHit) {
           this.hud.showHitMarker(result.tankHit.zone);
           this.sound.play('clang', { volume: 0.55 });
@@ -1448,6 +1451,7 @@ export class Game {
     damage *= this.playerDamageScale;
     this.explode(point, size, 'player');
     this.impacts.addSmokeSource(point.clone(), size * 0.9, 25);
+    this.tanker?.splash(point, radius);
 
     for (const slot of this.enemySlots) {
       if (!slot.tank) continue;
