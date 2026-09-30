@@ -153,6 +153,8 @@ sound on.
   drive back to a family base to rearm. Helicopters show as pink markers on the
   maps.
 - The **red army** is on your side. Their tanks and soldiers guard every town.
+- **The edge of the map** is ringed by a yellow and black barrier with red lamp posts. Nothing
+  can drive or fly past it.
 - **Family bases** sit around the edge of the map. Drive inside one to repair
   and restock your AA missiles.
 - **Repair crates**: knocked-out enemy helicopters always drop a green crate
@@ -217,9 +219,14 @@ don't open when the bases fall. You get in by building a **bomb tanker** and dri
 - **Destroy the bases for the parts.** Each of the five enemy bases drops one part into its
   ruins when it falls, in a beam of light: the **Armoured Engine**, **Bomb Casing**,
   **Explosives**, **Detonator** and **Turret Guns**. They show on both maps as numbered gold
-  discs and on screen as an arrow. Drive over one (or fly low over it in the chopper) to pick it up.
+  discs and on screen as an arrow. Drive over one to pick it up, or fly over it in the chopper
+  and it's winched up from any height.
+- **Bring them home.** Parts you're carrying ride on a little trailer (with a yellow pennant)
+  behind the tank, jeep or motorbike, or hang from a winch cable under the chopper, a reminder
+  to take them back.
 - **Fit them.** The rig is parked on the highway just outside Cooper's Base (an orange **B**
-  on the maps). Drive up to it with parts and they're fitted; you can make several trips.
+  on the maps). Drive or fly within about 48 m of it with parts and they're fitted (the chopper
+  doesn't need to land); you can make several trips.
 - **Thunder Road.** Once all five are on, your tank rides the rig's rear deck and the
   buddies man its four gun posts. The run is on rails: the rig drives itself along the roads
   across the whole map to the Fortress while you aim and fire the tank's gun. The homing
