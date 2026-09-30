@@ -18,7 +18,7 @@ import type { SquadSpawn } from '../entities/TroopManager';
 import { mulberry32 } from '../utils/rng';
 import { randRange } from '../utils/math';
 import { ENEMY_ARMY_COLOR, ARMY_RED, ARMY_TAN, ARMY_BLUE, plastic } from '../utils/plastic';
-import { WORLD_HALF, WORLD_SEED, BASE_RADIUS, MAX_ENEMIES, FORTRESS_HALF, JUNGLE, KNIGHTS, ZOMBIES, distanceToFriendlyBase } from '../core/config';
+import { WORLD_HALF, WORLD_SEED, BASE_RADIUS, MAX_ENEMIES, FORTRESS_HALF, FORTRESS_CENTER, JUNGLE, KNIGHTS, ZOMBIES, distanceToFriendlyBase } from '../core/config';
 import { buildCottage, buildHayCart, COTTAGE_ROOFS, SHUTTER_COLORS } from './Medieval';
 import { Tree, TREE_SIZE, LAMP_SIZE, type ToppleSize } from './Tree';
 import { inMoat } from './MoatShape';
@@ -180,7 +180,7 @@ type HoldFor = (site: Site) => (() => boolean) | null;
 
 /** Army colour at a spot: the Fortress is split tan (west) and blue (east); elsewhere the nearest base's army. */
 function armyColorAt(x: number, z: number): number {
-  if (Math.max(Math.abs(x), Math.abs(z)) < FORTRESS_HALF) return x < 0 ? ARMY_TAN : ARMY_BLUE;
+  if (Math.max(Math.abs(x - FORTRESS_CENTER.x), Math.abs(z - FORTRESS_CENTER.z)) < FORTRESS_HALF) return x < FORTRESS_CENTER.x ? ARMY_TAN : ARMY_BLUE;
   return ENEMY_ARMY_COLOR[enemyArmyAt(x, z)];
 }
 

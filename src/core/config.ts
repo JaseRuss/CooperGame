@@ -90,6 +90,12 @@ export function nearestFriendlyBase(x: number, z: number): FriendlyBase {
 /** The zombie mission has no enemy bases: the zombies come from outside. */
 export const ENEMY_BASE_COUNT = ZOMBIES ? 0 : 5;
 
+/**
+ * Where the Fortress stands: the middle of the map, except on the first mission, where the bomb
+ * tanker has to drive to it from Cooper's Base (bottom of the map), so it's in the far top-left corner.
+ */
+export const FORTRESS_CENTER = MISSION === 1 ? { x: -900, z: -900 } : { x: 0, z: 0 };
+
 /** Half-size of the Fortress in the middle of the map: the final objective, locked until every enemy base falls. */
 export const FORTRESS_HALF = 110;
 

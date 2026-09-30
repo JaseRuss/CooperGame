@@ -50,7 +50,7 @@ export interface TankerHost {
 /** What the HUD shows. */
 export interface TankerHUD {
   phase: TankerPhase;
-  parts: { name: string; found: boolean; fitted: boolean }[];
+  parts: { name: string; /** The enemy base it drops from. */ source: string; /** Dropped and lying there to be picked up. */ lying: boolean; found: boolean; fitted: boolean }[];
   /** Parts picked up but not yet fitted to the rig. */
   carried: number;
   /** How far along Thunder Road (0..1), and the metres to go. */
@@ -81,8 +81,8 @@ interface SetPiece {
   done: boolean;
 }
 
-const CRUISE_SPEED = 19;
-const ACCELERATION = 6;
+const CRUISE_SPEED = 24;
+const ACCELERATION = 7;
 /** Fitting a part or all of them at the rig: how close the player has to be. */
 const DELIVER_RADIUS = 48;
 const ASSEMBLE_TIME = 6.5;
@@ -153,10 +153,11 @@ export class TankerRun {
 
   constructor(
     private readonly host: TankerHost,
-    partSpots: { x: number; z: number }[],
+    /** The enemy base each part drops from (by part number). */
+    private readonly sources: string[],
     garage: { x: number; z: number; yaw: number },
   ) {
-    this.parts = new TankerParts(host.scene, partSpots);
+    this.parts = new TankerParts(host.scene);
     this.garage = new THREE.Vector3(garage.x, heightAt(garage.x, garage.z), garage.z);
     this.rigYaw = garage.yaw;
     this.rig.root.position.copy(this.garage);
@@ -203,9 +204,10 @@ export class TankerRun {
 
   hud(): TankerHUD {
     const taken = this.parts.taken;
+    const lying = this.parts.lying;
     return {
       phase: this.phase,
-      parts: TANKER_PARTS.map((name, i) => ({ name, found: taken[i] || this.installed[i], fitted: this.installed[i] })),
+      parts: TANKER_PARTS.map((name, i) => ({ name, source: this.sources[i] ?? '', lying: lying[i], found: taken[i] || this.installed[i], fitted: this.installed[i] })),
       carried: this.carried.length,
       progress: this.length > 0 ? clamp(this.s / this.length, 0, 1) : 0,
       metresLeft: this.metresLeft,
@@ -219,7 +221,7 @@ export class TankerRun {
     // Once the Fortress is open by the ordinary route, the tanker's just a sideshow.
     if (this.phase !== 'hunt' || !this.host.fortress.locked) return null;
     const rigAt = this.rig.root.position.clone().add(new THREE.Vector3(0, 5, 0));
-    if (this.carried.length > 0 || this.parts.remaining === 0) {
+    if (this.carried.length > 0) {
       const d = Math.hypot(from.x - rigAt.x, from.z - rigAt.z);
       if (d < DELIVER_RADIUS) return null;
       return { position: rigAt, label: `BOMB TANKER ${Math.round(d)} m` };
@@ -232,6 +234,12 @@ export class TankerRun {
   plowPoints(): THREE.Vector3[] {
     if (!this.riding && this.phase !== 'fuse') return [];
     return [[-1.8, -11], [1.8, -11], [0, -4], [0, 3]].map(([x, z]) => this.rig.root.localToWorld(new THREE.Vector3(x, 0, z)));
+  }
+
+  /** An enemy base has fallen: its part drops into the ruins. Returns the part's name. */
+  partDropped(index: number, at: THREE.Vector3): string {
+    this.parts.spawn(index, at.x, at.z);
+    return TANKER_PARTS[index];
   }
 
   /** Markers for the maps. */
@@ -254,12 +262,12 @@ export class TankerRun {
       const got = this.parts.update(dt, player);
       for (const i of got) {
         this.carried.push(i);
-        const left = this.parts.remaining;
+        const missing = TANKER_PARTS.length - this.installed.filter(Boolean).length - this.carried.length;
         this.host.callout(`GOT THE ${TANKER_PARTS[i].toUpperCase()}!`, '#ffd24a');
         this.host.play('uiConfirm', undefined, 0.8);
         this.host.banner(
           `${TANKER_PARTS[i].toUpperCase()} FOUND!`,
-          left > 0 ? `${left} part${left > 1 ? 's' : ''} still out there · take it back to the bomb tanker outside Cooper's Base` : 'That\'s all five! Drive back to the bomb tanker outside Cooper\'s Base',
+          missing > 0 ? `Take it back to the bomb tanker outside Cooper's Base · ${missing} more to come from the other bases` : 'That\'s all five! Drive back to the bomb tanker outside Cooper\'s Base',
         );
       }
       if (this.carried.length > 0 && player.position.distanceTo(this.rig.root.position) < DELIVER_RADIUS) this.fit();

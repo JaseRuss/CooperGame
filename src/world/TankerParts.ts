@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { PartBuilder, tubeX, tubeZ } from '../utils/modelKit';
+import { TANKER_PARTS } from './TankerRig';
 import { plastic, ARMY_GREEN } from '../utils/plastic';
 import { surfaceHeightAt } from './Terrain';
 
@@ -10,6 +11,8 @@ const CHOPPER_RADIUS = 14;
 const CHOPPER_HEIGHT = 10;
 const HOVER = 1.3;
 const BEAM_HEIGHT = 60;
+/** A part drops in from this high. */
+const DROP_HEIGHT = 40;
 
 const ringMaterial = new THREE.MeshBasicMaterial({ color: 0xffcc33, transparent: true, opacity: 0.6, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4 });
 const beamMaterial = new THREE.MeshBasicMaterial({ color: 0xffd45a, transparent: true, opacity: 0.22, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
@@ -68,59 +71,62 @@ function partModel(index: number): THREE.Group {
 interface Pickup {
   root: THREE.Group;
   body: THREE.Group;
-  ring: THREE.Mesh;
-  beam: THREE.Mesh;
   groundY: number;
   taken: boolean;
   x: number;
   z: number;
+  /** Falling out of the sky onto the ruins (it can't be picked up until it lands). */
+  fall: number;
 }
 
 /**
- * The bomb tanker's parts, left lying about the map for the player to find: each a model on a
- * pallet with a tall beam of light. They stay until they're collected.
+ * The bomb tanker's parts. Each one drops into the ruins of an enemy base when that base falls:
+ * a model on a pallet with a tall beam of light. It stays there until it's collected.
  */
 export class TankerParts {
-  private readonly pickups: Pickup[] = [];
+  private readonly pickups: (Pickup | null)[] = TANKER_PARTS.map(() => null);
   private time = 0;
 
-  constructor(private readonly scene: THREE.Scene, spots: { x: number; z: number }[]) {
-    spots.forEach((spot, i) => {
-      const root = new THREE.Group();
-      const body = partModel(i);
-      body.scale.setScalar(1.25);
-      const ring = new THREE.Mesh(new THREE.RingGeometry(3.2, 3.7, 40).rotateX(-Math.PI / 2), ringMaterial);
-      const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 0.9, BEAM_HEIGHT, 14, 1, true).translate(0, BEAM_HEIGHT / 2, 0), beamMaterial);
-      root.add(body, ring, beam);
-      const groundY = surfaceHeightAt(spot.x, spot.z);
-      root.position.set(spot.x, groundY, spot.z);
-      ring.position.y = 0.08;
-      body.position.y = HOVER * 0.4;
-      scene.add(root);
-      this.pickups.push({ root, body, ring, beam, groundY, taken: false, x: spot.x, z: spot.z });
-    });
+  constructor(private readonly scene: THREE.Scene) {}
+
+  /** Drops the part with this index onto the ground at (x, z). */
+  spawn(index: number, x: number, z: number): void {
+    if (this.pickups[index]) return;
+    const root = new THREE.Group();
+    const body = partModel(index);
+    body.scale.setScalar(1.25);
+    const ring = new THREE.Mesh(new THREE.RingGeometry(3.2, 3.7, 40).rotateX(-Math.PI / 2), ringMaterial);
+    const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 0.9, BEAM_HEIGHT, 14, 1, true).translate(0, BEAM_HEIGHT / 2, 0), beamMaterial);
+    root.add(body, ring, beam);
+    const groundY = surfaceHeightAt(x, z);
+    root.position.set(x, groundY, z);
+    ring.position.y = 0.08;
+    body.position.y = HOVER * 0.4 + DROP_HEIGHT;
+    this.scene.add(root);
+    this.pickups[index] = { root, body, groundY, taken: false, x, z, fall: DROP_HEIGHT };
   }
 
   /** Which parts have been picked up so far. */
   get taken(): boolean[] {
-    return this.pickups.map((p) => p.taken);
+    return this.pickups.map((p) => p?.taken ?? false);
   }
 
-  get remaining(): number {
-    return this.pickups.filter((p) => !p.taken).length;
+  /** Which parts have dropped and are lying there (or fallen) for the taking. */
+  get lying(): boolean[] {
+    return this.pickups.map((p) => !!p && !p.taken);
   }
 
-  /** Where the part with this index lies, or null once it's been taken. */
+  /** Where the part with this index lies, or null if it hasn't dropped or has been taken. */
   position(index: number): THREE.Vector3 | null {
     const p = this.pickups[index];
     return p && !p.taken ? new THREE.Vector3(p.x, p.groundY + 2, p.z) : null;
   }
 
-  /** The nearest part still to find, with its number. */
+  /** The nearest part lying about, with its number. */
   nearest(from: THREE.Vector3): { index: number; position: THREE.Vector3; distance: number } | null {
     let best: { index: number; position: THREE.Vector3; distance: number } | null = null;
     this.pickups.forEach((p, index) => {
-      if (p.taken) return;
+      if (!p || p.taken) return;
       const distance = Math.hypot(p.x - from.x, p.z - from.z);
       if (!best || distance < best.distance) best = { index, position: new THREE.Vector3(p.x, p.groundY + 2, p.z), distance };
     });
@@ -133,10 +139,11 @@ export class TankerParts {
     ringMaterial.opacity = 0.45 + 0.25 * Math.sin(this.time * 4);
     const got: number[] = [];
     this.pickups.forEach((p, i) => {
-      if (p.taken) return;
+      if (!p || p.taken) return;
       p.body.rotation.y += dt * 0.9;
-      p.body.position.y = HOVER * 0.4 + Math.sin(this.time * 2 + i) * 0.25;
-      if (!who) return;
+      p.fall = Math.max(0, p.fall - (8 + (DROP_HEIGHT - p.fall) * 2.5) * dt);
+      p.body.position.y = HOVER * 0.4 + p.fall + (p.fall > 0 ? 0 : Math.sin(this.time * 2 + i) * 0.25);
+      if (!who || p.fall > 0) return;
       const across = Math.hypot(who.position.x - p.x, who.position.z - p.z);
       const reach = who.isChopper && who.heightAboveGround > 2 ? across < CHOPPER_RADIUS && who.position.y - p.groundY < CHOPPER_HEIGHT : across < PICKUP_RADIUS && Math.abs(who.position.y - p.groundY) < 6;
       if (!reach) return;
