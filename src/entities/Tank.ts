@@ -20,7 +20,10 @@ const FRONT_ARC = (40 * Math.PI) / 180;
 const REAR_ARC = (135 * Math.PI) / 180;
 const MAX_YAW_RATE = 1.7; // rad/s at full steer
 /** Speed multiplier on a road, for tanks with fasterOnRoads. */
-const ROAD_SPEED_BOOST = 1.2;
+const ROAD_SPEED_BOOST = 1.6;
+const STREAK_COUNT = 10;
+const STREAK_LENGTH = 3.2;
+const STREAK_TRAVEL = 7; // meters a streak slides back behind the hull before it fades
 // Ground vehicles can elevate to engage aircraft; airborne subclasses can depress further.
 const BARREL_PITCH_MIN = -0.1;
 const BARREL_PITCH_MAX = 0.65;
@@ -60,6 +63,10 @@ export class Tank {
   /** Multiplies how fast the hull can turn (the jeep is nimbler than a tank). */
   protected turnRateScale = 1;
   private roadBoost = 1;
+  /** White speed streaks that flow back from the tracks while the road boost is on. */
+  private roadStreaks: THREE.Mesh[] = [];
+  private roadStreakMaterial: THREE.MeshBasicMaterial | null = null;
+  private roadStreakPhase = 0;
   /** Claude the helper robot, who turns up to fix the hull while it regenerates. */
   protected readonly repairBot = new RepairBot();
   private sinceHit = REGEN_DELAY;
@@ -611,6 +618,7 @@ export class Tank {
       // Eases up to the road speed (and back down off it) rather than jumping.
       const goal = isOnRoad(this.root.position.x, this.root.position.z) ? ROAD_SPEED_BOOST : 1;
       this.roadBoost += (goal - this.roadBoost) * Math.min(1, dt * 2.5);
+      this.updateRoadStreaks(dt, Math.abs(throttle));
     }
     const speed = throttle * maxSpeed * (wading ? 0.5 : this.roadBoost);
     const fwd = this.forward;
@@ -732,7 +740,46 @@ export class Tank {
     }
   }
 
+  /** Streaks of light peeling off the tracks, stronger the closer the tank is to full road speed. */
+  private updateRoadStreaks(dt: number, throttle: number): void {
+    const strength = clamp((this.roadBoost - 1) / (ROAD_SPEED_BOOST - 1), 0, 1) * throttle;
+    if (this.roadStreaks.length === 0) {
+      if (strength < 0.05) return;
+      const geometry = new THREE.PlaneGeometry(0.12, STREAK_LENGTH);
+      geometry.rotateX(-Math.PI / 2); // flat on the ground, long axis along Z
+      this.roadStreakMaterial = new THREE.MeshBasicMaterial({
+        color: 0xbfefff,
+        transparent: true,
+        opacity: 0,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      });
+      for (let i = 0; i < STREAK_COUNT; i++) {
+        const streak = new THREE.Mesh(geometry, this.roadStreakMaterial);
+        streak.frustumCulled = false;
+        streak.renderOrder = 2;
+        this.root.add(streak);
+        this.roadStreaks.push(streak);
+      }
+    }
+    const material = this.roadStreakMaterial as THREE.MeshBasicMaterial;
+    material.opacity = 0.55 * strength;
+    this.roadStreakPhase = (this.roadStreakPhase + dt * (0.8 + strength * 1.6)) % 1;
+    for (let i = 0; i < this.roadStreaks.length; i++) {
+      const streak = this.roadStreaks[i];
+      streak.visible = strength > 0.02;
+      const t = (this.roadStreakPhase + (i >> 1) / (STREAK_COUNT / 2)) % 1;
+      const side = i % 2 === 0 ? -1 : 1;
+      // Each one starts at the rear of the hull, just outside the track, and slides astern.
+      streak.position.set(side * (HULL_HALF_EXTENTS.x + 0.35 + 0.25 * (i % 3)), -HULL_HALF_EXTENTS.y + 0.12, HULL_HALF_EXTENTS.z + 0.5 + t * STREAK_TRAVEL);
+      streak.scale.set(1, 1, 1 - t * 0.5);
+    }
+  }
+
   dispose(): void {
+    this.roadStreakMaterial?.dispose();
+    this.roadStreaks[0]?.geometry.dispose();
     this.world.removeCharacterController(this.controller);
     this.world.removeRigidBody(this.body);
   }

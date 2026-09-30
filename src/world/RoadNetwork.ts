@@ -106,8 +106,9 @@ function crossesLandmarks(path: Polyline): boolean {
   return false;
 }
 
-function crossesHouses(path: Polyline): boolean {
+function crossesHouses(path: Polyline, ignoreHouses = false): boolean {
   if (crossesLandmarks(path)) return true;
+  if (ignoreHouses) return false;
   for (const town of TOWNS) {
     // The first/last points sit on the joined street itself, so skip them.
     for (const p of path.slice(1, -1)) {
@@ -122,13 +123,13 @@ function crossesHouses(path: Polyline): boolean {
 }
 
 /** Best (shortest, house-avoiding) road between two nodes, or null if none is clear. */
-function connect(a: Node, b: Node): Polyline | null {
+function connect(a: Node, b: Node, desperate = false): Polyline | null {
   const pairs: [Entry, Entry][] = [];
   for (const ea of a.entries) for (const eb of b.entries) pairs.push([ea, eb]);
   pairs.sort((p, q) => pairCost(p[0], p[1]) - pairCost(q[0], q[1]));
-  for (const [ea, eb] of pairs.slice(0, 12)) {
+  for (const [ea, eb] of desperate ? pairs : pairs.slice(0, 12)) {
     const path = curveBetween(ea, eb);
-    if (!crossesHouses(path)) return path;
+    if (!crossesHouses(path, desperate)) return path;
   }
   return null;
 }
@@ -165,6 +166,29 @@ export function planHighways(): Polyline[] {
     if (!path) continue;
     parent[ri] = rj;
     roads.push(path);
+  }
+
+  // The clear-of-houses search can fail for a base tucked behind a town or lake. Every base must
+  // be reachable by road, so link any node still cut off using every entry pair and, failing that,
+  // a road that may brush past houses (never a lake, the moat or a landmark).
+  for (let i = 0; i < nodes.length; i++) {
+    if (find(i) === find(0)) continue;
+    const order = nodes.map((n, j) => ({ j, d: Math.hypot(n.x - nodes[i].x, n.z - nodes[i].z) }))
+      .filter(({ j }) => find(j) !== find(i))
+      .sort((a, b) => a.d - b.d);
+    for (const desperate of [false, true]) {
+      let linked = false;
+      for (const { j } of order) {
+        const path = connect(nodes[i], nodes[j], desperate);
+        if (!path) continue;
+        roads.push(path);
+        parent[find(i)] = find(j);
+        linked = true;
+        break;
+      }
+      if (linked) break;
+    }
+    if (find(i) !== find(0)) console.warn('No road could be planned to node', i);
   }
 
   let loops = 0;
