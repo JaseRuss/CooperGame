@@ -7,7 +7,7 @@ import { partModel } from './TankerParts';
 import { clamp } from '../utils/math';
 
 /** The winch: cable length at cruise, how fast it reels in, and the sling's drop from hook to load. */
-const WINCH_LENGTH = 9;
+const WINCH_LENGTH = 4.5;
 const REEL_SPEED = 7;
 const SLING_DROP = 2.2;
 const GRAVITY = 18;
@@ -17,7 +17,7 @@ const SWING_DAMPING = 0.9;
 const LOAD_HEIGHT = 2.2;
 
 /** The trailer: drawbar length from hitch to axle, and wheel radius. */
-const DRAWBAR = 3.6;
+const DRAWBAR = 3;
 const WHEEL_RADIUS = 0.5;
 /** How far behind the hull's centre the tow hitch sits on each vehicle. */
 const HITCH: Record<Vehicle, number> = { tank: 2.1, jeep: 2.4, motorbike: 1.2, chopper: 0 };
@@ -55,7 +55,7 @@ function buildTrailer(): { root: THREE.Group; wheels: THREE.Group; deck: THREE.G
   body.beam(new THREE.Vector3(-0.9, 0.25, -1.5), new THREE.Vector3(0, 0.1, -DRAWBAR), 0.16, steel);
   body.beam(new THREE.Vector3(0.9, 0.25, -1.5), new THREE.Vector3(0, 0.1, -DRAWBAR), 0.16, steel);
   body.add(tubeX(0.08, 2.9, 8), steel, 0, 0, 0); // axle
-  body.add(new THREE.CylinderGeometry(0.05, 0.05, 2.6, 6), steel, 1.1, 1.6, 1.4); // flag pole
+  body.add(new THREE.CylinderGeometry(0.05, 0.05, 1.3, 6), steel, 1.1, 1.1, -1.45); // pennant pole, kept low and forward, out of the chase camera's view
   body.buildInto(root);
 
   const wheels = new THREE.Group();
@@ -70,10 +70,10 @@ function buildTrailer(): { root: THREE.Group; wheels: THREE.Group; deck: THREE.G
   // A yellow pennant: "take this home".
   const flag = new THREE.Group();
   const f = new PartBuilder();
-  const shape = new THREE.Shape([new THREE.Vector2(0, 0), new THREE.Vector2(0, -0.7), new THREE.Vector2(1.1, -0.35)]);
+  const shape = new THREE.Shape([new THREE.Vector2(0, 0), new THREE.Vector2(0, -0.5), new THREE.Vector2(0.8, -0.25)]);
   f.add(new THREE.ShapeGeometry(shape).rotateY(-Math.PI / 2), flagMaterial);
   f.buildInto(flag, false, false);
-  flag.position.set(1.1, 2.85, 1.4);
+  flag.position.set(1.1, 1.72, -1.45);
   root.add(flag);
 
   const deck = new THREE.Group();
