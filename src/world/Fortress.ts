@@ -505,6 +505,13 @@ export class Fortress {
     for (const p of this.padlocks) p.removeFromParent();
   }
 
+  /** The bomb tanker's blast: both gates are blown clean off and everything inside can be destroyed. */
+  blowGates(): void {
+    this.unlock();
+    this.doorT = 1;
+    for (const d of this.doors) d.mesh.visible = false;
+  }
+
   /** True for a point within the walls. */
   contains(x: number, z: number): boolean {
     const yaw = siteYaw(this.site);
