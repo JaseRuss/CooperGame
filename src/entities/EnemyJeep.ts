@@ -4,8 +4,8 @@ import { Tank, HULL_HALF_EXTENTS } from './Tank';
 import { buildJeepParts } from '../world/Vehicles';
 import { heightAt } from '../world/Terrain';
 
-/** One tank shell kills it; a few rifle rounds from the gunners on the tanker do too. */
-const JEEP_HEALTH = 12;
+/** Any hit kills it: one shell, rocket blast or rifle round. */
+const JEEP_HEALTH = 1;
 const JEEP_SCALE = 1.25;
 const WHEEL_RADIUS = 0.42 * JEEP_SCALE;
 

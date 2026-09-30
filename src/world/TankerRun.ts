@@ -30,7 +30,7 @@ export interface TankerHost {
   /** Takes a raider out: with a blast and a gag, or quietly. */
   remove(jeep: EnemyJeep, blast: boolean): void;
   explode(at: THREE.Vector3, size: number): void;
-  smoke(at: THREE.Vector3): void;
+  smoke(at: THREE.Vector3, rise: number): void;
   dust(at: THREE.Vector3): void;
   flash(origin: THREE.Vector3, direction: THREE.Vector3, scale: number): void;
   /** A round leaves a gun; `exclude` keeps it from hitting what it's fired from. */
@@ -104,6 +104,10 @@ const BULLET_SPEED = 220;
 const FUSE_SPEED = 15;
 const FUSE_MAX = 9;
 const GATE_INSET = 98;
+/** Extra upward speed on the exhaust smoke, so it climbs clear of the deck camera's view. */
+const STACK_SMOKE_RISE = 7;
+/** Raiders this close to a shell's burst are caught in it. */
+export const SHELL_SPLASH_RADIUS = 9;
 const DEMOLITION_GAP = 0.22;
 /**
  * A rammer bounces off the rig and swerves out this far to the side (and drops back a little)
@@ -466,10 +470,17 @@ export class TankerRun {
     this.rig.root.updateMatrixWorld(true);
   }
 
+  /** A blast at `at`: every raider's jeep within `radius` is knocked out. */
+  splash(at: THREE.Vector3, radius: number): void {
+    for (const raid of this.raiders) {
+      if (!raid.jeep.isDestroyed && raid.jeep.position.distanceTo(at) < radius) raid.jeep.takeDamage(1000);
+    }
+  }
+
   /** A puff from one exhaust stack, taking them in turn. */
   private stackSmoke(): void {
     this.stack = 1 - this.stack;
-    this.host.smoke(this.rig.root.localToWorld(this.rig.stackTips[this.stack].clone()));
+    this.host.smoke(this.rig.root.localToWorld(this.rig.stackTips[this.stack].clone()), STACK_SMOKE_RISE);
   }
 
   // ---------- explosions along the road ----------
@@ -522,8 +533,8 @@ export class TankerRun {
       this.spawnRaider({
         kind: rammer ? 'rammer' : 'shooter',
         lane,
-        alongStart: rammer ? -(70 + i * 10) : ahead ? 120 : -110,
-        alongEnd: rammer ? 0 : ahead ? 8 - i * 4 : -12 + i * 3,
+        alongStart: rammer ? -(70 + i * 10) : ahead ? 120 : -130,
+        alongEnd: rammer ? 0 : ahead ? -8 - i * 4 : -30 + i * 3,
         life: rammer ? 24 : 26,
       });
     }

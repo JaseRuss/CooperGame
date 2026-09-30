@@ -206,12 +206,12 @@ export class ImpactEffects {
   }
 
   /** Rocket exhaust: a puff of white-grey smoke with a flicker of flame. */
-  trailPuff(point: THREE.Vector3): void {
+  trailPuff(point: THREE.Vector3, rise = 0): void {
     const shade = 0.55 + Math.random() * 0.2;
     this.add({
       geometry: SMOKE_SPHERE,
       position: point.clone().add(randomInSphere(0.15)),
-      velocity: randomInSphere(0.6).setY(0.6),
+      velocity: randomInSphere(0.6).setY(0.6 + rise),
       life: 1.4 + Math.random() * 0.6,
       startScale: 0.25,
       endScale: 1.4 + Math.random() * 0.6,
