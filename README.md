@@ -222,7 +222,9 @@ don't open when the bases fall. You get in by building a **bomb tanker** and dri
   on the maps). Drive up to it with parts and they're fitted; you can make several trips.
 - **Thunder Road.** Once all five are on, your tank rides the rig's rear deck and the
   buddies man its four gun posts. The run is on rails: the rig drives itself along the roads
-  across the whole map to the Fortress while you aim and fire the tank's gun. Raider jeeps
+  across the whole map to the Fortress while you aim and fire the tank's gun. The homing
+  rocket fires without the rocket cam up there, so you never lose sight of the rig, and it
+  reloads in 12 seconds instead of 75. Raider jeeps
   (tan and blue) come at it, shooting and some ramming, explosions go off along the road, and
   the rig bowls over anything in the way: soldiers, enemy tanks and trees. Nothing can stop the
   rig, so there's no game over.
