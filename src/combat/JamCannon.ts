@@ -190,7 +190,15 @@ export class JamCannon {
   private readonly dripSplats: DripSplat[] = [];
   private fired = 0;
 
-  constructor(private readonly scene: THREE.Scene) {}
+  /**
+   * `groundAt` is the height of the ground (the big map's terrain unless the level is flat), and
+   * `rayGroups` a Rapier collision-group filter for what the jam can hit (anything, by default).
+   */
+  constructor(
+    private readonly scene: THREE.Scene,
+    private readonly groundAt: (x: number, z: number) => number = surfaceHeightAt,
+    private readonly rayGroups?: number,
+  ) {}
 
   /** A lobbed glob; `big` for the hose's globs, which land in a wide puddle. */
   fire(origin: THREE.Vector3, direction: THREE.Vector3, speed: number, big = false): void {
@@ -237,13 +245,13 @@ export class JamCannon {
       const step = b.velocity.clone().multiplyScalar(dt);
       const len = step.length();
       const dir = step.clone().divideScalar(len || 1);
-      const hit = world.castRay(new RAPIER.Ray(b.mesh.position, dir), len, true, undefined, undefined, exclude);
+      const hit = world.castRay(new RAPIER.Ray(b.mesh.position, dir), len, true, undefined, this.rayGroups, exclude);
       let landed: THREE.Vector3 | null = null;
       if (hit) {
         landed = b.mesh.position.clone().addScaledVector(dir, hit.timeOfImpact);
       } else {
         b.mesh.position.add(step);
-        const ground = surfaceHeightAt(b.mesh.position.x, b.mesh.position.z);
+        const ground = this.groundAt(b.mesh.position.x, b.mesh.position.z);
         if (b.mesh.position.y <= ground) landed = b.mesh.position.clone().setY(ground);
         else if (b.drips) {
           b.toNextDrip -= Math.hypot(step.x, step.z);
@@ -277,7 +285,7 @@ export class JamCannon {
       d.velocity.y += GRAVITY * 1.4 * dt;
       d.mesh.position.addScaledVector(d.velocity, dt);
       d.mesh.scale.set(0.8, 1.6, 0.8); // a falling teardrop
-      const ground = surfaceHeightAt(d.mesh.position.x, d.mesh.position.z);
+      const ground = this.groundAt(d.mesh.position.x, d.mesh.position.z);
       if (d.mesh.position.y > ground && d.age < MAX_LIFETIME) continue;
       this.scene.remove(d.mesh);
       this.drips.splice(i, 1);
@@ -291,7 +299,7 @@ export class JamCannon {
       d.age += dt;
       d.velocity.y += GRAVITY * 1.4 * dt;
       d.mesh.position.addScaledVector(d.velocity, dt);
-      const ground = surfaceHeightAt(d.mesh.position.x, d.mesh.position.z) + 0.05;
+      const ground = this.groundAt(d.mesh.position.x, d.mesh.position.z) + 0.05;
       if (d.mesh.position.y < ground) {
         d.mesh.position.y = ground;
         d.velocity.set(0, 0, 0);
@@ -361,7 +369,7 @@ export class JamCannon {
       this.scene.add(mesh);
       this.droplets.push({ mesh, velocity: new THREE.Vector3(Math.cos(a) * 2.5, 2 + Math.random() * 3, Math.sin(a) * 2.5), age: 0 });
     }
-    const ground = surfaceHeightAt(point.x, point.z);
+    const ground = this.groundAt(point.x, point.z);
     if (point.y - ground < 0.6) this.dripSplat(point.clone().setY(ground));
   }
 
@@ -386,12 +394,12 @@ export class JamCannon {
       polygonOffsetFactor: -6,
       polygonOffsetUnits: -6,
     });
-    const ground = surfaceHeightAt(point.x, point.z);
+    const ground = this.groundAt(point.x, point.z);
     const floor = point.y - 0.5;
     const y = Math.max(ground, floor) + 0.08;
     // On the ground, a big puddle's vertices follow the slope; on a roof or a hull it lies flat.
     const onGround = point.y - ground < 0.6;
-    const lift = (x: number, z: number) => (onGround ? Math.max(surfaceHeightAt(point.x + x, point.z + z), floor) + 0.08 - y : 0);
+    const lift = (x: number, z: number) => (onGround ? Math.max(this.groundAt(point.x + x, point.z + z), floor) + 0.08 - y : 0);
     const radius = big ? BIG_SPLAT_RADIUS * (0.9 + Math.random() * 0.2) : 1.0 + Math.random() * 0.45;
     const mesh = new THREE.Mesh(big ? puddleGeometry(radius, Math.random, lift) : splatGeometry(radius, Math.random), material);
     // Strawberry chunks sitting in the jam.

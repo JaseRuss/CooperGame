@@ -55,6 +55,8 @@ export interface PrisonHUD {
   prompt: string | null;
   /** Seconds left before the player is back on their feet, while knocked down (0 when standing). */
   downFor: number;
+  /** The jam riot cannon's tank, 0..1. */
+  jam: number;
 }
 
 /** A marker pointing the way to somewhere: on screen over it, or pinned to the edge toward it. */
@@ -425,6 +427,8 @@ export class HUD {
   private readonly html = new Map<HTMLElement, string>();
   private worldMap: WorldMap | null = null;
   private readonly hullName: HTMLSpanElement;
+  private readonly jamName: HTMLSpanElement;
+  private readonly jamHint: HTMLDivElement;
   private readonly buddySlot: HTMLDivElement;
   private readonly minimapWrap: HTMLDivElement;
   private readonly mapLegends: HTMLDivElement[] = [];
@@ -492,10 +496,10 @@ export class HUD {
     const jamBody = el('div', 'body', jamSlot);
     const jamLabel = el('div', 'row-label', jamBody);
     jamLabel.style.margin = '0';
-    el('span', '', jamLabel, 'JAM CANNON');
+    this.jamName = el('span', '', jamLabel, 'JAM CANNON');
     this.jamText = el('span', '', jamLabel);
     this.jamText.style.color = '#ff8aa0';
-    el('div', 'subtle', jamBody, 'Sticks soldiers and tanks · X: jam all round');
+    this.jamHint = el('div', 'subtle', jamBody, 'Sticks soldiers and tanks · X: jam all round');
 
     const buddySlot = el('div', 'slot', card);
     this.buddySlot = buddySlot;
@@ -1111,7 +1115,8 @@ export class HUD {
     this.rocketSlot.style.display = prison ? 'none' : '';
     this.buddySlot.style.display = prison ? 'none' : '';
     if (prison) {
-      this.jamSlot.style.display = 'none';
+      this.jamName.textContent = 'JAM RIOT CANNON';
+      this.jamHint.textContent = 'Sticks guards fast, then they slip over';
       this.gunName.textContent = state.damageBoost > 0 ? `RIFLE · 2× DAMAGE ${Math.ceil(state.damageBoost)}s` : 'RIFLE';
       this.reloadText.textContent = prison.downFor > 0 ? 'KNOCKED DOWN' : 'READY';
       this.reloadText.style.color = prison.downFor > 0 ? '#ff8a7a' : '#ffd24a';
@@ -1143,7 +1148,11 @@ export class HUD {
     }
 
     const hold = state.usingGamepad ? 'HOLD LT' : 'HOLD E';
-    this.jamText.textContent = state.megaJamCharge >= 1 ? `${hold} · X MEGA` : `${hold} · MEGA ${Math.floor(state.megaJamCharge * 100)}%`;
+    this.jamText.textContent = prison
+      ? `${hold} · ${Math.floor(prison.jam * 100)}%`
+      : state.megaJamCharge >= 1
+        ? `${hold} · X MEGA`
+        : `${hold} · MEGA ${Math.floor(state.megaJamCharge * 100)}%`;
 
     // Buddies roll in by themselves when the meter fills.
     const allOut = state.buddyOut.filter(Boolean).length >= state.buddyMax;
@@ -1164,8 +1173,8 @@ export class HUD {
       this.keys,
       (prison
         ? state.usingGamepad
-          ? `${k('LS', 'move')}${k('RS', 'aim')}${k('RT', 'fire')}${k('X', 'squad')}${k('Y', 'camera')}${k('Start', 'pause · options')}${k('Back', 'checkpoint')}`
-          : `${k('WASD', 'move')}${k('Mouse', 'aim')}${k('Click', 'fire')}${k('X', 'squad')}${k('C', 'camera')}${k('M', 'pause · options')}${k('R', 'checkpoint')}` +
+          ? `${k('LS', 'move')}${k('RS', 'aim')}${k('RT', 'fire')}${k('LT', 'jam')}${k('X', 'squad')}${k('Y', 'camera')}${k('Start', 'pause · options')}${k('Back', 'checkpoint')}`
+          : `${k('WASD', 'move')}${k('Mouse', 'aim')}${k('Click', 'fire')}${k('E', 'jam')}${k('X', 'squad')}${k('C', 'camera')}${k('M', 'pause · options')}${k('R', 'checkpoint')}` +
             (state.mouseCaptureHint ? '<br><span style="color:#ffd24a">Click the game to capture the mouse for aiming</span>' : '')
         : state.usingGamepad
         ? `${k('LS', drive)}${k('RS', 'aim')}${k('RT', fire)}${bike ? '' : k('LT', 'jam')}${k('LB', rocket)}${bike ? '' : k('RB', 'AA')}<br>${bike ? '' : k('X', 'mega jam')}${k('Y', 'camera')}${k('Start', 'pause · options')}${k('Back', 'home')}`

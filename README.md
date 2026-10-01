@@ -364,16 +364,29 @@ knocked over. Press A or Enter to play again.
 
 A bonus level on foot. The tan army has locked you up and taken your tank: break out, free
 your buddies and the other prisoners, take over the prison and drive your tank home. So far:
-you start locked in a cell in Cell Block A. Shoot the big brass padlock on the door to get
-out, then shoot the padlocks on the other cells. Everyone inside cheers and follows you (one
-of your buddies is in there too). They follow your path round corners and through doors and
-gather round you when they can see you. Press X to tell them to hold where they are, and X
-again to follow. Out in the exercise yard there are tan practice dummies to shoot.
+
+- You start locked in a cell in Cell Block A. Shoot the big brass padlock on the door to get
+  out, then shoot the padlocks on the other cells. Everyone inside cheers and follows you
+  (Keston is in there too). They follow your path round corners and through doors and gather
+  round you when they can see you. Press X to tell them to hold where they are, and X again
+  to follow.
+- Nine **tan guards** hold the corridor and the exercise yard. Your squad shoots back at any
+  guard they can see. Three rifle hits knock a guard over.
+- The **jam riot cannon** (hold LT / E) sprays strawberry jam at the crosshair, out to about
+  20 m. A guard it lands on is stuck fast and can't shoot, then slips over a few seconds
+  later. It runs out if you hold it down too long and refills when you let go.
+- Knocked-over guards are **captured**: one of your squad picks him up, carries him over his
+  head to an empty cell and sits him down inside, and the door swings shut on him.
+- Two of the prisoners are **medics**, with a white helmet band and a red cross on their
+  pack. When one of the squad is knocked down, a medic runs over and patches him up; you
+  can help a friend up yourself by standing right next to him. If you're knocked down and
+  a medic's nearby, they come for you too; otherwise you're back at the last checkpoint.
+  Your health comes back by itself if you keep out of trouble for a few seconds.
 
 Run about as a green army man (he hops, like all the toy soldiers) and aim over his shoulder.
 Move with the left stick or W A S D, aim with the right stick or mouse, fire with RT or a
-click, Y / C swaps to first person and Back / R goes back to the last checkpoint. It's in the level select as **5 · Bonus: Prison
-Break**. The plan is in `docs/plans/prison-break.md`.
+click, Y / C swaps to first person and Back / R goes back to the last checkpoint. It's in the
+level select as **5 · Bonus: Prison Break**. The plan is in `docs/plans/prison-break.md`.
 
 ## Level select
 
