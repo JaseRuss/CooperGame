@@ -17,16 +17,18 @@ export const TERRAIN_HEIGHT = 18;
  * it starts in sunshine and the day darkens as enemy bases fall, until the Fortress is stormed
  * at night under flares, tracer and explosions; mission 2 is a steamy jungle of thick trees and
  * villages of wooden huts; mission 3 is a land of knights and castles; mission 4 is the last
- * stand, every army together against waves of zombies.
+ * stand, every army together against waves of zombies. Mission 5 is a bonus level: a prison
+ * break on foot (see `src/prison/`).
  */
-export type Mission = 1 | 2 | 3 | 4;
+export type Mission = 1 | 2 | 3 | 4 | 5;
 
 /** Every mission in play order, as the level select lists them. */
-export const MISSIONS: { mission: Mission; title: string; blurb: string }[] = [
+export const MISSIONS: { mission: Mission; title: string; blurb: string; bonus?: true }[] = [
   { mission: 1, title: 'Day to Night', blurb: 'Starts in sunny fields and towns, but the sun sets as each of the five enemy bases falls. Then storm the Fortress in a night raid.' },
   { mission: 2, title: 'Jungle Strike', blurb: 'Thick jungle and wooden hut villages. Smash through the trees to find the enemy bases.' },
   { mission: 3, title: 'Castle Siege', blurb: 'Knights, cannons and dragons! Knock down five enemy castles, then the Great Castle.' },
   { mission: 4, title: 'Zombie Attack', blurb: 'Every army together at the Fortress against wave after wave of zombies. How long can you hold out?' },
+  { mission: 5, title: 'Bonus: Prison Break', blurb: "On foot! The tan army has locked you up and taken your tank. Break out, free your buddies and drive home.", bonus: true },
 ];
 
 const missionParam = Number(new URLSearchParams(window.location.search).get('mission'));
@@ -36,8 +38,10 @@ export const NIGHT = MISSION === 1;
 export const JUNGLE = MISSION === 2;
 export const KNIGHTS = MISSION === 3;
 export const ZOMBIES = MISSION === 4;
+/** The bonus level: on foot, breaking out of the tan army's prison. */
+export const PRISON = MISSION === 5;
 
-const SEEDS: Record<Mission, number> = { 1: 1337, 2: 3579, 3: 4680, 4: 5791 };
+const SEEDS: Record<Mission, number> = { 1: 1337, 2: 3579, 3: 4680, 4: 5791, 5: 6802 };
 export const WORLD_SEED = SEEDS[MISSION];
 
 /** Reloads the page into another mission (a fresh world, from the start). */

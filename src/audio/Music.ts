@@ -38,6 +38,7 @@ interface Song {
 const C = 48;
 const D = 50;
 const A = 45;
+const E = 40;
 const G = 43;
 
 /** Night Raid: slower and sneakier in D minor, a pulsing bass, soft pads and a lonely flute. The day battle switches to it as dark falls. */
@@ -135,6 +136,25 @@ const SONGS: Record<Mission, Song> = {
     tuneOctave: 2,
     pad: true,
     seed: 83,
+  },
+  // Prison Break: a sneaky caper in E minor, a walking bass, brushed snare and a cheeky flute.
+  5: {
+    bpm: 108,
+    chords: [[E, 'min'], [E, 'min'], [E + 5, 'min'], [E, 'min'], [E + 8, 'maj'], [E + 7, 'maj'], [E, 'min'], [E + 7, 'maj']],
+    drums: {
+      kick: ['x.....x...x.....'],
+      snare: ['....o.......o...', '....o.......o..o'],
+      hat: ['o.o.o.o.o.o.o.o.'],
+    },
+    bass: 'r.t.f.o.r.t.f.t.',
+    bassWave: 'triangle',
+    lead: 'flute',
+    rhythm: ['x..x..x.....x...', 'x.x...x.x.......', 'x..x..x...x.x...', 'x.......x...x...'],
+    key: E,
+    tuneNotes: [0, 3, 5, 6, 7, 10, 12],
+    tuneOctave: 2,
+    pad: false,
+    seed: 97,
   },
 };
 
