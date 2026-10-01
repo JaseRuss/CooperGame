@@ -4,6 +4,7 @@ import { createFigureMesh } from '../entities/Soldier';
 import { ARMY_GREEN } from '../utils/plastic';
 import { clamp } from '../utils/math';
 import type { InputState } from '../input/InputManager';
+import { FRIEND_GROUPS, WALLS_ONLY } from './groups';
 
 /** The capsule round the army man: 1.8 m from the bottom of the stand to the top of the helmet. */
 const RADIUS = 0.35;
@@ -47,7 +48,7 @@ export class PlayerSoldier {
   constructor(private readonly world: RAPIER.World, x: number, z: number, yaw: number) {
     this.yaw = yaw;
     this.body = world.createRigidBody(RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(x, 0.9, z));
-    this.collider = world.createCollider(RAPIER.ColliderDesc.capsule(HALF_HEIGHT, RADIUS), this.body);
+    this.collider = world.createCollider(RAPIER.ColliderDesc.capsule(HALF_HEIGHT, RADIUS).setCollisionGroups(FRIEND_GROUPS), this.body);
     this.controller = world.createCharacterController(0.02);
     this.controller.enableAutostep(0.35, 0.2, false);
     this.controller.enableSnapToGround(0.3);
@@ -138,7 +139,7 @@ export class PlayerSoldier {
     const grounded = this.controller.computedGrounded();
     this.fallSpeed = grounded ? 0 : this.fallSpeed + GRAVITY * dt;
     const desired = { x: this.velocity.x * dt, y: -Math.max(this.fallSpeed, 1) * dt, z: this.velocity.z * dt };
-    this.controller.computeColliderMovement(this.collider, desired);
+    this.controller.computeColliderMovement(this.collider, desired, undefined, WALLS_ONLY); // walks through his own side
     const moved = this.controller.computedMovement();
     const t = this.body.translation();
     const next = { x: t.x + moved.x, y: t.y + moved.y, z: t.z + moved.z };

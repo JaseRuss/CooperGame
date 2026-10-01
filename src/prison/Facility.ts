@@ -20,6 +20,22 @@ const YARD = { minX: -30, maxX: 30, minZ: -25, maxZ: 25 };
 /** The cell block, against the yard's south wall: a corridor along the front, cells behind it. */
 const BLOCK = { minX: -20, maxX: 20, minZ: 10, maxZ: 22, corridor: 14 };
 const CELL_WIDTH = 5;
+/** Each cell's door: from this far along the cell's front to that far (the rest is fixed bars). */
+const DOOR_FROM = 3.3;
+const DOOR_TO = 4.7;
+
+/** One cell in the block: its sides, and the door in its barred front (which faces -Z, onto the corridor). */
+export interface CellSpot {
+  minX: number;
+  maxX: number;
+  /** The line of the bars. */
+  frontZ: number;
+  backZ: number;
+  /** The door's hinge (at doorX0) and latch (at doorX1) ends. */
+  doorX0: number;
+  doorX1: number;
+  height: number;
+}
 
 export interface FacilityLayout {
   /** Where the player starts, and faces. */
@@ -28,12 +44,16 @@ export interface FacilityLayout {
   dummies: { x: number; z: number; yaw: number }[];
   /** True inside the cell block (for the objective). */
   inBlock(x: number, z: number): boolean;
+  /** Cell Block A's cells, west to east. The first is the player's. */
+  cells: CellSpot[];
+  /** Where the player gets back up once he's out of his cell: in the corridor, facing along it. */
+  corridorCheckpoint: { x: number; z: number; yaw: number };
 }
 
 /**
  * The prison compound, built from boxes with `PartBuilder` like the rest of the game's models,
  * with a fixed Rapier cuboid for every solid part. So far: a walled exercise yard with crates for
- * cover and one cell block with a corridor and a row of barred cells.
+ * cover and one cell block with a corridor and a row of barred cells (their doors are in Cells).
  */
 export class Facility {
   readonly group = new THREE.Group();
@@ -50,14 +70,27 @@ export class Facility {
     this.parts.buildInto(this.group);
     this.box.dispose();
     this.layout = {
-      start: { x: 0, z: -12, yaw: Math.PI }, // facing the cell block (+Z)
+      // In his own cell (the westmost), facing the door (-Z).
+      start: { x: BLOCK.minX + 2.5, z: (BLOCK.corridor + BLOCK.maxZ) / 2 + 0.5, yaw: 0 },
+      corridorCheckpoint: { x: BLOCK.minX + 4, z: (BLOCK.minZ + BLOCK.corridor) / 2 + 0.4, yaw: -Math.PI / 2 },
+      cells: Array.from({ length: (BLOCK.maxX - BLOCK.minX) / CELL_WIDTH }, (_, i) => {
+        const minX = BLOCK.minX + i * CELL_WIDTH;
+        return {
+          minX,
+          maxX: minX + CELL_WIDTH,
+          frontZ: BLOCK.corridor,
+          backZ: BLOCK.maxZ,
+          doorX0: minX + DOOR_FROM,
+          doorX1: minX + DOOR_TO,
+          height: CEILING,
+        };
+      }),
       dummies: [
         { x: -14, z: -4, yaw: Math.PI },
         { x: -6, z: 2, yaw: Math.PI },
         { x: 8, z: -2, yaw: Math.PI },
         { x: 17, z: 4, yaw: Math.PI },
         { x: 24, z: -18, yaw: Math.PI / 2 },
-        { x: -6, z: 12, yaw: Math.PI / 2 },
       ],
       inBlock: (x, z) => x > BLOCK.minX && x < BLOCK.maxX && z > BLOCK.minZ && z < BLOCK.maxZ,
     };
@@ -168,13 +201,15 @@ export class Facility {
     // Floor inside, a shade darker than the yard.
     this.solid(minX, 0, minZ, maxX, 0.02, maxZ, CONCRETE_DARK, false);
 
-    // Cells: partition walls, and a barred front on each with a door in it.
+    // Cells: partition walls, and a barred front on each with a gap for its door (see Cells).
     for (let x = minX + CELL_WIDTH; x < maxX; x += CELL_WIDTH) {
       this.solid(x - 0.15, 0, corridor, x + 0.15, h, maxZ, CONCRETE);
     }
     for (let x = minX; x < maxX; x += CELL_WIDTH) {
-      this.bars(x + 0.15, x + CELL_WIDTH - 0.15, corridor, h);
-      this.blocker(x + 0.15, 0, corridor - 0.05, x + CELL_WIDTH - 0.15, h, corridor + 0.05);
+      this.bars(x + 0.15, x + DOOR_FROM, corridor, h);
+      this.blocker(x + 0.15, 0, corridor - 0.05, x + DOOR_FROM, h, corridor + 0.05);
+      this.bars(x + DOOR_TO, x + CELL_WIDTH - 0.15, corridor, h);
+      this.blocker(x + DOOR_TO, 0, corridor - 0.05, x + CELL_WIDTH - 0.15, h, corridor + 0.05);
       // A bunk and a bucket in each.
       this.solid(x + 0.5, 0, maxZ - 1, x + 2.6, 0.55, maxZ - 0.1, WOOD);
       this.solid(x + 3.6, 0, maxZ - 0.9, x + 4.2, 0.45, maxZ - 0.3, STEEL);

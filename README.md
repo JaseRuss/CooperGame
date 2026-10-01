@@ -363,11 +363,16 @@ knocked over. Press A or Enter to play again.
 ## Bonus: Prison Break (being built)
 
 A bonus level on foot. The tan army has locked you up and taken your tank: break out, free
-your buddies and the other prisoners, take over the prison and drive your tank home. So far
-it's a training yard: run about as a green army man (he hops, like all the toy soldiers),
-aim over his shoulder and knock over the tan practice dummies. Move with the left stick or
-W A S D, aim with the right stick or mouse, fire with RT or a click, Y / C swaps to first
-person and Back / R goes back to the start. It's in the level select as **5 · Bonus: Prison
+your buddies and the other prisoners, take over the prison and drive your tank home. So far:
+you start locked in a cell in Cell Block A. Shoot the big brass padlock on the door to get
+out, then shoot the padlocks on the other cells. Everyone inside cheers and follows you (one
+of your buddies is in there too). They follow your path round corners and through doors and
+gather round you when they can see you. Press X to tell them to hold where they are, and X
+again to follow. Out in the exercise yard there are tan practice dummies to shoot.
+
+Run about as a green army man (he hops, like all the toy soldiers) and aim over his shoulder.
+Move with the left stick or W A S D, aim with the right stick or mouse, fire with RT or a
+click, Y / C swaps to first person and Back / R goes back to the last checkpoint. It's in the level select as **5 · Bonus: Prison
 Break**. The plan is in `docs/plans/prison-break.md`.
 
 ## Level select
