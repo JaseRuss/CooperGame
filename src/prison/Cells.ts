@@ -13,10 +13,19 @@ const SWING_SPEED = 3.2;
 const LOCK_HEIGHT = 1.15;
 const LOCK_INSET = 0.18;
 
+/** Captured guards a cell can hold. */
+export const CELL_CAPACITY = 3;
+
 export interface Cell {
   readonly spot: CellSpot;
   readonly index: number;
+  /** Still padlocked (as at the start). Once open, a door can be shut again, but without a padlock. */
   locked: boolean;
+  /** Shut on captured guards (it's open otherwise, once unlocked). */
+  shut: boolean;
+  /** Captured guards inside, and ones on their way. */
+  guards: number;
+  booked: number;
   /** Where the padlock hangs, for prompts and the HUD. */
   readonly lockAt: THREE.Vector3;
 }
@@ -26,7 +35,9 @@ interface Door extends Cell {
   lock: THREE.Group;
   doorCollider: RAPIER.Collider | null;
   lockCollider: RAPIER.Collider | null;
+  /** 0 shut, 1 open, and where it's heading. */
   swing: number;
+  swingTo: number;
   /** The padlock flies off when it's shot. */
   lockVelocity: THREE.Vector3;
   lockSpin: number;
@@ -112,12 +123,16 @@ export class Cells {
         spot,
         index,
         locked: true,
+        shut: true,
+        guards: 0,
+        booked: 0,
         lockAt,
         pivot,
         lock,
         doorCollider,
         lockCollider,
         swing: 0,
+        swingTo: 0,
         lockVelocity: new THREE.Vector3(),
         lockSpin: 0,
         lockLanded: false,
@@ -129,6 +144,41 @@ export class Cells {
 
   get all(): readonly Cell[] {
     return this.doors;
+  }
+
+  /** True for a cell door's collider (the nav graph looks through them: anyone sent into a cell has it opened). */
+  isDoor(c: RAPIER.Collider): boolean {
+    return this.doors.some((d) => d.doorCollider?.handle === c.handle);
+  }
+
+  /** Where the `n`th captured guard in cell `index` sits: along the back wall. */
+  jailSpot(index: number, n: number): THREE.Vector2 {
+    const s = this.doors[index].spot;
+    return new THREE.Vector2(s.minX + 1.1 + (n % CELL_CAPACITY) * 1.4, s.backZ - 2.4);
+  }
+
+  /** Swings an unlocked cell's door open again (to put a guard in). */
+  openDoor(index: number): void {
+    const d = this.doors[index];
+    if (d.locked || !d.shut) return;
+    d.shut = false;
+    d.swingTo = 1;
+    if (d.doorCollider) this.world.removeCollider(d.doorCollider, false);
+    d.doorCollider = null;
+  }
+
+  /** Swings an unlocked cell's door shut on the guards inside. The caller makes sure the doorway's clear. */
+  shutDoor(index: number): void {
+    const d = this.doors[index];
+    if (d.locked || d.shut) return;
+    d.shut = true;
+    d.swingTo = 0;
+    const s = d.spot;
+    const width = s.doorX1 - s.doorX0;
+    d.doorCollider = this.world.createCollider(
+      RAPIER.ColliderDesc.cuboid(width / 2, s.height / 2, 0.06).setTranslation(s.doorX0 + width / 2, s.height / 2, s.frontZ),
+      this.body,
+    );
   }
 
   /** The cell `x, z` is in (behind the bars), or null. */
@@ -148,6 +198,8 @@ export class Cells {
 
   private open(door: Door): void {
     door.locked = false;
+    door.shut = false;
+    door.swingTo = 1;
     for (const c of [door.doorCollider, door.lockCollider]) if (c) this.world.removeCollider(c, false);
     door.doorCollider = door.lockCollider = null;
   }
@@ -155,8 +207,9 @@ export class Cells {
   update(dt: number): void {
     for (const d of this.doors) {
       if (d.locked) continue;
-      if (d.swing < 1) {
-        d.swing = Math.min(1, d.swing + dt * SWING_SPEED * (1 - d.swing * 0.7));
+      if (d.swing !== d.swingTo) {
+        const step = dt * SWING_SPEED * (1 - Math.abs(d.swing - (1 - d.swingTo)) * 0.7);
+        d.swing = d.swingTo > d.swing ? Math.min(1, d.swing + step) : Math.max(0, d.swing - step);
         // Out through the corridor side (-Z) and back flat against the bars, with a little bounce off its stop.
         const ease = 1 - (1 - d.swing) ** 3;
         d.pivot.rotation.y = OPEN_ANGLE * ease + Math.sin(d.swing * Math.PI) * 0.12;

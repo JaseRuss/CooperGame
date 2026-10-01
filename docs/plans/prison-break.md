@@ -1,6 +1,6 @@
 # Plan: Bonus level "Prison Break"
 
-Status: milestones 1 and 2 built (on foot; Cell Block A, padlocks and the squad following). Decisions from the owner are below.
+Status: milestones 1 to 3 built (on foot; Cell Block A and the squad; guards, the jam riot cannon, capturing guards and medics). Decisions from the owner are below.
 
 ## The level in one paragraph
 
@@ -52,7 +52,7 @@ Same buttons as the tank, so nothing new to learn:
 | Move (relative to the camera) | Left stick | W A S D |
 | Aim | Right stick | Mouse |
 | Fire rifle | RT or A | Left click / Space |
-| Jam grenade: lob one, it splats and sticks guards | LT | E |
+| Jam riot cannon: hold to spray jam that sticks guards | LT | E |
 | "Follow me" / "Hold here" for your squad | X | X |
 | Switch first / third person | Y | C |
 | Back to last checkpoint | Back | R |
@@ -137,8 +137,18 @@ mission 4 never rolls on into it: the bonus is only picked by hand.
    cut corners when there's a straight line, gather round him when they can see him, and
    re-route (and as a last resort hop onto the trail) if a corner holds them up for six
    seconds. The nav graph is still needed for guards' patrols in milestone 3.
-3. **Guards and fighting.** Guards with patrols, rifle and jam grenade, followers fighting,
-   knocked down and checkpoint, zone checklist on the HUD.
+3. **Guards and fighting.** *(Done.)* Nine tan guards (posts and beats) in the corridor and the
+   yard; the squad shoots back. Added at the owner's request:
+   - **Jam riot cannon** (hold LT / E) instead of a jam grenade: a hose of jam lobbed onto the
+     crosshair; guards it lands on are stuck, then slip over. It has a tank that refills.
+   - **Capturing guards:** a downed guard is carried overhead by one of the squad (two at
+     a time) along the nav graph to the nearest unlocked cell with room (three to a cell), sat
+     down inside, and the door shuts once the doorway's clear.
+   - **Medics:** two prisoners (white helmet band, red cross on the pack) run to anyone
+     knocked down, the player included, and patch them up. The player can help a friend up
+     by standing by him; anyone left alone gets up by himself after 25 seconds.
+   `src/prison/NavGraph.ts` links hand-placed waypoints (a grid over the open yard, the
+   doorway, the corridor, each cell) for these errands.
 4. **The rest of the compound.** Cell Block B and control room, yard and guard towers,
    barracks and flag, all four buddies.
 5. **Breakout.** Motor pool fight, swapping into `PlayerTank`, hull riders, trucks full of
@@ -163,3 +173,5 @@ mission 4 never rolls on into it: the bonus is only picked by hand.
 3. **Enemies:** tan only.
 4. **The freed soldiers at the end:** follow you out, in trucks.
 5. **Home:** Cooper's Base.
+6. **Added later:** beaten guards are carried to the cells by the squad; a jam riot cannon;
+   medics who pick up downed allies.

@@ -37,11 +37,20 @@ export interface CellSpot {
   height: number;
 }
 
+/** Where a tan guard stands (facing `yaw`), or the beat he walks up and down. */
+export interface GuardPost {
+  x: number;
+  z: number;
+  yaw: number;
+  patrol?: { x: number; z: number }[];
+}
+
 export interface FacilityLayout {
   /** Where the player starts, and faces. */
   start: { x: number; z: number; yaw: number };
-  /** Spots for the practice dummies. */
-  dummies: { x: number; z: number; yaw: number }[];
+  guards: GuardPost[];
+  /** Waypoints for the nav graph: open yard, doorways, the corridor, inside each cell. */
+  navPoints: { x: number; z: number }[];
   /** True inside the cell block (for the objective). */
   inBlock(x: number, z: number): boolean;
   /** Cell Block A's cells, west to east. The first is the player's. */
@@ -61,6 +70,8 @@ export class Facility {
   private readonly body: RAPIER.RigidBody;
   private readonly parts = new PartBuilder();
   private readonly box = new THREE.BoxGeometry(1, 1, 1);
+  /** Footprints (x0, z0, x1, z1) of everything solid at ground level, to keep waypoints clear of. */
+  private readonly footprints: [number, number, number, number][] = [];
 
   constructor(private readonly world: RAPIER.World) {
     this.body = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
@@ -69,29 +80,37 @@ export class Facility {
     this.buildCellBlock();
     this.parts.buildInto(this.group);
     this.box.dispose();
+    const cells: CellSpot[] = Array.from({ length: (BLOCK.maxX - BLOCK.minX) / CELL_WIDTH }, (_, i) => {
+      const minX = BLOCK.minX + i * CELL_WIDTH;
+      return {
+        minX,
+        maxX: minX + CELL_WIDTH,
+        frontZ: BLOCK.corridor,
+        backZ: BLOCK.maxZ,
+        doorX0: minX + DOOR_FROM,
+        doorX1: minX + DOOR_TO,
+        height: CEILING,
+      };
+    });
     this.layout = {
       // In his own cell (the westmost), facing the door (-Z).
       start: { x: BLOCK.minX + 2.5, z: (BLOCK.corridor + BLOCK.maxZ) / 2 + 0.5, yaw: 0 },
       corridorCheckpoint: { x: BLOCK.minX + 4, z: (BLOCK.minZ + BLOCK.corridor) / 2 + 0.4, yaw: -Math.PI / 2 },
-      cells: Array.from({ length: (BLOCK.maxX - BLOCK.minX) / CELL_WIDTH }, (_, i) => {
-        const minX = BLOCK.minX + i * CELL_WIDTH;
-        return {
-          minX,
-          maxX: minX + CELL_WIDTH,
-          frontZ: BLOCK.corridor,
-          backZ: BLOCK.maxZ,
-          doorX0: minX + DOOR_FROM,
-          doorX1: minX + DOOR_TO,
-          height: CEILING,
-        };
-      }),
-      dummies: [
-        { x: -14, z: -4, yaw: Math.PI },
-        { x: -6, z: 2, yaw: Math.PI },
-        { x: 8, z: -2, yaw: Math.PI },
-        { x: 17, z: 4, yaw: Math.PI },
-        { x: 24, z: -18, yaw: Math.PI / 2 },
+      cells,
+      // Two in the cell block (one on his beat up the corridor), the rest round the yard facing
+      // the cell block's door, behind crates, and one walking the north wall.
+      guards: [
+        { x: -6, z: 12, yaw: -Math.PI / 2, patrol: [{ x: -6, z: 12 }, { x: 16, z: 12 }] },
+        { x: 2.5, z: 11, yaw: Math.PI / 2 },
+        { x: -13, z: -10, yaw: Math.PI },
+        { x: 6, z: -8.5, yaw: Math.PI },
+        { x: 15, z: -16, yaw: Math.PI * 0.85 },
+        { x: -22, z: 1.5, yaw: Math.PI * 1.2 },
+        { x: 21, z: -2, yaw: Math.PI * 0.8 },
+        { x: -24, z: -19, yaw: Math.PI * 1.1 },
+        { x: -20, z: -22, yaw: -Math.PI / 2, patrol: [{ x: -20, z: -22 }, { x: 20, z: -22 }] },
       ],
+      navPoints: this.navPoints(cells),
       inBlock: (x, z) => x > BLOCK.minX && x < BLOCK.maxX && z > BLOCK.minZ && z < BLOCK.maxZ,
     };
   }
@@ -108,8 +127,26 @@ export class Facility {
     if (collide) this.blocker(x0, y0, z0, x1, y1, z1);
   }
 
+  /** Open ground on a grid round the yard, plus the cell block's doorway, corridor and cells. */
+  private navPoints(cells: CellSpot[]): { x: number; z: number }[] {
+    const points: { x: number; z: number }[] = [];
+    const open = (x: number, z: number) => this.footprints.every(([x0, z0, x1, z1]) => x < x0 - 0.9 || x > x1 + 0.9 || z < z0 - 0.9 || z > z1 + 0.9);
+    const inBlock = (x: number, z: number) => x > BLOCK.minX - 1.5 && x < BLOCK.maxX + 1.5 && z > BLOCK.minZ - 1.5;
+    for (let x = YARD.minX + 3; x < YARD.maxX; x += 5.5) {
+      for (let z = YARD.minZ + 3; z < YARD.maxZ; z += 5.5) if (!inBlock(x, z) && open(x, z)) points.push({ x, z });
+    }
+    const corridor = (BLOCK.minZ + BLOCK.corridor) / 2;
+    points.push({ x: 0, z: BLOCK.minZ - 2 }, { x: 0, z: corridor }, { x: BLOCK.minX + 1.2, z: corridor }, { x: BLOCK.maxX - 1.2, z: corridor });
+    for (const cell of cells) {
+      const door = (cell.doorX0 + cell.doorX1) / 2;
+      points.push({ x: door, z: corridor }, { x: door, z: cell.frontZ + 1.2 }, { x: cell.minX + 2.2, z: cell.frontZ + 4 });
+    }
+    return points;
+  }
+
   /** Something to bump into (and shoot at) with nothing drawn: the drawn part is bars, say. */
   private blocker(x0: number, y0: number, z0: number, x1: number, y1: number, z1: number): void {
+    if (y0 < 1.5) this.footprints.push([x0, z0, x1, z1]);
     const desc = RAPIER.ColliderDesc.cuboid((x1 - x0) / 2, (y1 - y0) / 2, (z1 - z0) / 2).setTranslation((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2);
     this.world.createCollider(desc, this.body);
   }

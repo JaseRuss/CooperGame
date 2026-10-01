@@ -21,6 +21,11 @@ const DOWN_TIME = 4;
 /** The rifle's muzzle, in the figure's own space (it faces -Z). */
 const MUZZLE = new THREE.Vector3(0.12, 1.49, -0.95);
 const FIRE_INTERVAL = 0.16;
+/** Health comes back by itself this long after the last hit, this fast (per second). */
+const REGEN_DELAY = 4;
+const REGEN_RATE = 10;
+/** Health after a medic patches him up. */
+const PATCHED_UP = 60;
 
 /**
  * The player on foot in the prison: a green army man in a Rapier character controller. He runs
@@ -43,6 +48,7 @@ export class PlayerSoldier {
   private fallSpeed = 0;
   private hopPhase = 0;
   private fireCooldown = 0;
+  private sinceHit = REGEN_DELAY;
   private readonly pos = new THREE.Vector3();
 
   constructor(private readonly world: RAPIER.World, x: number, z: number, yaw: number) {
@@ -98,8 +104,17 @@ export class PlayerSoldier {
 
   takeDamage(amount: number): void {
     if (this.isDown) return;
+    this.sinceHit = 0;
     this.health = Math.max(0, this.health - amount);
     if (this.health === 0) this.downFor = DOWN_TIME;
+  }
+
+  /** A medic's patched him up: back on his feet where he lies. */
+  revive(): void {
+    this.downFor = 0;
+    this.health = PATCHED_UP;
+    this.sinceHit = 0;
+    this.applyTransform(0);
   }
 
   heal(amount: number): void {
@@ -117,6 +132,8 @@ export class PlayerSoldier {
       this.applyTransform(0);
       return false;
     }
+    this.sinceHit += dt;
+    if (this.sinceHit > REGEN_DELAY) this.health = Math.min(MAX_HEALTH, this.health + REGEN_RATE * dt);
     this.yaw -= input.aimYawDelta;
     this.pitch = clamp(this.pitch - input.aimPitchDelta, PITCH_MIN, PITCH_MAX);
 
@@ -162,7 +179,8 @@ export class PlayerSoldier {
     this.applyTransform(hop);
 
     this.fireCooldown = Math.max(0, this.fireCooldown - dt);
-    if (input.firing && this.fireCooldown === 0) {
+    // The rifle doesn't fire while he's spraying jam.
+    if (input.firing && !input.jamFiring && this.fireCooldown === 0) {
       this.fireCooldown = FIRE_INTERVAL;
       return true;
     }
