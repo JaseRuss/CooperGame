@@ -12,17 +12,26 @@ import { Facility } from './Facility';
 import { PlayerSoldier, MAX_HEALTH } from './PlayerSoldier';
 import { ShoulderCam } from './ShoulderCam';
 import { Dummies } from './Dummies';
+import { Cells } from './Cells';
+import { Followers, type PrisonerSpot } from './Followers';
+import { PLAYER_SHOTS } from './groups';
+import type { CellSpot } from './Facility';
 
 const SKY = 0x2a3550;
 /** The sun's shadow box follows the player; the compound is small, so it can be tight and sharp. */
 const SHADOW_HALF = 45;
 const SHOT_RANGE = 220;
 const TRACER_TIME = 0.06;
+/** Who's locked in each of Cell Block A's cells (the first is the player's own), and which holds a buddy. */
+const CELL_PRISONERS = [0, 2, 1, 2, 2, 1, 2, 1];
+const BUDDY_CELL = 4;
+/** "Shoot the padlock" shows when he's this close to a locked door. */
+const LOCK_PROMPT_RANGE = 5;
 
 /** What the pause screen's first page shows on foot, instead of the map. */
 const CONTROLS =
   '<span><b>Move</b> left stick · W A S D</span><span><b>Aim</b> right stick · mouse</span>' +
-  '<span><b>Fire</b> RT · click</span><span><b>Camera</b> Y · C</span><span><b>Back to checkpoint</b> Back · R</span>';
+  '<span><b>Fire</b> RT · click</span><span><b>Squad: follow me / hold here</b> X · X</span><span><b>Camera</b> Y · C</span><span><b>Back to checkpoint</b> Back · R</span>';
 
 /** Nothing on the map: the HUD needs one, but the prison has no minimap. */
 const NO_MAP: MapView = {
@@ -68,10 +77,13 @@ export class PrisonGame {
   private player!: PlayerSoldier;
   private cam!: ShoulderCam;
   private dummies!: Dummies;
+  private cells!: Cells;
+  private followers!: Followers;
+  /** Where he gets back up: his cell, until he's out of it. */
+  private checkpoint = { x: 0, z: 0, yaw: 0 };
+  private blockFreed = false;
   private readonly tracers: { line: THREE.Line; age: number }[] = [];
   private readonly tracerMaterial = new THREE.LineBasicMaterial({ color: 0xffe7a0, transparent: true });
-  private wasDown = false;
-  private visitedBlock = false;
 
   constructor(container: HTMLElement) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -124,6 +136,11 @@ export class PrisonGame {
     this.cam = new ShoulderCam(this.camera, this.world);
     this.dummies = new Dummies(this.world, this.facility.layout.dummies);
     this.scene.add(this.dummies.group);
+    this.cells = new Cells(this.world, this.facility.layout.cells);
+    this.scene.add(this.cells.group);
+    this.followers = new Followers(this.world, prisonerSpots(this.facility.layout.cells), this.settings.buddyNames);
+    this.scene.add(this.followers.group);
+    this.checkpoint = { ...start };
     // Colliders added this frame aren't in the query pipeline until a step.
     this.world.step();
 
@@ -139,7 +156,7 @@ export class PrisonGame {
 
     this.loadingLabel.remove();
     this.ready = true;
-    this.hud.showBanner('BONUS: PRISON BREAK', "You're on foot! Knock over the practice dummies, then check out the cell block");
+    this.hud.showBanner('BONUS: PRISON BREAK', "They've locked you up and taken your tank! Shoot the padlock to get out");
     this.sound.music.start();
     this.clock.start();
     if (import.meta.env.DEV) (window as unknown as { prison: PrisonGame }).prison = this;
@@ -159,6 +176,7 @@ export class PrisonGame {
     }
     this.input.setAimScale(AIM_SPEED_SCALE[this.settings.aimSpeed]);
     this.sound.setVolumes(this.settings.sfxVolume, this.settings.musicVolume);
+    this.followers?.setNameTags(this.settings.nameTags, this.settings.buddyNames);
     this.pausedRendered = false;
   }
 
@@ -173,13 +191,13 @@ export class PrisonGame {
   private fireRifle(): void {
     const camPos = this.camera.getWorldPosition(new THREE.Vector3());
     const aim = this.cam.aimDirection();
-    const sight = this.world.castRay(new RAPIER.Ray(camPos, aim), SHOT_RANGE, true, undefined, undefined, this.player.collider);
+    const sight = this.world.castRay(new RAPIER.Ray(camPos, aim), SHOT_RANGE, true, undefined, PLAYER_SHOTS);
     const target = camPos.clone().addScaledVector(aim, sight ? sight.timeOfImpact : SHOT_RANGE);
     const muzzle = this.player.muzzle();
     const dir = target.clone().sub(muzzle);
     const dist = dir.length();
     dir.normalize();
-    const hit = this.world.castRay(new RAPIER.Ray(muzzle, dir), dist + 0.05, true, undefined, undefined, this.player.collider);
+    const hit = this.world.castRay(new RAPIER.Ray(muzzle, dir), dist + 0.05, true, undefined, PLAYER_SHOTS);
     const end = hit ? muzzle.clone().addScaledVector(dir, hit.timeOfImpact) : target;
 
     this.impacts.muzzleFlash(muzzle, dir, 0.3);
@@ -187,16 +205,47 @@ export class PrisonGame {
     this.cam.addShake(0.08);
     this.addTracer(muzzle, end);
     if (!hit) return;
-    if (this.dummies.hit(hit.collider, dir)) {
+    const cell = this.cells.hit(hit.collider, dir);
+    if (cell) {
+      this.sound.play('clang', { at: end, volume: 0.9, rate: 1.1 });
+      this.impacts.dustPuff(end);
+      this.onCellOpened(cell.index);
+    } else if (this.dummies.hit(hit.collider, dir)) {
       this.sound.play('thud', { at: end, volume: 0.7, rate: 1.3 });
       this.impacts.dustPuff(end);
-      if (this.dummies.knockedOnce === this.dummies.total) {
-        this.hud.showBanner('TARGET PRACTICE DONE!', 'Every dummy knocked over. The real guards come next');
-      }
     } else {
       this.impacts.dustPuff(end);
       this.sound.play('clang', { at: end, volume: 0.15, rate: 2.2, minGap: 0.08 });
     }
+  }
+
+  private toCheckpoint(): void {
+    const c = this.checkpoint;
+    this.player.teleport(c.x, c.z, c.yaw);
+    this.followers.gather(this.player.position);
+  }
+
+  private onCellOpened(index: number): void {
+    if (index === 0) {
+      this.checkpoint = { ...this.facility.layout.corridorCheckpoint };
+      this.hud.showBanner("YOU'RE OUT!", 'Now shoot the padlocks on the other cells and free everyone');
+      return;
+    }
+    const names = this.settings.buddyNames;
+    const buddies = this.followers.release(index);
+    const freedBuddies = buddies.map((b) => names[b]).join(' & ');
+    if (this.cells.all.every((c) => !c.locked) && !this.blockFreed) {
+      this.blockFreed = true;
+      this.hud.showBanner(
+        'CELL BLOCK A IS FREE!',
+        `${buddies.length ? `${freedBuddies} too! ` : ''}${this.followers.count} prisoners are following you. Press X to tell them to hold or follow`,
+      );
+    } else if (buddies.length) {
+      this.hud.showBanner(`${freedBuddies.toUpperCase()} IS FREE!`, 'Your buddies will help you get your tank back');
+    } else {
+      this.hud.showCallout(`+${this.followers.inCell(index)} · SQUAD ${this.followers.count}`, '#9be27a');
+    }
+    this.sound.play('uiConfirm', { volume: 0.6 });
   }
 
   private addTracer(from: THREE.Vector3, to: THREE.Vector3): void {
@@ -219,16 +268,31 @@ export class PrisonGame {
 
   private prisonHUD(): PrisonHUD {
     const p = this.player.position;
-    const inBlock = this.facility.layout.inBlock(p.x, p.z);
-    this.visitedBlock ||= inBlock;
     const down = this.player.downFor;
+    const cells = this.cells.all;
+    const own = cells[0];
+    const others = cells.slice(1);
+    const opened = others.filter((c) => !c.locked).length;
+    const names = this.settings.buddyNames;
+    const buddies = this.followers.buddiesHere;
+    const freed = this.followers.buddiesFreed;
+    const nearLock = cells.some((c) => c.locked && Math.hypot(c.lockAt.x - p.x, c.lockAt.z - p.z) < LOCK_PROMPT_RANGE);
+    const squad = this.followers.count;
     return {
-      title: 'PRISON BREAK · TRAINING YARD',
+      title: `PRISON BREAK · CELL BLOCK A${squad ? ` · SQUAD ${squad}${this.followers.isHolding ? ' (HOLDING)' : ''}` : ''}`,
       objectives: [
-        { label: `Knock over the practice dummies (${this.dummies.knockedOnce} / ${this.dummies.total})`, done: this.dummies.knockedOnce === this.dummies.total },
-        { label: 'Look round the cell block', done: this.visitedBlock },
+        { label: 'Break out of your cell', done: !own.locked },
+        { label: `Open the other cells (${opened} / ${others.length})`, done: opened === others.length },
+        ...buddies.map((b) => ({ label: `Free ${names[b]}`, done: freed.includes(b) })),
       ],
-      prompt: down > 0 ? `Knocked down! Back on your feet in ${Math.ceil(down)}…` : null,
+      prompt:
+        down > 0
+          ? `Knocked down! Back on your feet in ${Math.ceil(down)}…`
+          : own.locked
+            ? 'Shoot the padlock on your cell door!'
+            : nearLock
+              ? 'Shoot the padlock to open the cell'
+              : null,
       downFor: down,
     };
   }
@@ -297,17 +361,21 @@ export class PrisonGame {
 
     if (input.mapTogglePressed) this.hud.toggleBigMap();
     if (input.cameraTogglePressed) this.cam.toggle();
-    const start = this.facility.layout.start;
-    if (input.resetPressed) this.player.teleport(start.x, start.z, start.yaw);
-
+    if (input.megaJamPressed && this.followers.count > 0) {
+      const holding = this.followers.toggleHold();
+      this.hud.showCallout(holding ? 'SQUAD: HOLD HERE' : 'SQUAD: FOLLOW ME', holding ? '#ffd24a' : '#9be27a');
+      this.sound.play('uiChange', { volume: 0.5 });
+    }
+    const wasDown = this.player.isDown;
     if (this.player.step(input, dt)) this.fireRifle();
-    // Back on his feet at the last checkpoint once he's been knocked down.
-    if (this.wasDown && !this.player.isDown) this.player.teleport(start.x, start.z, start.yaw);
-    this.wasDown = this.player.isDown;
+    // Back on his feet at the last checkpoint (with the squad) when asked, or once he's been knocked down.
+    if (input.resetPressed || (wasDown && !this.player.isDown)) this.toCheckpoint();
+    this.followers.update(dt, this.player.position);
     this.world.step();
 
     this.cam.update(this.player, dt);
     this.dummies.update(dt);
+    this.cells.update(dt);
     this.impacts.update(dt);
     this.updateTracers(dt);
 
@@ -320,4 +388,24 @@ export class PrisonGame {
     this.renderer.render(this.scene, this.camera);
     this.hud.recordFrame();
   };
+}
+
+/** Who's in Cell Block A: a couple of prisoners per cell (some sat waiting), and one buddy. */
+function prisonerSpots(cells: CellSpot[]): PrisonerSpot[] {
+  const spots: PrisonerSpot[] = [];
+  cells.forEach((cell, i) => {
+    const doorX = (cell.doorX0 + cell.doorX1) / 2;
+    const exits = [new THREE.Vector2(doorX, cell.frontZ + 0.9), new THREE.Vector2(doorX, cell.frontZ - 1.6)];
+    for (let j = 0; j < CELL_PRISONERS[i]; j++) {
+      spots.push({
+        x: cell.minX + 1.4 + j * 1.6,
+        z: cell.frontZ + 2.6 + (j % 2) * 1.2,
+        cell: i,
+        kneel: (i + j) % 3 === 0,
+        buddy: i === BUDDY_CELL && j === 0 ? 0 : null,
+        exits,
+      });
+    }
+  });
+  return spots;
 }

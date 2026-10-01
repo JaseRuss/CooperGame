@@ -58,6 +58,12 @@ export function nameTag(name: string): THREE.Sprite {
   return sprite;
 }
 
+/** Redraws a name tag made by `nameTag` with a new name. */
+export function renameTag(tag: THREE.Sprite, name: string): void {
+  tag.material.map?.dispose();
+  tag.material.map = nameTexture(name);
+}
+
 /** A tank on the player's side: picks the most valuable enemy in reach and shells it. */
 abstract class AllyTank extends Tank {
   override readonly fireInterval: number = 2.2;
@@ -140,9 +146,7 @@ abstract class AllyTank extends Tank {
 
   /** Redraws the floating name, after it's been changed in the options. */
   protected redrawNameTag(name: string): void {
-    if (!this.tag) return;
-    this.tag.material.map?.dispose();
-    this.tag.material.map = nameTexture(name);
+    if (this.tag) renameTag(this.tag, name);
   }
 
   override dispose(): void {

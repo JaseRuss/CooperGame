@@ -1164,8 +1164,8 @@ export class HUD {
       this.keys,
       (prison
         ? state.usingGamepad
-          ? `${k('LS', 'move')}${k('RS', 'aim')}${k('RT', 'fire')}${k('Y', 'camera')}${k('Start', 'pause · options')}${k('Back', 'checkpoint')}`
-          : `${k('WASD', 'move')}${k('Mouse', 'aim')}${k('Click', 'fire')}${k('C', 'camera')}${k('M', 'pause · options')}${k('R', 'checkpoint')}` +
+          ? `${k('LS', 'move')}${k('RS', 'aim')}${k('RT', 'fire')}${k('X', 'squad')}${k('Y', 'camera')}${k('Start', 'pause · options')}${k('Back', 'checkpoint')}`
+          : `${k('WASD', 'move')}${k('Mouse', 'aim')}${k('Click', 'fire')}${k('X', 'squad')}${k('C', 'camera')}${k('M', 'pause · options')}${k('R', 'checkpoint')}` +
             (state.mouseCaptureHint ? '<br><span style="color:#ffd24a">Click the game to capture the mouse for aiming</span>' : '')
         : state.usingGamepad
         ? `${k('LS', drive)}${k('RS', 'aim')}${k('RT', fire)}${bike ? '' : k('LT', 'jam')}${k('LB', rocket)}${bike ? '' : k('RB', 'AA')}<br>${bike ? '' : k('X', 'mega jam')}${k('Y', 'camera')}${k('Start', 'pause · options')}${k('Back', 'home')}`

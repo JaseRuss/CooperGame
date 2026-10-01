@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import type { CameraMode } from '../camera/CameraRig';
 import type { PlayerSoldier } from './PlayerSoldier';
+import { WALLS_ONLY } from './groups';
 
 /** Over the right shoulder: the pivot is this far up and to the right of his feet, the camera this far behind it. */
 const PIVOT_UP = 1.75;
@@ -54,7 +55,7 @@ export class ShoulderCam {
       player.setVisible(true);
       // Shuffle the pivot in toward his head if he's standing with a wall on his right.
       this.pivot.set(p.x, p.y + PIVOT_UP, p.z);
-      const side = this.world.castRay(new RAPIER.Ray(this.pivot, this.right), PIVOT_RIGHT + WALL_GAP, true, undefined, undefined, player.collider);
+      const side = this.world.castRay(new RAPIER.Ray(this.pivot, this.right), PIVOT_RIGHT + WALL_GAP, true, undefined, WALLS_ONLY);
       this.pivot.addScaledVector(this.right, side ? Math.max(0, side.timeOfImpact - WALL_GAP) : PIVOT_RIGHT);
       // Lying down: pull back and up so he's in the shot.
       const want = player.isDown ? BACK + 2 : BACK;
@@ -63,7 +64,7 @@ export class ShoulderCam {
       back.normalize();
       // Anything between the pivot and where the camera wants to be pulls it in.
       const ray = new RAPIER.Ray(this.pivot, back);
-      const hit = this.world.castRay(ray, want, true, undefined, undefined, player.collider);
+      const hit = this.world.castRay(ray, want, true, undefined, WALLS_ONLY);
       const limit = hit ? Math.max(0.3, hit.timeOfImpact - WALL_GAP) : want;
       this.distance = limit < this.distance ? limit : this.distance + (limit - this.distance) * (1 - Math.exp(-RELEASE_LAMBDA * dt));
       this.camera.position.copy(this.pivot).addScaledVector(back, this.distance);

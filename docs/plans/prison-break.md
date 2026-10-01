@@ -1,6 +1,6 @@
 # Plan: Bonus level "Prison Break"
 
-Status: milestone 1 built (on foot in the training yard). Decisions from the owner are below.
+Status: milestones 1 and 2 built (on foot; Cell Block A, padlocks and the squad following). Decisions from the owner are below.
 
 ## The level in one paragraph
 
@@ -87,7 +87,7 @@ move them into small shared modules rather than copying them.
 | `src/prison/ShoulderCam.ts` | Over-the-shoulder camera: about 3.5 m back, 1 m right, 1.9 m up, with a ray cast back from the head so walls and ceilings don't block the view indoors (the tank chase cam has no collision because it never needs it). First person puts the eye at the head. |
 | `src/prison/Facility.ts` | The compound, built with `PartBuilder`: perimeter wall, cell blocks, control room, yard, watchtowers, barracks, punishment hut, motor pool, main gate. A fixed hand-made layout (not seeded), since the beats depend on where things are. Walls and roofs get Rapier cuboid colliders. |
 | `src/prison/Cells.ts` | Cell doors with shootable padlocks, lever boxes that open a whole block, who's in each cell. |
-| `src/prison/Followers.ts` | Freed soldiers and buddies: follow in a loose column behind the player, fight guards in range, hold position on X. Buddies get name tags (reuse the buddy name-tag code). |
+| `src/prison/Followers.ts` | *(Built.)* Freed soldiers and buddies: follow the player's trail, gather round him, fight guards in range, hold position on X. Buddies get name tags (reuse the buddy name-tag code). |
 | `src/prison/NavGraph.ts` | Hand-placed waypoints at doorways and corridor ends with A* between them, so followers and guards get through doors instead of grinding into walls. The free-roaming wander in `Soldier` only works outdoors. |
 | `src/prison/Guards.ts` | Tan guards: posts and patrol routes on the nav graph, the existing `Soldier` shooting. |
 | `src/prison/Towers.ts` | Guard towers round the yard with a guard on top; shootable, they topple. |
@@ -131,8 +131,12 @@ mission 4 never rolls on into it: the bonus is only picked by hand.
 
 1. **On foot in a box.** *(Done.)* Mission 5 plumbing, `PrisonGame`, `PlayerSoldier`,
    `ShoulderCam`, a walled training yard and one cell block, tan practice dummies to shoot.
-2. **Cell Block A.** Facility pieces, padlocks, freeing prisoners, followers in a column through
-   doors (nav graph).
+2. **Cell Block A.** *(Done.)* Start locked in your own cell; shootable padlocks; doors swing
+   flat against the bars; prisoners cheer and follow; X to hold or follow. Followers walk the
+   trail of breadcrumbs the player leaves, which handles doorways without a nav graph: they
+   cut corners when there's a straight line, gather round him when they can see him, and
+   re-route (and as a last resort hop onto the trail) if a corner holds them up for six
+   seconds. The nav graph is still needed for guards' patrols in milestone 3.
 3. **Guards and fighting.** Guards with patrols, rifle and jam grenade, followers fighting,
    knocked down and checkpoint, zone checklist on the HUD.
 4. **The rest of the compound.** Cell Block B and control room, yard and guard towers,
