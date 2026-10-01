@@ -193,8 +193,8 @@ const BUDDY_ARRIVAL: Record<BuddyVehicle, string> = { tank: 'IS ROLLING IN', jee
 const CHECKLIST_RANGE = 350; // show the target list when this close to an enemy base
 const VICTORY_SCREEN_TIME = 9;
 const NEXT_MISSION_DELAY = 12; // after winning a mission, the next one starts this long after the victory screen
-/** The mission that follows this one, if any. */
-const nextMission = MISSIONS.find((m) => m.mission === MISSION + 1);
+/** The mission that follows this one, if any (the bonus level is only picked from the level select). */
+const nextMission = MISSIONS.find((m) => m.mission === MISSION + 1 && !m.bonus);
 /** Where the jungle haze turns fully opaque. */
 const JUNGLE_FOG_FAR = 950;
 const DAY_FOG_FAR = 1700;
@@ -1959,6 +1959,7 @@ export class Game {
         2: 'Jungle strike complete! Every enemy base in the jungle is yours.',
         3: 'The Great Castle has fallen! Every knight is bowled over and every dragon is down.',
         4: '',
+        5: '',
       };
       const bombed = MISSION === 1 && this.tanker?.active;
       this.hud.showVictory(bombed ? 'The bomb tanker blew the Fortress sky-high! The toy box is saved!' : message[MISSION], nextMission ? '' : 'Keep driving around and enjoy it!');
@@ -2658,6 +2659,7 @@ export class Game {
       nearbyBase: checklist,
       airSupport: this.airSupport(),
       tanker: this.tanker?.hud() ?? null,
+      prison: null,
     };
   }
 

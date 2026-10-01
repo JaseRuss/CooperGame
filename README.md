@@ -360,11 +360,21 @@ rocket's ready, and the zombies close in round your tank while the rocket leaves
 without you. The end screen shows how long you held out and how many zombies you
 knocked over. Press A or Enter to play again.
 
+## Bonus: Prison Break (being built)
+
+A bonus level on foot. The tan army has locked you up and taken your tank: break out, free
+your buddies and the other prisoners, take over the prison and drive your tank home. So far
+it's a training yard: run about as a green army man (he hops, like all the toy soldiers),
+aim over his shoulder and knock over the tan practice dummies. Move with the left stick or
+W A S D, aim with the right stick or mouse, fire with RT or a click, Y / C swaps to first
+person and Back / R goes back to the start. It's in the level select as **5 · Bonus: Prison
+Break**. The plan is in `docs/plans/prison-break.md`.
+
 ## Level select
 
 Pause, open **Options** and pick a level under **Level select** at the bottom,
 then press A or Enter (or click it). It starts that mission from the beginning.
-You can also open the game with `?mission=2` up to `?mission=4`.
+You can also open the game with `?mission=2` up to `?mission=5`.
 
 ## Credits
 

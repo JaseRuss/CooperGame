@@ -1,6 +1,6 @@
 # Plan: Bonus level "Prison Break"
 
-Status: proposal, nothing built yet.
+Status: milestone 1 built (on foot in the training yard). Decisions from the owner are below.
 
 ## The level in one paragraph
 
@@ -22,19 +22,20 @@ buddies jump onto the sides, smash through the main gate and drive home to Coope
    buddy is here. Freed soldiers fall in behind you.
 4. **Cell Block B and the control room.** A bigger block. Shooting the control room's lever
    box opens every door in the block at once (a nice "whoosh" moment). Second and third buddy.
-5. **The yard.** Open ground with watchtowers and searchlights. Get caught in a light and the
-   alarm goes, sending a squad out of the barracks. Knock out the towers (two hits, they topple
-   like the water towers) to quiet the yard. Followers fight alongside you.
+5. **The yard.** Open ground with guard towers, each with a tan guard shooting down from the
+   top. Knock out the towers (two hits, they topple like the water towers). Followers fight
+   alongside you. No stealth: it's a straight fight all the way.
 6. **Barracks.** Clear the guards, then shoot down the tan flag on the roof: it flips to a green
    one. Fourth buddy is in the punishment hut behind it.
 7. **Motor pool.** Unlocks once every zone is green. Your tank is parked inside behind a
    roller door, guarded by an enemy tank and a pillbox. Followers and buddies help.
 8. **Recapture.** Walk up to your tank. Puff of smoke (like a jeep station), and you're in the
    normal player tank, with all its weapons. The four buddies hop up and ride on the sides of
-   the hull, two each side. The freed green soldiers stay behind holding the compound and wave.
+   the hull, two each side. The freed green soldiers pile into tan army trucks from the motor
+   pool and follow you out.
 9. **The drive home.** Blast the main gate and follow the road (gold waypoint arrow) to
-   Cooper's Base, a few hundred metres away, with tan jeeps chasing. Nothing can stop you, as
-   with the bomb tanker.
+   Cooper's Base, a few hundred metres away, with the trucks behind you and tan jeeps chasing.
+   Nothing can stop you, as with the bomb tanker.
 10. **Ending.** Roll through the base gate, the buddies jump down and cheer, banner
     `MISSION ACCOMPLISHED!`, the end screen shows prisoners freed and guards knocked over.
 
@@ -88,8 +89,9 @@ move them into small shared modules rather than copying them.
 | `src/prison/Cells.ts` | Cell doors with shootable padlocks, lever boxes that open a whole block, who's in each cell. |
 | `src/prison/Followers.ts` | Freed soldiers and buddies: follow in a loose column behind the player, fight guards in range, hold position on X. Buddies get name tags (reuse the buddy name-tag code). |
 | `src/prison/NavGraph.ts` | Hand-placed waypoints at doorways and corridor ends with A* between them, so followers and guards get through doors instead of grinding into walls. The free-roaming wander in `Soldier` only works outdoors. |
-| `src/prison/Guards.ts` | Tan and blue guards: patrol routes on the nav graph, the existing `Soldier` shooting, an alarm that sends a barracks squad. |
-| `src/prison/Searchlights.ts` | Watchtower lights sweeping the yard; standing in a beam trips the alarm. Towers are shootable. |
+| `src/prison/Guards.ts` | Tan guards: posts and patrol routes on the nav graph, the existing `Soldier` shooting. |
+| `src/prison/Towers.ts` | Guard towers round the yard with a guard on top; shootable, they topple. |
+| `src/prison/Trucks.ts` | Tan army trucks (built with `PartBuilder`) that the freed soldiers ride out in, following the tank along the road. |
 | `src/prison/Zones.ts` | Each zone's "taken" check (guards cleared, flag down), the HUD checklist, and checkpoints. |
 | `src/prison/Breakout.ts` | The finale: tank recapture, riders on the hull, the road home, chasing jeeps, the ending cutscene. |
 | `src/prison/HullRiders.ts` | The four buddies clinging to the hull sides, attached to `player.root` (like the bomb tanker's gunners in `TankerCrew.ts`). A new seated or clinging pose built with `PartBuilder`. |
@@ -123,21 +125,21 @@ Check it in the running game with screenshots, not just `npm run build`.
 
 ## Milestones
 
-`main` deploys on every push, so the level stays out of the level select until milestone 6.
-Before then it's only reachable with `?mission=5`.
+The owner wants it in the level select while it's being tested, so it's there (as
+"5 · Bonus: Prison Break") from milestone 1, and also reachable with `?mission=5`. Winning
+mission 4 never rolls on into it: the bonus is only picked by hand.
 
-1. **On foot in a box.** Mission 5 plumbing, `PrisonGame` skeleton, `PlayerSoldier`,
-   `ShoulderCam`, one walled room. Walk, hop, aim, shoot, no clipping through walls.
+1. **On foot in a box.** *(Done.)* Mission 5 plumbing, `PrisonGame`, `PlayerSoldier`,
+   `ShoulderCam`, a walled training yard and one cell block, tan practice dummies to shoot.
 2. **Cell Block A.** Facility pieces, padlocks, freeing prisoners, followers in a column through
    doors (nav graph).
 3. **Guards and fighting.** Guards with patrols, rifle and jam grenade, followers fighting,
    knocked down and checkpoint, zone checklist on the HUD.
-4. **The rest of the compound.** Cell Block B and control room, yard, towers, searchlights and
-   alarm, barracks and flag, all four buddies.
-5. **Breakout.** Motor pool fight, swapping into `PlayerTank`, hull riders, the road home,
-   chasing jeeps, ending cutscene and end screen.
-6. **Polish and release.** Music, sounds, intro cutscene, Low graphics check, README, add to
-   the level select.
+4. **The rest of the compound.** Cell Block B and control room, yard and guard towers,
+   barracks and flag, all four buddies.
+5. **Breakout.** Motor pool fight, swapping into `PlayerTank`, hull riders, trucks full of
+   freed soldiers, the road home, chasing jeeps, ending cutscene and end screen.
+6. **Polish.** Sounds, intro cutscene, Low graphics check, README.
 
 ## Risks
 
@@ -150,12 +152,10 @@ Before then it's only reachable with `?mission=5`.
 - **Size of the job.** This is a new game mode, comparable to the bomb tanker and zombie
   mission put together. Each milestone is a PR on its own.
 
-## Decisions for the owner
+## Decisions
 
-1. **Unlocking.** Always in the level select as "Bonus", or only after beating mission 4?
-2. **Stealth.** Light (searchlights and an alarm that brings reinforcements, as above), or
-   none at all (straight shooting)?
-3. **Enemies.** Tan and blue guards, as above, or one army only?
-4. **The other freed soldiers at the end.** Stay behind holding the compound (as above), or
-   follow in trucks?
-5. **Home.** Back to Cooper's Base (as above) or a fresh "base" at the end of the road?
+1. **Unlocking:** in the level select as a bonus while it's tested.
+2. **Stealth:** none, just fighting.
+3. **Enemies:** tan only.
+4. **The freed soldiers at the end:** follow you out, in trucks.
+5. **Home:** Cooper's Base.

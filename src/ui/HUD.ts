@@ -47,6 +47,16 @@ export interface ZombieHUD {
   rocketDistance: number;
 }
 
+/** The bonus prison level, on foot: what to do next and the zones taken so far. */
+export interface PrisonHUD {
+  title: string;
+  objectives: ObjectiveLine[];
+  /** A hint in the middle of the screen, or null. */
+  prompt: string | null;
+  /** Seconds left before the player is back on their feet, while knocked down (0 when standing). */
+  downFor: number;
+}
+
 /** A marker pointing the way to somewhere: on screen over it, or pinned to the edge toward it. */
 export interface Waypoint {
   x: number;
@@ -116,6 +126,8 @@ export interface HUDState {
   airSupport: { total: number; left: number; ready: boolean } | null;
   /** The bomb tanker objective on the first mission, or null on the others. */
   tanker: TankerHUD | null;
+  /** Set on the bonus prison level, where the player is on foot. */
+  prison: PrisonHUD | null;
   driveStyle: Settings['driveStyle'];
   /** Remind the player to click so the browser hands over the mouse for aiming. */
   mouseCaptureHint: boolean;
@@ -412,6 +424,10 @@ export class HUD {
   private readonly hudBits: HTMLElement[];
   private readonly html = new Map<HTMLElement, string>();
   private worldMap: WorldMap | null = null;
+  private readonly hullName: HTMLSpanElement;
+  private readonly buddySlot: HTMLDivElement;
+  private readonly minimapWrap: HTMLDivElement;
+  private readonly mapLegends: HTMLDivElement[] = [];
   private lastDrawnMap: MapView | null = null;
   private pausedOpen = false;
   private page: 'map' | 'options' = 'map';
@@ -440,7 +456,7 @@ export class HUD {
     this.modeText = el('span', 'subtle', head);
 
     const hullLabel = el('div', 'row-label', card);
-    el('span', '', hullLabel, 'HULL');
+    this.hullName = el('span', '', hullLabel, 'HULL');
     this.healthText = el('span', '', hullLabel);
     const segs = el('div', 'segs', card);
     for (let i = 0; i < HULL_SEGMENTS; i++) this.segs.push(el('div', 'seg', segs));
@@ -482,6 +498,7 @@ export class HUD {
     el('div', 'subtle', jamBody, 'Sticks soldiers and tanks · X: jam all round');
 
     const buddySlot = el('div', 'slot', card);
+    this.buddySlot = buddySlot;
     el('div', 'icon', buddySlot).innerHTML = TANK_ICON;
     const buddyBody = el('div', 'body', buddySlot);
     const buddyLabel = el('div', 'row-label', buddyBody);
@@ -516,6 +533,7 @@ export class HUD {
 
     // --- minimap (top-right) ---
     const minimapWrap = el('div', 'minimap', root);
+    this.minimapWrap = minimapWrap;
     const minimapCanvas = el('canvas', '', minimapWrap);
     minimapCanvas.width = MINIMAP_SIZE;
     minimapCanvas.height = MINIMAP_SIZE;
@@ -544,12 +562,14 @@ export class HUD {
     this.bigMapCanvas = el('canvas', '', this.pages.map);
     this.bigMapCanvas.style.cssText = 'border:3px solid rgba(214,196,138,0.7); border-radius:8px; box-shadow:0 4px 18px rgba(0,0,0,0.6);';
     this.bigMapCtx = this.bigMapCanvas.getContext('2d') as CanvasRenderingContext2D;
-    el('div', 'legend shadow', this.pages.map).innerHTML = ZOMBIES
+    this.mapLegends.push(el('div', 'legend shadow', this.pages.map));
+    this.mapLegends[0].innerHTML = ZOMBIES
       ? '<span><i style="background:#4b7a2e"></i>Green army: you</span><span><i style="background:#b8392e"></i>Red</span>' +
         '<span><i style="background:#c4a468"></i>Tan</span><span><i style="background:#3d6fc4"></i>Blue: all friends now</span><span><i style="background:#9fb98a"></i>Zombies: the enemy</span>'
       : '<span><i style="background:#4b7a2e"></i>Green army: you</span><span><i style="background:#b8392e"></i>Red army: friendly</span>' +
         '<span><i style="background:#c4a468"></i>Tan army: enemy</span><span><i style="background:#3d6fc4"></i>Blue army: enemy</span>';
-    el('div', 'legend shadow', this.pages.map).innerHTML =
+    this.mapLegends.push(el('div', 'legend shadow', this.pages.map));
+    this.mapLegends[1].innerHTML =
       '<span><i style="background:#5fe05f"></i>You</span><span><i style="background:#9be27a"></i>Buddies &amp; friendly troops</span>' +
       '<span><i style="background:#ffcc33"></i>Family bases</span><span><i style="background:#d23c32"></i>Enemy bases</span>' +
       '<span><i style="background:linear-gradient(90deg,#ffd44a,#dc2a1a)"></i>Enemies gathered</span>' +
@@ -616,6 +636,18 @@ export class HUD {
 
     this.hudBits = [card, this.keys, minimapWrap, this.promptLabel, this.baseCounter, this.checklist, this.jeepTimer];
     this.showPage('map');
+  }
+
+  /**
+   * The bonus prison level: the player's on foot, so there's no map, rocket, AA, jam cannon or
+   * buddy meter. The pause screen's map page shows the controls instead.
+   */
+  setOnFoot(controls: string): void {
+    this.minimapWrap.style.display = 'none';
+    this.bigMapCanvas.style.display = 'none';
+    this.tabs.map.textContent = 'CONTROLS';
+    this.mapLegends[0].innerHTML = '<span><i style="background:#4b7a2e"></i>Green army: you and the prisoners</span><span><i style="background:#c4a468"></i>Tan army: the guards</span>';
+    this.mapLegends[1].innerHTML = controls;
   }
 
   setWorldMap(map: WorldMap): void {
@@ -1074,6 +1106,17 @@ export class HUD {
     this.rocketText.style.color = state.rocketDamaged ? '#ff6a5a' : rocketReady ? '#ff9a5a' : '#eef3f8';
     this.rocketSlot.classList.toggle('ready', rocketReady);
     this.jamSlot.style.display = bike ? 'none' : ''; // the bike has no jam cannon
+    const prison = state.prison;
+    this.hullName.textContent = prison ? 'HEALTH' : 'HULL';
+    this.rocketSlot.style.display = prison ? 'none' : '';
+    this.buddySlot.style.display = prison ? 'none' : '';
+    if (prison) {
+      this.jamSlot.style.display = 'none';
+      this.gunName.textContent = state.damageBoost > 0 ? `RIFLE · 2× DAMAGE ${Math.ceil(state.damageBoost)}s` : 'RIFLE';
+      this.reloadText.textContent = prison.downFor > 0 ? 'KNOCKED DOWN' : 'READY';
+      this.reloadText.style.color = prison.downFor > 0 ? '#ff8a7a' : '#ffd24a';
+      this.modeText.textContent = `${state.cameraMode === 'first' ? '1st' : '3rd'} person · On foot`;
+    }
 
     const aaLocked = state.aaLockScreen !== null;
     this.aaText.textContent = state.aaRearming
@@ -1087,7 +1130,7 @@ export class HUD {
             : `${state.aaLoaded} · NO LOCK`;
     this.aaText.style.color = state.aaLoaded === 0 ? '#ff8a7a' : aaLocked ? '#8fd3ff' : '#eef3f8';
     this.aaSlot.classList.toggle('ready', aaLocked);
-    this.aaSlot.style.display = bike ? 'none' : '';
+    this.aaSlot.style.display = bike || prison ? 'none' : '';
     this.setHTML(
       this.aaPips,
       Array.from({ length: state.aaMax }, (_, i) => `<div class="pip${i < state.aaLoaded ? ' on' : ''}"></div>`).join(''),
@@ -1119,7 +1162,12 @@ export class HUD {
     const drive = chopper ? 'fly' : 'drive';
     this.setHTML(
       this.keys,
-      (state.usingGamepad
+      (prison
+        ? state.usingGamepad
+          ? `${k('LS', 'move')}${k('RS', 'aim')}${k('RT', 'fire')}${k('Y', 'camera')}${k('Start', 'pause · options')}${k('Back', 'checkpoint')}`
+          : `${k('WASD', 'move')}${k('Mouse', 'aim')}${k('Click', 'fire')}${k('C', 'camera')}${k('M', 'pause · options')}${k('R', 'checkpoint')}` +
+            (state.mouseCaptureHint ? '<br><span style="color:#ffd24a">Click the game to capture the mouse for aiming</span>' : '')
+        : state.usingGamepad
         ? `${k('LS', drive)}${k('RS', 'aim')}${k('RT', fire)}${bike ? '' : k('LT', 'jam')}${k('LB', rocket)}${bike ? '' : k('RB', 'AA')}<br>${bike ? '' : k('X', 'mega jam')}${k('Y', 'camera')}${k('Start', 'pause · options')}${k('Back', 'home')}`
         : `${k('WASD', drive)}${k('Mouse', 'aim')}${k('Click', fire)}${bike ? '' : k('E', 'jam')}${k('F', rocket)}${bike ? '' : k('Q', 'AA')}<br>${bike ? '' : k('X', 'mega jam')}${k('C', 'camera')}${k('M', 'pause · options')}${k('R', 'home')}` +
             (state.mouseCaptureHint ? '<br><span style="color:#ffd24a">Click the game to capture the mouse for aiming</span>' : '')) +
@@ -1143,7 +1191,14 @@ export class HUD {
     this.banner.style.opacity = `${bannerT < 0.1 ? bannerT * 10 : Math.max(0, (1 - bannerT) * 2.5)}`;
     this.banner.style.transform = `translateX(-50%) scale(${1 + Math.max(0, 0.15 - this.bannerAge) * 2})`;
 
-    if (state.zombies) {
+    if (prison) {
+      this.setHTML(
+        this.baseCounter,
+        `<div class="stencil title">${prison.title}</div>` +
+          prison.objectives.map((o) => `<div style="font-size:12px; ${o.done ? 'color:#9be27a' : ''}">${o.done ? '☑' : '☐'} ${o.label}</div>`).join(''),
+      );
+      this.checklist.style.display = 'none';
+    } else if (state.zombies) {
       this.setHTML(this.baseCounter, this.zombiePanel(state.zombies));
       this.updateChecklist(state);
     } else {
@@ -1174,7 +1229,7 @@ export class HUD {
       this.crosshair.style.borderColor = color;
       this.crosshair.style.color = color;
       const range = state.aimRange === null ? 'out of range' : `${Math.round(state.aimRange)} m`;
-      this.rangeLabel.textContent = state.aimTarget === 'critical' ? `CRITICAL · ${range}` : state.aimTarget === 'crack' ? `CRACK ×2 · ${range}` : range;
+      this.rangeLabel.textContent = state.prison ? '' : state.aimTarget === 'critical' ? `CRITICAL · ${range}` : state.aimTarget === 'crack' ? `CRACK ×2 · ${range}` : range;
     } else {
       this.crosshair.style.display = 'none';
     }
@@ -1191,6 +1246,10 @@ export class HUD {
 
     if (this.pausedOpen) {
       this.promptLabel.style.display = 'none';
+    } else if (prison) {
+      this.promptLabel.style.display = prison.prompt ? 'block' : 'none';
+      this.promptLabel.style.color = prison.downFor > 0 ? '#ff9a8a' : '#eef3f8';
+      this.promptLabel.textContent = prison.prompt ?? '';
     } else if (state.insideBase) {
       this.promptLabel.style.display = 'block';
       this.promptLabel.style.color = '#eef3f8';
