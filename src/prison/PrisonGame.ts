@@ -12,7 +12,7 @@ import { MISSION, startMission } from '../core/config';
 import { Facility, ROOF_TOP, type ClimbSpot, type FacilityLayout, type ZoneId } from './Facility';
 import { Searchlights } from './Searchlights';
 import { Breakout } from './Breakout';
-import { Outside } from './Outside';
+import { Outside, loadTreeModels } from './Outside';
 import { CameraRig } from '../camera/CameraRig';
 import { PlayerSoldier, MAX_HEALTH } from './PlayerSoldier';
 import { ShoulderCam } from './ShoulderCam';
@@ -236,7 +236,7 @@ export class PrisonGame {
     this.scene.add(this.flag.mesh);
     this.searchlights = new Searchlights(this.world, layout.searchlights, ROOF_TOP);
     this.scene.add(this.searchlights.group);
-    this.outside = new Outside(layout.road, layout.home, layout.ground);
+    this.outside = new Outside(this.world, await loadTreeModels(), layout.road, layout.home, layout.ground);
     this.scene.add(this.outside.group);
     this.rig = new CameraRig(this.camera);
     this.breakout = new Breakout(this.world, layout, {
@@ -251,6 +251,7 @@ export class PrisonGame {
           if ((g.state === 'active' || g.state === 'jammed') && g.pos.distanceTo(at) < radius) g.knockDown(g.pos.clone().sub(at).setY(0).normalize());
         }
       },
+      struck: (hit, direction) => this.outside.treeAt(hit)?.knockDown(direction),
     });
     this.scene.add(this.breakout.group);
     this.checkpoint = { ...layout.start };
@@ -869,6 +870,7 @@ export class PrisonGame {
     this.player.setVisible(false);
     this.player.root.visible = false;
     this.player.collider.setEnabled(false);
+    this.breakout.tank.setCommanderVisible(true);
     const aboard = this.followers.board(this.squadWorld);
     this.passengers = aboard.others;
     const names = this.settings.buddyNames;
@@ -935,6 +937,7 @@ export class PrisonGame {
     this.world.step();
     this.time += dt;
     this.breakout.update(dt, this.time);
+    this.outside.update(dt, tank.position);
     this.flag.update(dt, this.time);
     this.towers.update(dt);
     this.cells.update(dt);
@@ -963,6 +966,7 @@ export class PrisonGame {
   private updateEnding(input: InputState, dt: number): void {
     const t = (this.ending = (this.ending ?? 0) + dt);
     this.breakout.celebrate(this.time);
+    this.outside.update(dt, null);
     const c = this.breakout.tank.position;
     const a = t * 0.25;
     this.rig.updateCinematic(new THREE.Vector3(c.x + Math.sin(a) * 18, 9, c.z + Math.cos(a) * 18), c.clone().setY(1.5), dt, 2);
@@ -1019,6 +1023,7 @@ export class PrisonGame {
     this.checkZones();
     this.time += dt;
     this.breakout.update(dt, this.time);
+    this.outside.update(dt, null);
     if (this.flag.update(dt, this.time)) this.hud.showCallout('OUR FLAG FLIES OVER THE BARRACKS!', '#9be27a');
     for (const at of this.towers.update(dt)) {
       // The tower crashes down in a cloud of dust.

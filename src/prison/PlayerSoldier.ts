@@ -9,7 +9,15 @@ import { FRIEND_GROUPS, WALLS_ONLY } from './groups';
 /** The capsule round the army man: 1.8 m from the bottom of the stand to the top of the helmet. */
 const RADIUS = 0.35;
 const HALF_HEIGHT = 0.9 - RADIUS;
+/**
+ * The gap the character controller keeps round him. Too thin and a frame that leaves the capsule
+ * a hair inside the floor stops him dead (Rapier won't move a shape out of something it starts in).
+ */
+const SKIN = 0.08;
 const RUN_SPEED = 6;
+/** How far he veers off (radians) to get round a corner he's run into, and how far to the side he looks for a way past. */
+const VEER = 0.9;
+const SIDESTEP = [0.5, 0.9];
 const GRAVITY = 24;
 /** How quickly the run speeds up and slows down (higher is snappier). */
 const ACCEL = 14;
@@ -46,6 +54,7 @@ export class PlayerSoldier {
   private readonly figure: THREE.Mesh;
   private readonly velocity = new THREE.Vector3();
   private fallSpeed = 0;
+  private settling = false;
   private hopPhase = 0;
   private fireCooldown = 0;
   private sinceHit = REGEN_DELAY;
@@ -53,9 +62,9 @@ export class PlayerSoldier {
 
   constructor(private readonly world: RAPIER.World, x: number, z: number, yaw: number) {
     this.yaw = yaw;
-    this.body = world.createRigidBody(RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(x, 0.9, z));
+    this.body = world.createRigidBody(RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(x, 0.9 + SKIN, z));
     this.collider = world.createCollider(RAPIER.ColliderDesc.capsule(HALF_HEIGHT, RADIUS).setCollisionGroups(FRIEND_GROUPS), this.body);
-    this.controller = world.createCharacterController(0.02);
+    this.controller = world.createCharacterController(SKIN);
     this.controller.enableAutostep(0.35, 0.2, false);
     this.controller.enableSnapToGround(0.3);
     this.controller.setMaxSlopeClimbAngle((45 * Math.PI) / 180);
@@ -90,8 +99,10 @@ export class PlayerSoldier {
 
   /** Puts him straight back on his feet at (x, z), facing `yaw`. */
   teleport(x: number, z: number, yaw: number, y = 0): void {
-    this.body.setNextKinematicTranslation({ x, y: y + 0.9, z });
-    this.body.setTranslation({ x, y: y + 0.9, z }, true);
+    this.body.setNextKinematicTranslation({ x, y: y + 0.9 + SKIN, z });
+    this.body.setTranslation({ x, y: y + 0.9 + SKIN, z }, true);
+    // The collider only catches up with the body when the world steps, so don't move him off it until then.
+    this.settling = true;
     this.pos.set(x, y, z);
     this.yaw = yaw;
     this.pitch = 0;
@@ -162,22 +173,24 @@ export class PlayerSoldier {
     this.velocity.x += (wantX - this.velocity.x) * k;
     this.velocity.z += (wantZ - this.velocity.z) * k;
 
+    if (this.settling) {
+      this.settling = false;
+      this.applyTransform(0);
+      return false;
+    }
     const grounded = this.controller.computedGrounded();
     this.fallSpeed = grounded ? 0 : this.fallSpeed + GRAVITY * dt;
-    const desired = { x: this.velocity.x * dt, y: -Math.max(this.fallSpeed, 1) * dt, z: this.velocity.z * dt };
-    this.controller.computeColliderMovement(this.collider, desired, undefined, WALLS_ONLY); // walks through his own side
-    const moved = this.controller.computedMovement();
+    // On his feet the run is purely sideways (snap-to-ground keeps him on the floor and takes him down
+    // steps): pushing down into the floor every frame made Rapier now and then refuse the whole move.
+    const desired = { x: this.velocity.x * dt, y: grounded ? 0 : -Math.max(this.fallSpeed, 1) * dt, z: this.velocity.z * dt };
+    const moved = this.move(desired);
     const t = this.body.translation();
     const next = { x: t.x + moved.x, y: t.y + moved.y, z: t.z + moved.z };
     this.body.setNextKinematicTranslation(next);
-    this.pos.set(next.x, next.y - 0.9, next.z);
-    // Bumping into a wall shouldn't keep pushing at it.
-    if (dt > 0) {
-      this.velocity.x = moved.x / dt;
-      this.velocity.z = moved.z / dt;
-    }
-
-    const speed = Math.hypot(this.velocity.x, this.velocity.z);
+    this.pos.set(next.x, next.y - 0.9 - SKIN, next.z);
+    // The run itself is left alone when he bumps into something: the controller slides him along
+    // it, and the moment he's past a post or a crate's corner he's straight back to full speed.
+    const speed = dt > 0 ? Math.hypot(moved.x, moved.z) / dt : 0;
     let hop = 0;
     if (speed > 0.4) {
       this.hopPhase += dt * (6 + speed * 1.2);
@@ -194,6 +207,44 @@ export class PlayerSoldier {
       return true;
     }
     return false;
+  }
+
+  /**
+   * Runs the character controller for one frame's move and returns how far he actually goes. Run
+   * nearly head-on into a crate, a post or the end of a wall and Rapier just stops him dead, so when
+   * he's blocked he looks just past the obstacle either side and, if one side is open, slides off
+   * that way round it. Square into a long wall, neither side is open and he stays put.
+   */
+  private move(desired: { x: number; y: number; z: number }): { x: number; y: number; z: number } {
+    const run = (d: { x: number; y: number; z: number }) => {
+      this.controller.computeColliderMovement(this.collider, d, undefined, WALLS_ONLY); // walks through his own side
+      const m = this.controller.computedMovement();
+      return { x: m.x, y: m.y, z: m.z };
+    };
+    const straight = run(desired);
+    const want = Math.hypot(desired.x, desired.z);
+    if (want < 1e-4) return straight;
+    const fx = desired.x / want;
+    const fz = desired.z / want;
+    if (straight.x * fx + straight.z * fz > want * 0.4) return straight;
+    // Which side is open: a clear line ahead from a little way off to that side.
+    const t = this.body.translation();
+    const open = (side: number, off: number) =>
+      [-0.6, 0.3].every((dy) => { // a hand above the floor, and chest high
+        const origin = { x: t.x - fz * side * off, y: t.y + dy, z: t.z + fx * side * off };
+        return !this.world.castRay(new RAPIER.Ray(origin, { x: fx, y: 0, z: fz }), RADIUS + SKIN + 0.5, true, undefined, WALLS_ONLY, this.collider);
+      });
+    for (const off of SIDESTEP) {
+      const left = open(1, off);
+      const right = open(-1, off);
+      if (!left && !right) continue;
+      // The open side (either, round something thin), veering toward it: a negative turn swings the move toward +side.
+      const turn = left ? -VEER : VEER;
+      const c = Math.cos(turn);
+      const s = Math.sin(turn);
+      return run({ x: desired.x * c + desired.z * s, y: desired.y, z: -desired.x * s + desired.z * c });
+    }
+    return straight;
   }
 
   private applyTransform(hop: number): void {

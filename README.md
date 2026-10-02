@@ -386,10 +386,12 @@ with a flyover of the prison (any button or key skips it).
 - **The breakout.** Once the whole prison's yours, the motor pool's gate (in the south of the
   east wing) slides open. Deal with its guards and walk up to your tank to climb back in: your
   four buddies jump up on the hull and everyone else piles into the tan army's trucks. Blow the
-  main gate open with the main gun, then follow the gold arrow up the road north to Cooper's
-  Base, the trucks following in your tracks and tan jeeps racing after you (they can't hurt the
-  tank, but a shell knocks one out). Roll in through the base's gate and everyone jumps down
-  to celebrate.
+  main gate open with the main gun, then follow the gold arrow up the road north through
+  mission 1's woods (the trees go over when you drive into or shell them) to Cooper's Base,
+  the same camp as on mission 1. The trucks (captured tan ones, daubed with green paint by the
+  escapees) follow in your tracks and tan jeeps race after you (they can't hurt the tank, but
+  a shell knocks one out, and they turn tail in sight of the base's watchtowers). Roll in
+  through the base's gate and everyone jumps down to celebrate.
 - **Your squad** is the four buddies, two medics and two others: eight follow you. Press X to
   tell them to hold where they are, and X again to follow. Everyone else you free stays
   behind to **hold the prison**: one stands guard outside each cell with captured guards in

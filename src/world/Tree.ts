@@ -34,7 +34,7 @@ export class Tree {
     private readonly world: RAPIER.World,
     private readonly hitRegistry: HitRegistry,
     staticBody: RAPIER.RigidBody,
-    scene: THREE.Scene,
+    scene: THREE.Object3D,
     visual: THREE.Object3D | null,
     x: number,
     y: number,

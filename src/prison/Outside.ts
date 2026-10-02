@@ -1,33 +1,79 @@
 import * as THREE from 'three';
+import RAPIER from '@dimforge/rapier3d-compat';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { PartBuilder } from '../utils/modelKit';
 import { plastic, ARMY_GREEN } from '../utils/plastic';
 import { createFigureMesh, createCheeringFigure } from '../entities/Soldier';
 import { mulberry32 } from '../utils/rng';
+import { FRIENDLY_BASES, BASE_RADIUS as CAMP_RADIUS } from '../core/config';
+import { HomeBase } from '../world/Base';
+import { versionAssetURL } from '../world/AssetLibrary';
+import { toppleInstances } from '../world/WorldGenerator';
+import { TreeManager } from '../world/TreeManager';
+import { TREE_SIZE, type Tree } from '../world/Tree';
+import { HitRegistry } from '../combat/HitRegistry';
 
 const ROAD_WIDTH = 8;
 const TARMAC = 0x3e3f42;
 const VERGE = 0x6b5a3e;
-/** Cooper's Base: the sandbag ring's radius (its way in faces the road, south). */
-const BASE_RADIUS = 20;
+/** Cooper's Base is mission 1's: its sandbag wall stands this far out, with the gate facing the road (south, +Z). */
+const BASE_WALL = CAMP_RADIUS + 5;
+/** Mission 1's trees (Kenney city kit), and the sizes they're planted at there. */
+const TREE_MODELS = ['tree-large', 'tree-small'];
+const TREE_SCALE_MIN = 11;
+const TREE_SCALE_MAX = 16;
+
+/** Loads mission 1's tree models for the country outside. */
+export async function loadTreeModels(): Promise<THREE.Object3D[]> {
+  const manager = new THREE.LoadingManager();
+  manager.setURLModifier(versionAssetURL);
+  const loader = new GLTFLoader(manager);
+  return Promise.all(TREE_MODELS.map((name) => loader.loadAsync(`${import.meta.env.BASE_URL}models/buildings/${name}.glb`).then((gltf) => gltf.scene)));
+}
 
 /**
  * The country north of the prison on the bonus level: the road home through fields, woods and
- * fences, and Cooper's Base at the end of it (a sandbag ring with tents, a flagpole, a sign and
- * the home team waiting). All drawn only: the tank drives over (and through) the scenery.
+ * fences, and Cooper's Base at the end of it. The woods are mission 1's trees (they go over when
+ * the tank drives into them or shells them) and the base is mission 1's camp, sandbag wall,
+ * watchtowers, Chinook and all, with the home team waiting inside the gate.
  */
 export class Outside {
   readonly group = new THREE.Group();
+  readonly base: HomeBase;
   /** The home team at Cooper's Base: they cheer when the convoy rolls in. */
   private readonly welcome: THREE.Mesh[] = [];
   private readonly box = new THREE.BoxGeometry(1, 1, 1);
+  private readonly hits = new HitRegistry();
+  private readonly trees: TreeManager;
 
-  constructor(road: { x: number; z: number }[], home: { x: number; z: number }, ground: { minX: number; maxX: number; minZ: number }) {
+  constructor(
+    world: RAPIER.World,
+    treeModels: THREE.Object3D[],
+    road: { x: number; z: number }[],
+    home: { x: number; z: number },
+    ground: { minX: number; maxX: number; minZ: number },
+  ) {
     const b = new PartBuilder();
-    this.buildRoad(b, road, home);
+    this.buildRoad(b, road);
     this.buildScenery(b, road, home, ground);
-    this.buildBase(b, home);
     b.buildInto(this.group);
     this.box.dispose();
+    this.trees = new TreeManager(this.plantTrees(world, treeModels, road, home, ground));
+    // The gate faces the road coming up from the prison (+Z: x = cos, z = sin).
+    this.base = new HomeBase(world, this.group, { ...FRIENDLY_BASES[0], x: home.x, z: home.z }, Math.PI / 2);
+    this.buildWelcome(home);
+  }
+
+  /** The tree a shell hit, if it was one. */
+  treeAt(collider: RAPIER.Collider | null): Tree | null {
+    const hit = collider ? this.hits.lookup(collider) : undefined;
+    return hit?.kind === 'tree' ? hit.tree : null;
+  }
+
+  /** Trees go over as the tank reaches them; the base's flag flies and its searchlights sweep. */
+  update(dt: number, tank: THREE.Vector3 | null): void {
+    this.trees.update(dt, tank ? [tank] : []);
+    this.base.update(dt, false);
   }
 
   /** The base's soldiers throw their arms up. */
@@ -56,9 +102,8 @@ export class Outside {
     return best;
   }
 
-  /** Tarmac strips between the road's points, with a dirt verge and white dashes down the middle. */
-  private buildRoad(b: PartBuilder, road: { x: number; z: number }[], home: { x: number; z: number }): void {
-    const path = [...road, { x: home.x, z: home.z + BASE_RADIUS * 0.6 }];
+  /** Tarmac strips between the road's points (up to the base's gate), with a dirt verge and white dashes down the middle. */
+  private buildRoad(b: PartBuilder, path: { x: number; z: number }[]): void {
     const tarmac = plastic(TARMAC);
     const verge = plastic(VERGE);
     const paint = new THREE.MeshBasicMaterial({ color: 0xe8e4d0 });
@@ -79,24 +124,11 @@ export class Outside {
     }
   }
 
-  /** Trees in clumps, haystacks, fences along the road and a signpost, kept off the road. */
+  /** Haystacks, fences along the road and a signpost, kept off the road. */
   private buildScenery(b: PartBuilder, road: { x: number; z: number }[], home: { x: number; z: number }, ground: { minX: number; maxX: number; minZ: number }): void {
     const rng = mulberry32(5050);
-    const trunk = plastic(0x6a4a2a);
-    const leaves = [plastic(0x2f5a2a), plastic(0x3a6a30), plastic(0x2a4a28)];
     const hay = plastic(0xd8b45a);
-    const clear = (x: number, z: number, room: number) => Outside.distToRoad(road, x, z) > room && Math.hypot(x - home.x, z - home.z) > BASE_RADIUS + 8;
-    let trees = 0;
-    for (let tries = 0; tries < 2000 && trees < 260; tries++) {
-      const x = ground.minX + 6 + rng() * (ground.maxX - ground.minX - 12);
-      const z = ground.minZ + 6 + rng() * (-40 - ground.minZ);
-      if (!clear(x, z, ROAD_WIDTH / 2 + 5)) continue;
-      // Clumps: more trees where there are already some (a cheap way of making woods).
-      const h = 4 + rng() * 4;
-      b.add(new THREE.CylinderGeometry(0.18, 0.26, h * 0.4, 6), trunk, x, h * 0.2, z);
-      b.add(new THREE.ConeGeometry(h * 0.28, h * 0.75, 7), leaves[trees % 3], x, h * 0.4 + h * 0.36, z);
-      trees++;
-    }
+    const clear = (x: number, z: number, room: number) => Outside.distToRoad(road, x, z) > room && Math.hypot(x - home.x, z - home.z) > BASE_WALL + 12;
     for (let i = 0; i < 30; i++) {
       const x = ground.minX + 10 + rng() * (ground.maxX - ground.minX - 20);
       const z = -60 - rng() * 380;
@@ -117,6 +149,7 @@ export class Outside {
           const off = ROAD_WIDTH / 2 + 2.2;
           const x = a.x + ((c.x - a.x) * t) / len + nx * side * off;
           const z = a.z + ((c.z - a.z) * t) / len + nz * side * off;
+          if (Math.hypot(x - home.x, z - home.z) < BASE_WALL + 8) continue; // stops short of the base's gate towers
           b.add(this.box, wood, x, 0.55, z, 0, 0, 0, 0.14, 1.1, 0.14);
           b.add(this.box, wood, x, 0.8, z, 0, Math.atan2(c.x - a.x, c.z - a.z), 0, 0.08, 0.1, 3.05);
         }
@@ -127,57 +160,63 @@ export class Outside {
     b.add(this.box, plastic(0xe8dcb4), ROAD_WIDTH / 2 + 2.9, 2.3, -34, 0, 0.3, 0, 2, 0.45, 0.08);
   }
 
-  /** Cooper's Base: a ring of sandbags open to the south, tents, a flagpole with a green flag, a sign, the home team. */
-  private buildBase(b: PartBuilder, home: { x: number; z: number }): void {
-    const sand = plastic(0xb9a77a);
-    const canvas = plastic(0x5a6a3a);
-    const gap = 0.45; // the way in, either side of south (radians)
-    for (let a = 0; a < Math.PI * 2; a += 0.11) {
-      const off = Math.abs(Math.atan2(Math.sin(a), Math.cos(a)));
-      if (off < gap) continue; // a = 0 is south (+Z)
-      const x = home.x + Math.sin(a) * BASE_RADIUS;
-      const z = home.z + Math.cos(a) * BASE_RADIUS;
-      for (let row = 0; row < 3; row++) b.add(this.box, sand, x, 0.3 + row * 0.42, z, 0, a, 0, 2.3, 0.4, 0.9);
+  /**
+   * Mission 1's woods: trees dotted over the fields and packed into a few round woods, kept off the
+   * road, out of the base and away from the prison wall. One instanced batch per model.
+   */
+  private plantTrees(
+    world: RAPIER.World,
+    models: THREE.Object3D[],
+    road: { x: number; z: number }[],
+    home: { x: number; z: number },
+    ground: { minX: number; maxX: number; minZ: number },
+  ): Tree[] {
+    const rng = mulberry32(5151);
+    const placements: { model: number; x: number; y: number; z: number; yaw: number; scale: number }[] = [];
+    const minZ = ground.minZ + 8;
+    const maxZ = -45; // clear of the prison's front wall
+    const clear = (x: number, z: number) =>
+      x > ground.minX + 6 && x < ground.maxX - 6 && z > minZ && z < maxZ &&
+      Outside.distToRoad(road, x, z) > ROAD_WIDTH / 2 + 7 &&
+      Math.hypot(x - home.x, z - home.z) > BASE_WALL + 14 &&
+      placements.every((p) => Math.hypot(p.x - x, p.z - z) > 5.5);
+    const plant = (x: number, z: number, scale: number) => {
+      if (!clear(x, z)) return;
+      placements.push({ model: Math.floor(rng() * models.length), x, y: 0, z, yaw: rng() * Math.PI * 2, scale });
+    };
+    // Woods: packed in the middle, thinning to a ragged edge.
+    for (let w = 0; w < 9; w++) {
+      const cx = ground.minX + 20 + rng() * (ground.maxX - ground.minX - 40);
+      const cz = minZ + 20 + rng() * (maxZ - minZ - 40);
+      const radius = 18 + rng() * 22;
+      const count = Math.floor((Math.PI * radius * radius) / 90);
+      for (let i = 0; i < count; i++) {
+        const a = rng() * Math.PI * 2;
+        const r = Math.sqrt(rng()) * radius;
+        if (r > radius * (0.82 + 0.18 * Math.sin(a * 5 + cx))) continue;
+        plant(cx + Math.cos(a) * r, cz + Math.sin(a) * r, (TREE_SCALE_MIN + rng() * (TREE_SCALE_MAX - TREE_SCALE_MIN)) * (1.1 - (0.3 * r) / radius));
+      }
     }
-    // Tents round the back.
-    for (const [dx, dz] of [[-10, -9], [0, -12], [10, -9], [-13, 2]]) {
-      b.add(new THREE.CylinderGeometry(0.05, 2.4, 2.6, 4, 1).rotateY(Math.PI / 4).scale(1.4, 1, 1), canvas, home.x + dx, 1.3, home.z + dz);
+    // And single trees scattered over the fields.
+    for (let i = 0; i < 90; i++) {
+      plant(ground.minX + rng() * (ground.maxX - ground.minX), minZ + rng() * (maxZ - minZ), TREE_SCALE_MIN + rng() * (TREE_SCALE_MAX - TREE_SCALE_MIN));
     }
-    // The flagpole and its flag, and a sign over the way in.
-    b.add(new THREE.CylinderGeometry(0.08, 0.1, 9, 8), plastic(0xd8d8d0), home.x, 4.5, home.z);
-    b.add(this.box, plastic(ARMY_GREEN), home.x + 1, 8.2, home.z, 0, 0, 0, 2, 1.2, 0.05);
-    b.add(this.box, plastic(0xf4f1e4), home.x + 1, 8.2, home.z - 0.03, 0, 0, Math.PI / 4, 0.5, 0.5, 0.06);
-    for (const side of [-1, 1]) b.add(this.box, plastic(0x8a6a3e), home.x + side * 5, 2, home.z + BASE_RADIUS + 0.5, 0, 0, 0, 0.25, 4, 0.25);
-    b.add(this.box, plastic(0xe8c23a), home.x, 3.7, home.z + BASE_RADIUS + 0.5, 0, 0, 0, 10.5, 1.1, 0.15);
-    this.sign(home.x, 3.7, home.z + BASE_RADIUS + 0.6);
-    // The home team, waiting.
+    const body = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+    return models.flatMap((model, index) =>
+      toppleInstances(world, this.group, this.hits, body, model, placements.filter((p) => p.model === index), TREE_SIZE),
+    );
+  }
+
+  /** The home team, lined up either side of the way in from the gate. */
+  private buildWelcome(home: { x: number; z: number }): void {
     for (let i = 0; i < 10; i++) {
-      const a = (i / 10) * Math.PI * 1.4 - Math.PI * 0.7;
+      const side = i % 2 === 0 ? -1 : 1;
+      const row = Math.floor(i / 2);
       const m = createFigureMesh(0, ARMY_GREEN);
-      m.position.set(home.x + Math.sin(a + Math.PI) * 9, 0, home.z + Math.cos(a + Math.PI) * 9 - 2);
-      m.rotation.y = Math.atan2(-(home.x - m.position.x), -(home.z + BASE_RADIUS - m.position.z));
+      m.position.set(home.x + side * (11.5 + (row % 2) * 1.2), 0.04, home.z + 42 + row * 2.6);
+      m.rotation.y = side * -Math.PI / 2; // facing the lane
       this.group.add(m);
       this.welcome.push(m);
     }
-  }
-
-  /** "COOPER'S BASE" on the sign, facing the road (+Z). */
-  private sign(x: number, y: number, z: number): void {
-    const c = document.createElement('canvas');
-    c.width = 512;
-    c.height = 64;
-    const ctx = c.getContext('2d') as CanvasRenderingContext2D;
-    ctx.fillStyle = '#e8c23a';
-    ctx.fillRect(0, 0, 512, 64);
-    ctx.fillStyle = '#2a2a2a';
-    ctx.font = '900 44px "Black Ops One", Impact, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText("COOPER'S BASE", 256, 34);
-    const tex = new THREE.CanvasTexture(c);
-    tex.colorSpace = THREE.SRGBColorSpace;
-    const board = new THREE.Mesh(new THREE.PlaneGeometry(10, 1.05), new THREE.MeshBasicMaterial({ map: tex }));
-    board.position.set(x, y, z + 0.02);
-    this.group.add(board);
   }
 }

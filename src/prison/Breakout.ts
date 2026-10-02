@@ -24,7 +24,9 @@ const GATE_BLAST = 4;
 const JEEP_BLAST = 4.5;
 export const SHELL_BLAST = 4;
 /** Close enough to Cooper's Base to be home. */
-const HOME_REACH = 16;
+const HOME_REACH = 30;
+/** Raider jeeps give up the chase this close to Cooper's Base (its wall is 65 m out). */
+const JEEP_TURN_BACK = 110;
 /** The raiders: how many, how fast, how close they ride alongside, how often they fire. */
 const JEEPS = 4;
 const JEEP_SPEED = 24;
@@ -42,6 +44,8 @@ export interface BreakoutEffects {
   tracer(from: THREE.Vector3, to: THREE.Vector3): void;
   /** A shell's burst at `at`: guards within `radius` are knocked over. */
   blast(at: THREE.Vector3, radius: number): void;
+  /** A shell struck `hit` (outside, that may be a tree, which goes over the way the shell was flying). */
+  struck(hit: RAPIER.Collider, direction: THREE.Vector3): void;
 }
 
 interface Jeep {
@@ -53,6 +57,8 @@ interface Jeep {
   wrecked: number;
   spin: THREE.Vector3;
   vy: number;
+  /** Turned tail at the sight of Cooper's Base: heading back the way it came until it's out of sight. */
+  fleeing: boolean;
 }
 
 interface Shell {
@@ -116,6 +122,7 @@ export class Breakout {
     const mp = layout.motorPool;
     this.tank = new PlayerTank(world, mp.tank.x, mp.tank.z, mp.tank.yaw);
     this.group.add(this.tank.root);
+    this.tank.setCommanderVisible(false); // parked and empty until the player climbs back in
     this.convoy = new Convoy(3, mp.truckLine);
     this.group.add(this.convoy.group);
     this.lotGate = this.gate(mp.gate.x0, mp.gate.x1, mp.gate.z, 2.6);
@@ -247,7 +254,8 @@ export class Breakout {
       this.group.add(r);
     });
     this.convoy.unload();
-    for (const j of this.jeeps) if (j.wrecked < 0) this.wreck(j);
+    // Any still chasing go up as the base's guns open on them; the ones already running for it get away.
+    for (const j of this.jeeps) if (j.wrecked < 0 && !j.fleeing) this.wreck(j);
   }
 
   /** The cheering buddies (after `arrive`), for a little hop. */
@@ -267,6 +275,8 @@ export class Breakout {
       if (k < s.traj.points.length - 1) continue;
       this.group.remove(s.mesh);
       this.shells.splice(i, 1);
+      const pts = s.traj.points;
+      if (s.traj.hitCollider && pts.length > 1) this.fx.struck(s.traj.hitCollider, pts[pts.length - 1].clone().sub(pts[pts.length - 2]).normalize());
       this.burst(s.traj.impact, s.traj.hitCollider);
     }
   }
@@ -302,7 +312,7 @@ export class Breakout {
       const side = i % 2 === 0 ? -1 : 1;
       root.position.set(t.x + side * (55 + i * 8), 0, t.z - 30 - i * 25);
       this.group.add(root);
-      this.jeeps.push({ root, side, speed: JEEP_SPEED * (0.9 + Math.random() * 0.2), fireTimer: Math.random() * JEEP_FIRE, wrecked: -1, spin: new THREE.Vector3(), vy: 0 });
+      this.jeeps.push({ root, side, speed: JEEP_SPEED * (0.9 + Math.random() * 0.2), fireTimer: Math.random() * JEEP_FIRE, wrecked: -1, spin: new THREE.Vector3(), vy: 0, fleeing: false });
     }
   }
 
@@ -326,8 +336,16 @@ export class Breakout {
         }
         continue;
       }
-      // Alongside the tank, a little behind, on its side.
-      const goal = new THREE.Vector3(tank.x + Math.cos(yaw) * JEEP_SIDE * j.side + Math.sin(yaw) * 3, 0, tank.z - Math.sin(yaw) * JEEP_SIDE * j.side + Math.cos(yaw) * 3);
+      // In range of the base's watchtowers they think better of it and turn back (rather than drive through its walls).
+      const home = this.layout.home;
+      if (!j.fleeing && Math.hypot(j.root.position.x - home.x, j.root.position.z - home.z) < JEEP_TURN_BACK) j.fleeing = true;
+      if (j.fleeing && j.root.position.distanceTo(tank) > 220) {
+        this.group.remove(j.root);
+        this.jeeps.splice(i, 1);
+        continue;
+      }
+      // Alongside the tank, a little behind, on its side (or, fleeing, well back the way they came).
+      const goal = j.fleeing ? new THREE.Vector3(j.root.position.x + j.side * 30, 0, j.root.position.z + 80) : new THREE.Vector3(tank.x + Math.cos(yaw) * JEEP_SIDE * j.side + Math.sin(yaw) * 3, 0, tank.z - Math.sin(yaw) * JEEP_SIDE * j.side + Math.cos(yaw) * 3);
       const to = goal.sub(j.root.position);
       const d = Math.hypot(to.x, to.z);
       const want = Math.atan2(-to.x, -to.z);
@@ -337,7 +355,7 @@ export class Breakout {
       j.root.position.x += -Math.sin(j.root.rotation.y) * speed * dt;
       j.root.position.z += -Math.cos(j.root.rotation.y) * speed * dt;
       j.fireTimer -= dt;
-      if (j.fireTimer <= 0 && j.root.position.distanceTo(tank) < 30) {
+      if (!j.fleeing && j.fireTimer <= 0 && j.root.position.distanceTo(tank) < 30) {
         j.fireTimer = JEEP_FIRE + Math.random() * 0.6;
         const from = j.root.position.clone().setY(1.8);
         this.fx.tracer(from, tank.clone().setY(1.2).add(new THREE.Vector3((Math.random() - 0.5) * 2, Math.random(), (Math.random() - 0.5) * 2)));
