@@ -1,4 +1,5 @@
 import { SITES } from './Landmarks';
+import { PRISON } from '../core/config';
 
 /**
  * The shape of the moat round the Fortress: a ring of water outside the walls with rounded
@@ -76,6 +77,7 @@ function onCauseway(lx: number, lz: number, shrink: number): boolean {
  * middle can't come within `margin` of the water, nor a tree be planted there.
  */
 export function inMoat(x: number, z: number, margin = 0): boolean {
+  if (PRISON) return false; // no Fortress (or moat) on the bonus prison level
   const [lx, lz] = local(x, z);
   const [a, b] = edges(lx, lz);
   return a >= -margin && b >= -margin && !onCauseway(lx, lz, margin);

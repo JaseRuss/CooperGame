@@ -64,6 +64,25 @@ const VENT_HEIGHT = 2;
 /** The bakery against the cellhouse's west wall, and its flue pipe up to the roof. */
 const BAKERY = { minX: -29.4, maxX: -24.2, minZ: 26, maxZ: 39, height: 4 };
 const PIPE_SPOT = { x: -24.05, z: 24 };
+/**
+ * The motor pool, fenced off in the south of the east wing: your tank and three trucks under a
+ * carport. The fence's gate (on its north side, x LOT.gateX0 to gateX1) stays shut until the
+ * rest of the prison's taken.
+ */
+const LOT = { minX: 39, maxX: 71.4, minZ: 27.5, maxZ: 41.4, gateX0: 40, gateX1: 46.4 };
+/** The ground: the whole compound and the country to the north, out to Cooper's Base. */
+const GROUND = { minX: -150, maxX: 150, minZ: -580, maxZ: 70 };
+/** The road home from the main gate, and Cooper's Base at the end of it. */
+const ROAD: { x: number; z: number }[] = [
+  { x: 0, z: -26 },
+  { x: 0, z: -80 },
+  { x: -28, z: -150 },
+  { x: -32, z: -230 },
+  { x: 18, z: -320 },
+  { x: 10, z: -410 },
+  { x: 0, z: -470 },
+];
+const HOME = { x: 0, z: -500 };
 const BLOCK_B: BlockPlan = { minX: 38, maxX: 68, minZ: 8, maxZ: 22, corridor: 12, doorX: 53 };
 /** The barracks in the west wing (its door on the east side, facing the yard), and the punishment hut behind it. */
 const BARRACKS = { minX: -66, maxX: -42, minZ: -18, maxZ: -4, doorZ0: -12.5, doorZ1: -9.5, height: 3.4 };
@@ -110,7 +129,7 @@ export interface SearchlightSpot {
 }
 
 /** The parts of the prison to take, in the order they're met. */
-export type ZoneId = 'blockA' | 'yard' | 'blockB' | 'barracks';
+export type ZoneId = 'blockA' | 'yard' | 'blockB' | 'barracks' | 'motorpool';
 
 export interface Zone {
   id: ZoneId;
@@ -149,8 +168,16 @@ export interface FacilityLayout {
   /** Every cell: Cell Block A west to east (the first is the player's), then Cell Block B, then the punishment hut. */
   cells: CellSpot[];
   levers: LeverSpot[];
-  /** The yard's guard towers. */
+  /** The motor pool: where the tank's parked, the trucks' line out behind it, and the fence's gate. */
+  motorPool: { tank: { x: number; z: number; yaw: number }; truckLine: { x: number; z: number }[]; gate: { x0: number; x1: number; z: number } };
+  /** The main gate (shut until it's shot open), the road home and Cooper's Base. */
+  mainGate: { x0: number; x1: number; z: number; height: number };
+  road: { x: number; z: number }[];
+  home: { x: number; z: number };
+  ground: { minX: number; maxX: number; minZ: number; maxZ: number };
+  /** The yard's guard towers, and the middle of the yard (they fall towards it). */
   towers: { x: number; z: number }[];
+  yardMiddle: { x: number; z: number };
   /** The flagpole on the barracks roof: its foot and its top. */
   flag: { x: number; z: number; foot: number; top: number };
   zones: Zone[];
@@ -191,6 +218,7 @@ export class Facility {
     this.buildCellhouse();
     this.buildRoof();
     this.buildBakery();
+    this.buildMotorPool();
     this.buildCellBlock(BLOCK_B, 'B');
     this.buildBarracks();
     this.buildHut();
@@ -251,6 +279,17 @@ export class Facility {
       cells,
       levers: [{ x: BLOCK_B.minX + 0.12, y: 1.4, z: (BLOCK_B.minZ + BLOCK_B.corridor) / 2, yaw: -Math.PI / 2, cells: blockB }],
       towers,
+      yardMiddle: { x: 0, z: -8 },
+      motorPool: {
+        tank: { x: LOT.gateX0 + 2.6, z: LOT.minZ + 4, yaw: 0 },
+        // From the far end of the carport to the tank: the trucks start parked along it, nose to tail.
+        truckLine: [{ x: LOT.maxX - 1, z: 34 }, { x: LOT.gateX0 + 2.6, z: 34 }, { x: LOT.gateX0 + 2.6, z: LOT.minZ + 4 }],
+        gate: { x0: LOT.gateX0, x1: LOT.gateX1, z: LOT.minZ },
+      },
+      mainGate: { x0: -3, x1: 3, z: COMPOUND.minZ - WALL / 2, height: COMPOUND_WALL },
+      road: ROAD,
+      home: HOME,
+      ground: GROUND,
       flag: { x: (BARRACKS.minX + BARRACKS.maxX) / 2, z: (BARRACKS.minZ + BARRACKS.maxZ) / 2, foot: BARRACKS.height + 0.35, top: BARRACKS.height + 6 },
       zones: [
         { id: 'blockA', name: 'Cell Block A', checkpoint: { x: BLOCK_A.minX + 4, z: 12.4, yaw: -Math.PI / 2 } },
@@ -276,6 +315,11 @@ export class Facility {
         // The east wing and Cell Block B: two outside facing the yard's doorway, one on the corridor, one by the lever.
         { zone: 'blockB', x: 44, z: -2, yaw: Math.PI / 2 },
         { zone: 'blockB', x: 58, z: -14, yaw: Math.PI * 0.6 },
+        // The motor pool: they only come into it once its gate's open.
+        { zone: 'motorpool', x: 44, z: 29.5, yaw: 0 },
+        { zone: 'motorpool', x: 60, z: 30, yaw: Math.PI / 2 },
+        { zone: 'motorpool', x: 52, z: 39.5, yaw: Math.PI / 2 },
+        { zone: 'motorpool', x: 68, z: 38, yaw: Math.PI / 2 },
         { zone: 'blockB', x: 46, z: 10, yaw: -Math.PI / 2, patrol: [{ x: 46, z: 10 }, { x: 66, z: 10 }] },
         { zone: 'blockB', x: 40.5, z: 9, yaw: -Math.PI / 2 },
         // The west wing: two outside facing the yard's doorway, three in the barracks, one guarding the hut.
@@ -346,8 +390,11 @@ export class Facility {
     return points;
   }
 
+  /**
+   * The ground: paving slabs over the compound, and below them (so they don't flicker) a huge
+   * grassy field out to Cooper's Base, with an invisible wall round its edge.
+   */
   private buildGround(): void {
-    const size = 240;
     const c = document.createElement('canvas');
     c.width = c.height = 256;
     const ctx = c.getContext('2d') as CanvasRenderingContext2D;
@@ -364,12 +411,31 @@ export class Facility {
     const tex = new THREE.CanvasTexture(c);
     tex.colorSpace = THREE.SRGBColorSpace;
     tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-    tex.repeat.set(size / 8, size / 8);
+    const w = COMPOUND.maxX - COMPOUND.minX + 6;
+    const d = COMPOUND.maxZ - COMPOUND.minZ + 6;
+    tex.repeat.set(w / 8, d / 8);
     tex.anisotropy = 4;
-    const ground = new THREE.Mesh(new THREE.PlaneGeometry(size, size).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.95 }));
-    ground.receiveShadow = true;
-    this.group.add(ground);
-    this.world.createCollider(RAPIER.ColliderDesc.cuboid(size / 2, 0.5, size / 2).setTranslation(0, -0.5, 0), this.body);
+    const paving = new THREE.Mesh(new THREE.PlaneGeometry(w, d).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.95 }));
+    paving.position.set((COMPOUND.minX + COMPOUND.maxX) / 2, 0, (COMPOUND.minZ + COMPOUND.maxZ) / 2);
+    paving.receiveShadow = true;
+    this.group.add(paving);
+
+    const g = GROUND;
+    const gw = g.maxX - g.minX;
+    const gd = g.maxZ - g.minZ;
+    const grass = new THREE.Mesh(new THREE.PlaneGeometry(gw, gd).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0x4f6a36, roughness: 1 }));
+    grass.position.set((g.minX + g.maxX) / 2, -0.03, (g.minZ + g.maxZ) / 2);
+    grass.receiveShadow = true;
+    this.group.add(grass);
+    this.world.createCollider(RAPIER.ColliderDesc.cuboid(gw / 2, 0.5, gd / 2).setTranslation((g.minX + g.maxX) / 2, -0.5, (g.minZ + g.maxZ) / 2), this.body);
+    for (const [x0, z0, x1, z1] of [
+      [g.minX - 1, g.minZ - 1, g.maxX + 1, g.minZ],
+      [g.minX - 1, g.maxZ, g.maxX + 1, g.maxZ + 1],
+      [g.minX - 1, g.minZ, g.minX, g.maxZ],
+      [g.maxX, g.minZ, g.maxX + 1, g.maxZ],
+    ]) {
+      this.world.createCollider(RAPIER.ColliderDesc.cuboid((x1 - x0) / 2, 5, (z1 - z0) / 2).setTranslation((x0 + x1) / 2, 5, (z0 + z1) / 2), this.body);
+    }
   }
 
   /** The perimeter (a locked gate in the north side, out of the yard) and the walls between the yard and the wings. */
@@ -386,11 +452,9 @@ export class Facility {
       // Posts either side of the doorway.
       for (const z of [DOORWAY_Z0, DOORWAY_Z1]) this.solid(x - 0.5, 0, z - 0.3, x + 0.5, COMPOUND_WALL + 0.5, z + 0.3, CONCRETE_DARK);
     }
-    // The main gate: steel bars between two posts.
+    // The main gate's posts (the gate itself is in Breakout: it gets blown open).
     this.solid(-3.6, 0, minZ - WALL - 0.2, -3, COMPOUND_WALL + 0.6, minZ + 0.2, CONCRETE_DARK);
     this.solid(3, 0, minZ - WALL - 0.2, 3.6, COMPOUND_WALL + 0.6, minZ + 0.2, CONCRETE_DARK);
-    this.barsX(-3, 3, minZ - WALL / 2, COMPOUND_WALL);
-    this.blocker(-3, 0, minZ - WALL / 2 - 0.05, 3, COMPOUND_WALL, minZ - WALL / 2 + 0.05);
   }
 
   /** Crates for cover round the yard and the wings, and a low wall in the yard to run along. */
@@ -420,6 +484,8 @@ export class Facility {
     crate(43.3, -4.2);
     crate(56, -12);
     crate(50, -19, 2);
+    crate(36, 30);
+    crate(34.6, 30.4, 2);
     crate(64, -2);
     // The west wing.
     crate(-37, -10, 2);
@@ -598,6 +664,49 @@ export class Facility {
     this.parts.add(new THREE.TorusGeometry(0.35, 0.2, 8, 12, Math.PI / 2), plastic(0x55595e), p.x, ROOF_TOP + 1.2, p.z, 0, Math.PI / 2, 0);
     for (let y = 1; y < ROOF_TOP; y += 1.6) this.parts.add(this.box, plastic(STEEL), p.x + 0.1, y, p.z, 0, 0, 0, 0.3, 0.1, 0.5);
     this.blocker(p.x - 0.2, 0, p.z - 0.2, p.x + 0.2, ROOF_TOP - 0.5, p.z + 0.2);
+  }
+
+  /**
+   * The motor pool: a chain-link fence (with a gap on its north side for the sliding gate, see
+   * Breakout), and a carport roof over where the tank and the trucks are parked.
+   */
+  private buildMotorPool(): void {
+    const l = LOT;
+    const h = 2.6;
+    const fence = (x0: number, z0: number, x1: number, z1: number) => {
+      const steel = plastic(0x7a8086);
+      const along = Math.abs(x1 - x0) > Math.abs(z1 - z0);
+      const len = along ? x1 - x0 : z1 - z0;
+      for (let t = 0; t <= len + 0.01; t += 2) {
+        const x = along ? x0 + t : x0;
+        const z = along ? z0 : z0 + t;
+        this.parts.add(this.box, steel, x, h / 2, z, 0, 0, 0, 0.1, h, 0.1);
+      }
+      for (const y of [0.1, h / 2, h - 0.05]) this.parts.add(this.box, steel, (x0 + x1) / 2, y, (z0 + z1) / 2, 0, 0, 0, along ? len : 0.06, 0.06, along ? 0.06 : len);
+      // The mesh: thin wires criss-crossing, drawn as a lattice of slats.
+      const wire = plastic(0x9aa2a8);
+      for (let t = 0.25; t < len; t += 0.5) {
+        const x = along ? x0 + t : x0;
+        const z = along ? z0 : z0 + t;
+        this.parts.add(this.box, wire, x, h / 2, z, 0, 0, 0, along ? 0.02 : 0.02, h - 0.2, along ? 0.02 : 0.02);
+      }
+      this.blocker(Math.min(x0, x1) - 0.05, 0, Math.min(z0, z1) - 0.05, Math.max(x0, x1) + 0.05, h, Math.max(z0, z1) + 0.05);
+    };
+    fence(l.minX, l.minZ, l.gateX0, l.minZ);
+    fence(l.gateX1, l.minZ, l.maxX, l.minZ);
+    fence(l.minX, l.minZ, l.minX, l.maxZ);
+    this.solid(l.gateX0 - 0.25, 0, l.minZ - 0.25, l.gateX0 + 0.25, h + 0.4, l.minZ + 0.25, STEEL);
+    this.solid(l.gateX1 - 0.25, 0, l.minZ - 0.25, l.gateX1 + 0.25, h + 0.4, l.minZ + 0.25, STEEL);
+    // The carport: a flat roof on posts (none in the tank's way out).
+    for (const x of [48.5, 56.5, 64.5, 70.8]) for (const z of [29.8, 38.4]) this.solid(x - 0.15, 0, z - 0.15, x + 0.15, 4.2, z + 0.15, STEEL);
+    this.solid(47.5, 4.2, 29.3, 71.4, 4.45, 38.9, 0x5a6168);
+    // A sign on the fence.
+    this.solid(l.gateX1 + 1, 1.4, l.minZ - 0.12, l.gateX1 + 4.4, 2.2, l.minZ - 0.05, SIGN, false);
+    // Oil drums and a fuel pump.
+    for (const [x, z] of [[69.5, 29.5], [70.3, 30.4], [69.6, 31.3]]) {
+      this.parts.add(new THREE.CylinderGeometry(0.32, 0.32, 0.9, 12), plastic(0x3a5a8a), x, 0.45, z);
+    }
+    this.solid(46.8, 0, 39.6, 47.6, 1.8, 40.4, 0xc0392b);
   }
 
   /** A cell block: outside walls, a doorway in the middle of the front, a corridor, then a row of barred cells. */

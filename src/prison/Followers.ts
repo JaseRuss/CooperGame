@@ -54,11 +54,10 @@ const MEDIC_HP = 8;
 const GET_UP_ALONE = 25;
 const SHAKY_HP = 2;
 /** Shooting back at the guards: how far, how often, how wild. */
-const FIGHT_RANGE = 26;
+const FIGHT_RANGE = 20;
 const SCAN_EVERY = 0.4;
-const FIRE_EVERY = 1;
-const FIRE_JITTER = 0.7;
-const SPREAD = 0.07;
+const FIRE_EVERY = 0.45;
+const FIRE_JITTER = 0.25;
 const MUZZLE = new THREE.Vector3(0.12, 1.49, -0.95);
 const UP = new THREE.Vector3(0, 1, 0);
 /** How often jobs are handed out, how far anyone's sent, and how many carry guards at once. */
@@ -120,7 +119,7 @@ export interface SquadWorld {
   doorPosts: DoorPost[];
 }
 
-type State = 'caged' | 'leaving' | 'following' | 'holding' | 'garrison';
+type State = 'caged' | 'leaving' | 'following' | 'holding' | 'garrison' | 'boarded';
 
 /** A post for one of those holding the prison: outside a cell full of captured guards, or by a doorway. */
 interface Post {
@@ -394,7 +393,7 @@ export class Followers {
 
   /** Where the prisoners the guards can shoot at are (out, and on their feet). */
   targets(): THREE.Vector3[] {
-    return this.squad.filter((p) => !p.down && p.state !== 'leaving').map((p) => p.pos);
+    return this.squad.filter((p) => !p.down && p.state !== 'leaving' && p.state !== 'boarded').map((p) => p.pos);
   }
 
   /** The nearest friend lying down within `range` of `at` that the player could help up, or null. */
@@ -522,6 +521,27 @@ export class Followers {
     });
   }
 
+  /**
+   * Into the tank and the trucks: everyone out of the cells is off the field (the buddies ride on
+   * the tank, everyone else in the trucks). Returns which buddies, and how many others.
+   */
+  board(world: SquadWorld): { buddies: number[]; others: number } {
+    const buddies: number[] = [];
+    let others = 0;
+    for (const p of this.squad) {
+      if (p.state === 'boarded') continue;
+      this.endJob(p, world);
+      p.state = 'boarded';
+      p.down = false;
+      p.climb = null;
+      p.root.visible = false;
+      p.collider.setEnabled(false);
+      if (p.spot.buddy !== null) buddies.push(p.spot.buddy);
+      else others++;
+    }
+    return { buddies, others };
+  }
+
   /** Moves, fights and works for one frame. Returns the shots fired at the guards. */
   update(dt: number, world: SquadWorld): Shot[] {
     const player = world.player;
@@ -544,6 +564,7 @@ export class Followers {
     // are already gathering round him, so the rest close up behind.
     const onTrail = this.squad.filter((p) => p.state === 'following' && !p.direct && p.free);
     for (const p of this.all) {
+      if (p.state === 'boarded') continue;
       if (p.climb) {
         // Climbing after the player: out of sight until he comes out at the top (or bottom).
         p.climb.in -= dt;
@@ -624,7 +645,10 @@ export class Followers {
 
   // ---------- fighting and getting hurt ----------
 
-  /** Shoots at the nearest guard he can see, turning to face him when he's not on the move. */
+  /**
+   * Sprays jam at the nearest guard he can see (the prisoners' only weapon: it sticks a guard
+   * fast until he slips over), turning to face him when he's not on the move.
+   */
   private fight(p: Prisoner, world: SquadWorld, dt: number, shots: Shot[]): void {
     p.scanTimer -= dt;
     if (p.scanTimer <= 0) {
@@ -651,11 +675,9 @@ export class Followers {
     if (p.fireTimer > 0) return;
     p.fireTimer = FIRE_EVERY + Math.random() * FIRE_JITTER;
     const from = p.muzzle();
-    const dir = g.chest().sub(from).normalize();
-    dir.x += (Math.random() - 0.5) * 2 * SPREAD;
-    dir.y += (Math.random() - 0.5) * 2 * SPREAD;
-    dir.z += (Math.random() - 0.5) * 2 * SPREAD;
-    shots.push({ from, dir: dir.normalize() });
+    // A glob of jam lobbed at his feet (the game lobs it; see PrisonGame.lobJam).
+    const at = g.pos.clone().setY(g.pos.y + 0.6);
+    shots.push({ from, dir: at.clone().sub(from).normalize(), at });
   }
 
   private knockDown(p: Prisoner): void {

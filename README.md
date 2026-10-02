@@ -360,10 +360,10 @@ rocket's ready, and the zombies close in round your tank while the rocket leaves
 without you. The end screen shows how long you held out and how many zombies you
 knocked over. Press A or Enter to play again.
 
-## Bonus: Prison Break (being built)
+## Bonus: Prison Break
 
 A bonus level on foot. The tan army has locked you up and taken your tank: break out, free
-your buddies and the other prisoners, take over the prison and drive your tank home. So far:
+your buddies and the other prisoners, take over the prison and drive your tank home.
 
 - **The escape**, after the famous 1962 Alcatraz escape (without the digging). You start in a
   cell with a dummy head on the pillow. The grille at the back of the cell is loose: shoot it
@@ -380,12 +380,21 @@ your buddies and the other prisoners, take over the prison and drive your tank h
   there; shoot the yellow lever box at the end of its corridor and every door opens at once)
   and **the barracks** in the west wing (shoot their tan flag off the roof and a green one goes
   up; Jason is in the punishment hut behind it). Each part you take becomes your checkpoint.
+  The guard towers always topple into the yard.
+- **The breakout.** Once the whole prison's yours, the motor pool's gate (in the south of the
+  east wing) slides open. Deal with its guards and walk up to your tank to climb back in: your
+  four buddies jump up on the hull and everyone else piles into the tan army's trucks. Blow the
+  main gate open with the main gun, then follow the gold arrow up the road north to Cooper's
+  Base, the trucks following in your tracks and tan jeeps racing after you (they can't hurt the
+  tank, but a shell knocks one out). Roll in through the base's gate and everyone jumps down
+  to celebrate.
 - **Your squad** is the four buddies, two medics and two others: eight follow you. Press X to
   tell them to hold where they are, and X again to follow. Everyone else you free stays
   behind to **hold the prison**: one stands guard outside each cell with captured guards in
   it, and the rest secure the doorways.
-- **Tan guards** shoot at you and the squad, who shoot back. Three rifle hits knock a guard
-  over.
+- **Tan guards** shoot at you and the squad. Three rifle hits knock a guard over. The
+  prisoners' only weapon is the jam cannon: they spray jam at any guard they can see, and it
+  sticks him fast until he slips over.
 - The **jam riot cannon** (hold LT / E) sprays strawberry jam at the crosshair, out to about
   20 m. A guard it lands on is stuck fast and can't shoot, then slips over. It runs out if
   you hold it down too long and refills when you let go.

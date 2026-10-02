@@ -3,7 +3,7 @@ import { TOWNS, ROAD_WIDTH, type Town } from './TownPlan';
 import { SITES, LAKES, siteEntries, distanceToSite, type Site } from './Landmarks';
 import { inMoat } from './MoatShape';
 import { surfaceHeightAt, heightAt } from './Terrain';
-import { FRIENDLY_BASES, BASE_RADIUS, JUNGLE, KNIGHTS, MISSION, WORLD_HALF } from '../core/config';
+import { FRIENDLY_BASES, BASE_RADIUS, JUNGLE, KNIGHTS, MISSION, PRISON, WORLD_HALF } from '../core/config';
 
 /** Road surface colour: asphalt, packed red-brown earth in the jungle, a dusty cart track for the knights. */
 export const ROAD_COLOR = JUNGLE ? 0x7a5634 : KNIGHTS ? 0x9a7c52 : 0x45484d;
@@ -576,6 +576,7 @@ export function setSurfaceRoads(highways: Polyline[]): void {
 
 /** True on a highway or any town street. */
 export function isOnRoad(x: number, z: number): boolean {
+  if (PRISON) return false; // the bonus prison level has none of the big map's towns
   for (const town of TOWNS) {
     for (const r of town.roads) {
       const hx = (r.alongX ? r.length / 2 : TOWN_ROAD_HALF_WIDTH) + ROAD_EDGE_SLACK;

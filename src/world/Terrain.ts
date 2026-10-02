@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { createNoise2D } from 'simplex-noise';
 import { mulberry32 } from '../utils/rng';
+import { PRISON } from '../core/config';
 import { TOWNS, distanceToTown } from './TownPlan';
 import { SITES, LAKES, distanceToSite } from './Landmarks';
 import { inMoat, moatDig, moatLevelling, MOAT_DEPTH, MOAT_WATER_DROP } from './MoatShape';
@@ -101,6 +102,7 @@ const JUMP_HILLS: JumpHill[] = (() => {
 
 /** World-space terrain height (meters) at (x, z): flattened under towns/sites/base, carved for lakes. */
 export function heightAt(x: number, z: number): number {
+  if (PRISON) return 0; // the bonus prison level is flat (its own ground; see src/prison)
   let h = rawHeight(x, z);
 
   for (let i = 0; i < TOWNS.length; i++) {
@@ -163,6 +165,7 @@ export function heightAt(x: number, z: number): number {
 
 /** How deep the water is at (x, z) (0 when dry). */
 export function waterDepthAt(x: number, z: number): number {
+  if (PRISON) return 0;
   if (inMoat(x, z)) return Math.max(0, MOAT_LEVEL - heightAt(x, z));
   for (let i = 0; i < LAKES.length; i++) {
     const lake = LAKES[i];
@@ -214,6 +217,7 @@ function gridHeight(ix: number, iz: number): number {
  * interpolated across the same two triangles per cell that THREE.PlaneGeometry uses.
  */
 export function surfaceHeightAt(x: number, z: number): number {
+  if (PRISON) return 0;
   const fx = Math.min(Math.max((x + WORLD_SIZE / 2) / CELL, 0), TERRAIN_SEGMENTS - 1e-6);
   const fz = Math.min(Math.max((z + WORLD_SIZE / 2) / CELL, 0), TERRAIN_SEGMENTS - 1e-6);
   const ix = Math.floor(fx);

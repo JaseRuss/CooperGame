@@ -35,6 +35,8 @@ export type GuardState = 'active' | 'jammed' | 'down' | 'carried' | 'jailed';
 export interface Shot {
   from: THREE.Vector3;
   dir: THREE.Vector3;
+  /** Set for a glob of jam (the prisoners' only weapon): where it's lobbed to. */
+  at?: THREE.Vector3;
 }
 
 export class Guard {

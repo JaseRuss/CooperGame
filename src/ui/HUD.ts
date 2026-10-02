@@ -55,6 +55,8 @@ export interface PrisonHUD {
   prompt: string | null;
   /** Seconds left before the player is back on their feet, while knocked down (0 when standing). */
   downFor: number;
+  /** Back in the tank at the end: the main gun instead of the rifle (the reload is `reloadFraction`). */
+  inTank?: boolean;
   /** The jam riot cannon's tank, 0..1. */
   jam: number;
 }
@@ -1117,10 +1119,11 @@ export class HUD {
     if (prison) {
       this.jamName.textContent = 'JAM RIOT CANNON';
       this.jamHint.textContent = 'Sticks guards fast, then they slip over';
-      this.gunName.textContent = state.damageBoost > 0 ? `RIFLE · 2× DAMAGE ${Math.ceil(state.damageBoost)}s` : 'RIFLE';
-      this.reloadText.textContent = prison.downFor > 0 ? 'KNOCKED DOWN' : 'READY';
-      this.reloadText.style.color = prison.downFor > 0 ? '#ff8a7a' : '#ffd24a';
-      this.modeText.textContent = `${state.cameraMode === 'first' ? '1st' : '3rd'} person · On foot`;
+      this.gunName.textContent = prison.inTank ? 'MAIN GUN' : 'RIFLE';
+      this.hullName.textContent = prison.inTank ? 'HULL' : 'HEALTH';
+      this.reloadText.textContent = prison.downFor > 0 ? 'KNOCKED DOWN' : prison.inTank && !loaded ? 'RELOADING' : prison.inTank ? 'LOADED' : 'READY';
+      this.reloadText.style.color = prison.downFor > 0 ? '#ff8a7a' : prison.inTank && !loaded ? '#eef3f8' : '#ffd24a';
+      this.modeText.textContent = `${state.cameraMode === 'first' ? '1st' : '3rd'} person · ${prison.inTank ? 'Your tank' : 'On foot'}`;
     }
 
     const aaLocked = state.aaLockScreen !== null;

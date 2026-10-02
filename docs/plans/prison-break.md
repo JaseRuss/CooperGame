@@ -1,6 +1,6 @@
 # Plan: Bonus level "Prison Break"
 
-Status: milestones 1 to 4 built (on foot; Cell Block A and the squad; guards, the jam riot cannon, capturing guards and medics; the whole compound). The Alcatraz-style opening is built too (4b). Next: the breakout (milestone 5). Decisions from the owner are below.
+Status: milestones 1 to 4 built (on foot; Cell Block A and the squad; guards, the jam riot cannon, capturing guards and medics; the whole compound). The Alcatraz-style opening (4b) and the breakout (5) are built too: the level plays start to finish. Next: polish (6). Decisions from the owner are below.
 
 ## The level in one paragraph
 
@@ -166,8 +166,15 @@ mission 4 never rolls on into it: the bonus is only picked by hand.
    out level above. Also from the owner: only eight follow the player (the four buddies, two
    medics and two others); the rest stay behind on posts, guarding cells with captured guards
    in them first, then securing doorways.
-5. **Breakout.** Motor pool fight, swapping into `PlayerTank`, hull riders, trucks full of
-   freed soldiers, the road home, chasing jeeps, ending cutscene and end screen.
+5. **Breakout.** *(Done.)* The motor pool (fenced, south of the east wing) opens once every
+   zone's taken. Walking up to the tank boards it: the real `PlayerTank`, which works on the
+   prison level because the big map's terrain, moat and road lookups report flat ground with
+   neither there when `PRISON` is set. The buddies ride on the hull, everyone else in three tan
+   trucks (`Trucks.ts`) that follow the tank's tracks. A shell (the main game's
+   `predictTrajectory`) blows the main gate open; four tan jeeps chase the convoy up the road
+   (`Outside.ts`: road, trees, fences, Cooper's Base); home, everyone jumps down and cheers.
+   Also from the owner: the prisoners' only weapon is the jam cannon, and the towers always
+   fall into the yard.
 6. **Polish.** Sounds, intro cutscene, Low graphics check, README.
 
 ## Risks
