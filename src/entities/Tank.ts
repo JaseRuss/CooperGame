@@ -360,6 +360,8 @@ export class Tank {
     return p;
   }
 
+  private commander: THREE.Object3D | null = null;
+
   private static commanderShapes: Map<THREE.Material, THREE.BufferGeometry> | null = null;
 
   /**
@@ -370,6 +372,12 @@ export class Tank {
     const figure = Tank.createCommander(color);
     figure.position.set(0.3, 0.62 - 0.86 * figure.scale.y, 0.2); // down in the hatch to mid-chest, in turret space
     this.turretPivot.add(figure);
+    this.commander = figure;
+  }
+
+  /** Shows or hides the commander in the hatch (an empty tank, waiting for its crew, has nobody up top). */
+  setCommanderVisible(visible: boolean): void {
+    if (this.commander) this.commander.visible = visible;
   }
 
   /** The commander figure (belt at y 0.9 × its scale, facing -Z), in the given army's colours. */

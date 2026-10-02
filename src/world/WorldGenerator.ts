@@ -578,9 +578,9 @@ function byChunk<T extends { x: number; z: number }>(items: T[]): T[][] {
  * Instanced copies of `template` that each fall over when a tank drives into them (trees, lamp
  * posts): one InstancedMesh per part, with each Tree rewriting its own instance as it topples.
  */
-function toppleInstances(
+export function toppleInstances(
   world: RAPIER.World,
-  scene: THREE.Scene,
+  scene: THREE.Object3D,
   hitRegistry: HitRegistry,
   staticBody: RAPIER.RigidBody,
   source: THREE.Object3D,

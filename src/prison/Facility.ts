@@ -80,7 +80,7 @@ const ROAD: { x: number; z: number }[] = [
   { x: -32, z: -230 },
   { x: 18, z: -320 },
   { x: 10, z: -410 },
-  { x: 0, z: -470 },
+  { x: 0, z: -438 }, // in through the gate of Cooper's Base (its sandbag wall is 65 m out)
 ];
 const HOME = { x: 0, z: -500 };
 const BLOCK_B: BlockPlan = { minX: 38, maxX: 68, minZ: 8, maxZ: 22, corridor: 12, doorX: 53 };

@@ -91,7 +91,7 @@ move them into small shared modules rather than copying them.
 | `src/prison/NavGraph.ts` | Hand-placed waypoints at doorways and corridor ends with A* between them, so followers and guards get through doors instead of grinding into walls. The free-roaming wander in `Soldier` only works outdoors. |
 | `src/prison/Guards.ts` | Tan guards: posts and patrol routes on the nav graph, the existing `Soldier` shooting. |
 | `src/prison/Towers.ts` | Guard towers round the yard with a guard on top; shootable, they topple. |
-| `src/prison/Trucks.ts` | Tan army trucks (built with `PartBuilder`) that the freed soldiers ride out in, following the tank along the road. |
+| `src/prison/Trucks.ts` | Tan army trucks (built with `PartBuilder`, detailed like the tanks and splashed with green paint) that the freed soldiers ride out in, following the tank along the road. |
 | `src/prison/Zones.ts` | Each zone's "taken" check (guards cleared, flag down), the HUD checklist, and checkpoints. |
 | `src/prison/Breakout.ts` | The finale: tank recapture, riders on the hull, the road home, chasing jeeps, the ending cutscene. |
 | `src/prison/HullRiders.ts` | The four buddies clinging to the hull sides, attached to `player.root` (like the bomb tanker's gunners in `TankerCrew.ts`). A new seated or clinging pose built with `PartBuilder`. |
@@ -183,6 +183,23 @@ mission 4 never rolls on into it: the bonus is only picked by hand.
    pilasters and cornices on the cell blocks; plank siding, a porch and a chimney on the
    barracks; a "SOLITARY" sign on the hut; floodlight poles; a basketball court in the yard;
    benches; a water tower in the west wing.
+7. **Feedback round.** *(Done.)* From the owner:
+   - Running on foot felt like snagging on things. Three causes, all fixed in
+     `PlayerSoldier.ts`:
+     - Every frame pushed the capsule down into the floor, and now and then Rapier refused the
+       whole move. On his feet the move is now flat, and snap-to-ground keeps him down.
+     - The controller's skin was 2 cm, so a frame that left him a hair inside something stopped
+       him dead. It is now 8 cm.
+     - Brushing a post or clipping a crate's corner wiped out his run speed. Now the run speed
+       is left alone, and when he's blocked nearly head-on he looks just past the obstacle and
+       slides round whichever side is open. Square into a long wall, he still stops.
+   - Outside the prison it's mission 1's world:
+     - The Kenney trees, which topple like they do there.
+     - The real `HomeBase` for Cooper's Base: sandbag wall, gate towers, Chinook and trophy.
+     - The road runs in through the base's gate.
+     - The raider jeeps turn back in sight of the base's watchtowers.
+   - The trucks are detailed like the tanks, with tan markings slapped over with green paint.
+   - The tank parked in the motor pool has nobody in its hatch until you climb in.
 
 ## Risks
 

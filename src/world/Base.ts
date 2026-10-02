@@ -174,7 +174,7 @@ export class HomeBase {
    */
   constructor(
     private readonly world: RAPIER.World,
-    scene: THREE.Scene,
+    scene: THREE.Object3D,
     private readonly center: FriendlyBase,
     private readonly gateAngle: number,
     private readonly gateAngles: number[] = [gateAngle],
