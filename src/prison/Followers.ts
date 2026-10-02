@@ -20,8 +20,8 @@ const GRAVITY = 24;
 const SPACING = 0.6;
 const TRAIL_MAX = 900;
 /** The first follower keeps this far back along the trail, the rest this much further each. */
-const FIRST_GAP = 2;
-const GAP = 1.3;
+const FIRST_GAP = 1.6;
+const GAP = 1;
 const RUN = 6.3;
 const CATCH_UP = 8;
 /** How often each follower looks for a straight line to further along the trail. */
@@ -401,9 +401,13 @@ export class Followers {
   toggleHold(): boolean {
     this.holding = !this.holding;
     for (const p of this.squad) {
-      if (this.holding && p.state === 'following') p.state = 'holding';
-      else if (!this.holding && p.state === 'holding' && !p.job) this.join(p);
-      else if (!this.holding && p.state === 'holding') p.state = 'following';
+      if (this.holding && p.state === 'following') {
+        p.state = 'holding';
+      } else if (!this.holding && p.state === 'holding') {
+        // Following again: back onto the trail (join keeps a holder holding, so switch him first).
+        p.state = 'following';
+        if (!p.job && !p.down) this.join(p);
+      }
     }
     return this.holding;
   }
