@@ -7,6 +7,8 @@ const SIDE = 0.25;
 const KNEE = 0.5;
 /** How many of the nearest waypoints are tried as the way on to (and off) the graph. */
 const ENDS = 6;
+/** Waypoints further apart than this aren't linked directly (there's always one in between), which keeps building the graph quick. */
+const MAX_LINK = 24;
 
 type XZ = { x: number; z: number };
 
@@ -29,7 +31,7 @@ export class NavGraph {
       for (let j = i + 1; j < this.nodes.length; j++) {
         const a = this.nodes[i];
         const b = this.nodes[j];
-        if (this.clear({ x: a.x, z: a.y }, { x: b.x, z: b.y })) {
+        if (a.distanceTo(b) < MAX_LINK && this.clear({ x: a.x, z: a.y }, { x: b.x, z: b.y })) {
           this.links[i].push(j);
           this.links[j].push(i);
         }

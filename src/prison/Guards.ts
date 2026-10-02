@@ -26,6 +26,8 @@ const EYE = 1.5;
 const MUZZLE = new THREE.Vector3(0.12, 1.49, -0.95);
 const TIP_SPEED = 6;
 const UP = new THREE.Vector3(0, 1, 0);
+/** Within this of the ground counts as on it (walking his beat leaves a guard a hair below or above). */
+const ON_GROUND = 0.05;
 
 export type GuardState = 'active' | 'jammed' | 'down' | 'carried' | 'jailed';
 
@@ -66,8 +68,9 @@ export class Guard {
     this.stuckTag.position.y = 2.4;
     this.stuckTag.visible = false;
     this.root.add(this.stand, this.kneel, this.stuckTag);
-    this.pos.set(post.x, 0, post.z);
-    this.body = world.createRigidBody(RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(post.x, 0.9, post.z));
+    const up = post.height ?? 0;
+    this.pos.set(post.x, up, post.z);
+    this.body = world.createRigidBody(RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(post.x, up + 0.9, post.z));
     this.collider = world.createCollider(RAPIER.ColliderDesc.capsule(HALF_HEIGHT, RADIUS).setCollisionGroups(ENEMY_GROUPS), this.body);
     this.controller = world.createCharacterController(0.02);
     this.controller.enableSnapToGround(0.3);
@@ -90,10 +93,26 @@ export class Guard {
     this.collider.setEnabled(false);
     this.stuckTag.visible = false;
     this.target = null;
+    // Up a tower: he tumbles off, landing a couple of metres out from it the way he was knocked.
+    if (this.pos.y > ON_GROUND) {
+      this.dropVelocity.set(dir.x, 0, dir.z).normalize().multiplyScalar(2).setY(2);
+    }
+  }
+
+  /** Down on the ground (not still falling off a tower), so he can be picked up. */
+  get landed(): boolean {
+    return this.state === 'down' && this.pos.y <= ON_GROUND;
   }
 
   /** Draws him: standing, wobbling in jam, tipped over, carried, or sat in a cell. */
+  readonly dropVelocity = new THREE.Vector3();
+
   pose(dt: number): void {
+    if (this.state === 'down' && this.pos.y > ON_GROUND) {
+      this.dropVelocity.y -= 20 * dt;
+      this.pos.addScaledVector(this.dropVelocity, dt);
+      if (this.pos.y <= 0) this.pos.y = 0;
+    }
     if (this.state === 'carried' || this.state === 'jailed') return;
     const tipping = this.state === 'down';
     this.tip = tipping ? Math.min(1, this.tip + dt * TIP_SPEED) : 0;
@@ -152,7 +171,7 @@ export class Guards {
 
   /** Downed guards nobody's come for yet. */
   get uncollected(): Guard[] {
-    return this.list.filter((g) => g.state === 'down' && !g.claimed);
+    return this.list.filter((g) => g.landed && !g.claimed);
   }
 
   /** A shot along `dir` hit `collider`: if it was a guard still on his feet, he's hit. Returns him, or null. */

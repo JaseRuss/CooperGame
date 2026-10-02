@@ -367,7 +367,7 @@ your buddies and the other prisoners, take over the prison and drive your tank h
 
 - You start locked in a cell in Cell Block A. Shoot the big brass padlock on the door to get
   out, then shoot the padlocks on the other cells. Everyone inside cheers and follows you
-  (Keston is in there too). They follow your path round corners and through doors and gather
+  (Keston is in there too; Max and Innes are in Cell Block B). They follow your path round corners and through doors and gather
   round you when they can see you. Press X to tell them to hold where they are, and X again
   to follow.
 - Nine **tan guards** hold the corridor and the exercise yard. Your squad shoots back at any
@@ -375,6 +375,13 @@ your buddies and the other prisoners, take over the prison and drive your tank h
 - The **jam riot cannon** (hold LT / E) sprays strawberry jam at the crosshair, out to about
   20 m. A guard it lands on is stuck fast and can't shoot, then slips over a few seconds
   later. It runs out if you hold it down too long and refills when you let go.
+- The prison has four parts to take, listed top-centre with what's left in each:
+  **Cell Block A**, **the yard** (four wooden guard towers with a guard up each: shoot the
+  legs and the tower topples, guard and all), **Cell Block B** in the east wing (shoot the
+  yellow lever box at the end of its corridor and every cell door opens at once) and **the
+  barracks** in the west wing (shoot their tan flag off the roof and a green one goes up;
+  Jason is locked in the punishment hut behind it). Each part you take becomes your
+  checkpoint.
 - Knocked-over guards are **captured**: one of your squad picks him up, carries him over his
   head to an empty cell and sits him down inside, and the door swings shut on him.
 - Two of the prisoners are **medics**, with a white helmet band and a red cross on their

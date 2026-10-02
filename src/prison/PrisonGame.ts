@@ -9,13 +9,16 @@ import { ImpactEffects } from '../combat/ImpactEffects';
 import { JamCannon } from '../combat/JamCannon';
 import { loadSettings, saveSettings, AIM_SPEED_SCALE, GRAPHICS_QUALITY, type Settings } from '../core/Settings';
 import { MISSION, startMission } from '../core/config';
-import { Facility, type CellSpot } from './Facility';
+import { Facility, type CellSpot, type ZoneId } from './Facility';
 import { PlayerSoldier, MAX_HEALTH } from './PlayerSoldier';
 import { ShoulderCam } from './ShoulderCam';
 import { Cells } from './Cells';
 import { Followers, type PrisonerSpot, type SquadWorld } from './Followers';
 import { Guards, type Guard, type Shot } from './Guards';
 import { NavGraph } from './NavGraph';
+import { Towers } from './Towers';
+import { Flag } from './Flag';
+import type { Cell } from './Cells';
 import { FRIEND_SHOTS, ENEMY_SHOTS, WALLS_ONLY } from './groups';
 
 const SKY = 0x2a3550;
@@ -23,10 +26,17 @@ const SKY = 0x2a3550;
 const SHADOW_HALF = 45;
 const SHOT_RANGE = 220;
 const TRACER_TIME = 0.06;
-/** Who's locked in each of Cell Block A's cells (the first is the player's own), which holds a buddy, and the medics. */
-const CELL_PRISONERS = [0, 2, 1, 2, 2, 1, 2, 1];
-const BUDDY_CELL = 4;
-const MEDIC_CELLS = [2, 6];
+/**
+ * Who's locked in each cell: Cell Block A (the first is the player's own), Cell Block B, then
+ * the punishment hut. Which cells hold the buddies (cell: buddy), and the medics.
+ */
+const CELL_PRISONERS = [0, 2, 1, 2, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1, 1];
+const BUDDY_CELLS: Record<number, number> = { 4: 0, 9: 1, 12: 2, 14: 3 };
+const MEDIC_CELLS = [2, 6, 11];
+/** Prompts for the lever box, a tower and the flag show this close. */
+const LEVER_PROMPT_RANGE = 16;
+const TOWER_PROMPT_RANGE = 14;
+const FLAG_PROMPT_RANGE = 30;
 /** "Shoot the padlock" shows when he's this close to a locked door. */
 const LOCK_PROMPT_RANGE = 5;
 /** A guard's rifle hit on the player. */
@@ -48,7 +58,7 @@ const JAM_DRIP_RADIUS = 1;
 /** What the pause screen's first page shows on foot, instead of the map. */
 const CONTROLS =
   '<span><b>Move</b> left stick · W A S D</span><span><b>Aim</b> right stick · mouse</span>' +
-  '<span><b>Fire</b> RT · click</span><span><b>Jam riot cannon</b> hold LT · hold E</span>' +
+  '<span><b>Fire</b> RT · click (padlocks, levers, tower legs and flags can all be shot)</span><span><b>Jam riot cannon</b> hold LT · hold E</span>' +
   '<span><b>Squad: follow me / hold here</b> X · X</span><span><b>Camera</b> Y · C</span><span><b>Back to checkpoint</b> Back · R</span>';
 
 /** Nothing on the map: the HUD needs one, but the prison has no minimap. */
@@ -73,9 +83,9 @@ const NO_MAP: MapView = {
  * which is built round driving the tank across the big map. It reuses the same input, HUD,
  * sound, physics and effects.
  *
- * So far: break out of your cell, free Cell Block A, then fight the tan guards in the corridor
- * and the yard with the squad behind you. Beaten guards are carried off to the cells, and the
- * squad's medics patch up anyone who's knocked down.
+ * So far: break out of your cell, free Cell Block A, then take the yard (and its towers), Cell
+ * Block B and the barracks with the squad behind you. Beaten guards are carried off to the
+ * cells, and the squad's medics patch up anyone who's knocked down.
  */
 export class PrisonGame {
   private readonly renderer: THREE.WebGLRenderer;
@@ -100,11 +110,15 @@ export class PrisonGame {
   private followers!: Followers;
   private guards!: Guards;
   private nav!: NavGraph;
+  private towers!: Towers;
+  private flag!: Flag;
+  /** The parts of the prison already taken (each announced once). */
+  private readonly taken = new Set<ZoneId>();
+  private allTaken = false;
+  private time = 0;
   private squadWorld!: SquadWorld;
   /** Where he gets back up: his cell, until he's out of it. */
   private checkpoint = { x: 0, z: 0, yaw: 0 };
-  private blockFreed = false;
-  private compoundTaken = false;
   /** The jam riot cannon's tank (0..1) and the time to its next glob. */
   private jamTank = 1;
   private jamCooldown = 0;
@@ -165,12 +179,16 @@ export class PrisonGame {
     this.player = new PlayerSoldier(this.world, layout.start.x, layout.start.z, layout.start.yaw);
     this.scene.add(this.player.root);
     this.cam = new ShoulderCam(this.camera, this.world);
-    this.cells = new Cells(this.world, layout.cells);
+    this.cells = new Cells(this.world, layout.cells, layout.levers);
     this.scene.add(this.cells.group);
     this.followers = new Followers(this.world, prisonerSpots(layout.cells), this.settings.buddyNames);
     this.scene.add(this.followers.group);
     this.guards = new Guards(this.world, layout.guards);
     this.scene.add(this.guards.group);
+    this.towers = new Towers(this.world, layout.towers);
+    this.scene.add(this.towers.group);
+    this.flag = new Flag(this.world, layout.flag);
+    this.scene.add(this.flag.mesh);
     this.checkpoint = { ...layout.start };
     // Colliders added this frame aren't in the query pipeline until a step (and the nav graph needs them).
     this.world.step();
@@ -191,6 +209,7 @@ export class PrisonGame {
       cells: this.cells,
       nav: this.nav,
       sees: (a, b) => this.sees(a, b),
+      camera: this.camera.position,
     };
 
     this.hud.setOnFoot(CONTROLS);
@@ -271,10 +290,36 @@ export class PrisonGame {
     if (cell) {
       this.sound.play('clang', { at: end, volume: 0.9, rate: 1.1 });
       this.impacts.dustPuff(end);
-      this.onCellOpened(cell.index);
+      this.onCellsOpened([cell]);
+      return;
+    }
+    const opened = this.cells.hitLever(hit.collider);
+    if (opened) {
+      this.sound.play('clang', { at: end, volume: 1, rate: 0.7 });
+      this.sound.play('launch', { at: end, volume: 0.4, rate: 1.6, fadeAfter: 0.6 });
+      this.impacts.dustPuff(end);
+      if (opened.length) this.onCellsOpened(opened, true);
       return;
     }
     this.impacts.dustPuff(end);
+    const tower = this.towers.hit(hit.collider, dir);
+    if (tower) {
+      this.sound.play('thud', { at: end, volume: 0.6, rate: 0.8, minGap: 0.05 });
+      if (tower.felled) {
+        this.hud.showCallout("TIMBER! THE TOWER'S COMING DOWN!", '#ffd24a');
+        // Whoever's up there comes down with it.
+        for (const g of this.guards.list) {
+          if (g.post.height && g.post.x === tower.x && g.post.z === tower.z && (g.state === 'active' || g.state === 'jammed')) g.knockDown(dir);
+        }
+      }
+      return;
+    }
+    const flag = this.flag.hit(hit.collider);
+    if (flag) {
+      this.sound.play('thud', { at: end, volume: 0.5, rate: 1.8 });
+      if (flag.down) this.hud.showCallout("THEIR FLAG'S COMING DOWN!", '#9be27a');
+      return;
+    }
     const guard = this.guards.hit(hit.collider, dir);
     if (guard) this.onGuardHit(guard, end, true);
     else this.sound.play('clang', { at: end, volume: 0.15, rate: 2.2, minGap: 0.08 });
@@ -371,27 +416,61 @@ export class PrisonGame {
     this.followers.gather(this.player.position, this.squadWorld);
   }
 
-  private onCellOpened(index: number): void {
-    if (index === 0) {
+  /** Cells just opened (one padlock, or a whole block from its lever): the prisoners come out. */
+  private onCellsOpened(cells: Cell[], byLever = false): void {
+    if (cells.some((c) => c.index === 0)) {
       this.checkpoint = { ...this.facility.layout.corridorCheckpoint };
       this.hud.showBanner("YOU'RE OUT!", 'Watch out for the guards! Shoot the padlocks on the other cells and free everyone');
       return;
     }
     const names = this.settings.buddyNames;
-    const buddies = this.followers.release(index);
-    const freedBuddies = buddies.map((b) => names[b]).join(' & ');
-    if (this.cells.all.every((c) => !c.locked) && !this.blockFreed) {
-      this.blockFreed = true;
-      this.hud.showBanner(
-        'CELL BLOCK A IS FREE!',
-        `${buddies.length ? `${freedBuddies} too! ` : ''}Now take the yard: knock the guards over and your squad will lock them up`,
-      );
+    const buddies = cells.flatMap((c) => this.followers.release(c.index));
+    const freed = buddies.map((b) => names[b]).join(' & ');
+    const out = cells.reduce((n, c) => n + this.followers.inCell(c.index), 0);
+    if (byLever) {
+      this.hud.showBanner('EVERY DOOR IS OPEN!', `${out} prisoners are out${buddies.length ? `, ${freed} too` : ''}!`);
     } else if (buddies.length) {
-      this.hud.showBanner(`${freedBuddies.toUpperCase()} IS FREE!`, 'Your buddies will help you get your tank back');
+      this.hud.showBanner(`${freed.toUpperCase()} IS FREE!`, 'Your buddies will help you get your tank back');
     } else {
-      this.hud.showCallout(`+${this.followers.inCell(index)} · SQUAD ${this.followers.count}`, '#9be27a');
+      this.hud.showCallout(`+${out} · SQUAD ${this.followers.count}`, '#9be27a');
     }
     this.sound.play('uiConfirm', { volume: 0.6 });
+  }
+
+  /** Still in the fight in a part of the prison (on their feet, stuck in jam or not). */
+  private guardsLeft(zone: ZoneId): number {
+    return this.guards.list.filter((g) => g.post.zone === zone && (g.state === 'active' || g.state === 'jammed')).length;
+  }
+
+  /** The cells in a part of the prison, and how many are open. */
+  private cellsIn(zone: ZoneId): { open: number; total: number } {
+    const cells = this.cells.all.filter((c) => c.spot.block === zone && c.index !== 0);
+    return { open: cells.filter((c) => !c.locked).length, total: cells.length };
+  }
+
+  /** Is that part of the prison ours yet? */
+  private isTaken(zone: ZoneId): boolean {
+    if (this.guardsLeft(zone) > 0) return false;
+    const cells = this.cellsIn(zone);
+    if (cells.open < cells.total) return false;
+    if (zone === 'yard') return this.towers.standing === 0;
+    if (zone === 'barracks') return this.flag.captured;
+    return true;
+  }
+
+  /** Announces each part of the prison as it's taken, and moves the checkpoint up to it. */
+  private checkZones(): void {
+    for (const zone of this.facility.layout.zones) {
+      if (this.taken.has(zone.id) || !this.isTaken(zone.id)) continue;
+      this.taken.add(zone.id);
+      if (!this.cells.all[0].locked) this.checkpoint = { ...zone.checkpoint };
+      this.hud.showBanner(`${zone.name.toUpperCase()} IS OURS!`, this.taken.size < this.facility.layout.zones.length ? `${this.facility.layout.zones.length - this.taken.size} more to go` : '');
+      this.sound.play('uiConfirm', { volume: 0.8 });
+    }
+    if (!this.allTaken && this.taken.size === this.facility.layout.zones.length) {
+      this.allTaken = true;
+      this.hud.showBanner('THE PRISON IS OURS!', 'Every part of it is taken. Next: get your tank back from the motor pool');
+    }
   }
 
   private prisonHUD(): PrisonHUD {
@@ -399,15 +478,16 @@ export class PrisonGame {
     const down = this.player.downFor;
     const cells = this.cells.all;
     const own = cells[0];
-    const others = cells.slice(1);
-    const opened = others.filter((c) => !c.locked).length;
     const names = this.settings.buddyNames;
     const buddies = this.followers.buddiesHere;
     const freed = this.followers.buddiesFreed;
     const nearLock = cells.some((c) => c.locked && Math.hypot(c.lockAt.x - p.x, c.lockAt.z - p.z) < LOCK_PROMPT_RANGE);
+    const nearLever = this.cells.leversLeft.some((l) => Math.hypot(l.x - p.x, l.z - p.z) < LEVER_PROMPT_RANGE);
+    const nearTower = this.towers.up.some((t) => Math.hypot(t.x - p.x, t.z - p.z) < TOWER_PROMPT_RANGE);
+    const flagSpot = this.facility.layout.flag;
+    const nearFlag = !this.flag.captured && Math.hypot(flagSpot.x - p.x, flagSpot.z - p.z) < FLAG_PROMPT_RANGE;
     const squad = this.followers.count;
     const total = this.guards.total;
-    const beaten = total - this.guards.standing;
     const friendDown = this.player.isDown ? null : this.followers.downNear(p, 6);
     let prompt: string | null = null;
     if (down > 0) {
@@ -417,22 +497,40 @@ export class PrisonGame {
     } else if (friendDown) {
       const who = friendDown.name ?? 'A friend';
       prompt = friendDown.progress > 0 ? `Helping ${who} up… ${Math.round(friendDown.progress * 100)}%` : `${who} is down: stand right next to them to help them up`;
+    } else if (nearLever) {
+      prompt = 'Shoot the yellow lever box to open every cell in the block!';
     } else if (nearLock) {
       prompt = 'Shoot the padlock to open the cell';
+    } else if (nearTower) {
+      prompt = "Shoot the tower's legs to bring it down";
+    } else if (nearFlag) {
+      prompt = 'Shoot their flag off the barracks roof! (Stand back for a clear shot over the edge)';
     }
     return {
       title: `PRISON BREAK${squad ? ` · SQUAD ${this.followers.standing}${this.followers.isHolding ? ' (HOLDING)' : ''}` : ''}`,
       objectives: [
-        { label: 'Break out of your cell', done: !own.locked },
-        { label: `Open the other cells (${opened} / ${others.length})`, done: opened === others.length },
-        ...buddies.map((b) => ({ label: `Free ${names[b]}`, done: freed.includes(b) })),
-        { label: `Knock over the guards (${beaten} / ${total})`, done: beaten === total },
-        { label: `Lock them in the cells (${this.guards.jailed} / ${total})`, done: this.guards.jailed === total },
+        ...(own.locked ? [{ label: 'Break out of your cell', done: false }] : []),
+        ...this.facility.layout.zones.map((z) => ({ label: `${z.name}: ${this.zoneProgress(z.id)}`, done: this.taken.has(z.id) })),
+        { label: `Free your buddies (${freed.length} / ${buddies.length})${freed.length ? `: ${freed.map((b) => names[b]).join(', ')}` : ''}`, done: freed.length === buddies.length },
+        { label: `Lock the guards in the cells (${this.guards.jailed} / ${total})`, done: this.guards.jailed === total },
       ],
       prompt,
       downFor: down,
       jam: this.jamTank,
     };
+  }
+
+  /** What's left to do in a part of the prison, for the HUD's checklist. */
+  private zoneProgress(zone: ZoneId): string {
+    if (this.taken.has(zone)) return 'taken';
+    const bits: string[] = [];
+    const cells = this.cellsIn(zone);
+    if (cells.total && cells.open < cells.total) bits.push(zone === 'barracks' ? 'the punishment hut' : `cells ${cells.open} / ${cells.total}`);
+    if (zone === 'yard' && this.towers.standing) bits.push(`towers ${this.towers.total - this.towers.standing} / ${this.towers.total}`);
+    if (zone === 'barracks' && !this.flag.captured) bits.push('their flag');
+    const left = this.guardsLeft(zone);
+    if (left) bits.push(`${left} guard${left === 1 ? '' : 's'}`);
+    return bits.join(' · ');
   }
 
   private hudState(input: InputState): HUDState {
@@ -529,10 +627,15 @@ export class PrisonGame {
     for (const shot of this.followers.update(dt, this.squadWorld)) this.resolveShot(shot, 'friend');
     this.world.step();
 
-    if (!this.compoundTaken && this.guards.jailed === this.guards.total) {
-      this.compoundTaken = true;
-      this.hud.showBanner('THE CELL BLOCK AND YARD ARE YOURS!', 'Every guard is locked up. Cell Block B and the barracks are next');
-      this.sound.play('uiConfirm', { volume: 0.8 });
+    this.checkZones();
+    this.time += dt;
+    if (this.flag.update(dt, this.time)) this.hud.showCallout('OUR FLAG FLIES OVER THE BARRACKS!', '#9be27a');
+    for (const at of this.towers.update(dt)) {
+      // The tower crashes down in a cloud of dust.
+      const p = new THREE.Vector3(at.x, 0.5, at.z);
+      this.sound.play('explosion', { at: p, volume: 0.8, rate: 0.8 });
+      this.cam.addShake(0.3);
+      for (let i = 0; i < 6; i++) this.impacts.dustPuff(p.clone().add(new THREE.Vector3((Math.random() - 0.5) * 6, 0, (Math.random() - 0.5) * 6)));
     }
 
     this.cam.update(this.player, dt);
@@ -546,19 +649,19 @@ export class PrisonGame {
   }
 }
 
-/** Who's in Cell Block A: a couple of prisoners per cell (some sat waiting), one buddy and two medics. */
+/** Who's in each cell: a couple of prisoners (some sat waiting), the four buddies and three medics. */
 function prisonerSpots(cells: CellSpot[]): PrisonerSpot[] {
   const spots: PrisonerSpot[] = [];
   cells.forEach((cell, i) => {
     const doorX = (cell.doorX0 + cell.doorX1) / 2;
     const exits = [new THREE.Vector2(doorX, cell.frontZ + 0.9), new THREE.Vector2(doorX, cell.frontZ - 1.6)];
-    for (let j = 0; j < CELL_PRISONERS[i]; j++) {
+    for (let j = 0; j < (CELL_PRISONERS[i] ?? 0); j++) {
       spots.push({
         x: cell.minX + 1.4 + j * 1.6,
         z: cell.frontZ + 2.6 + (j % 2) * 1.2,
         cell: i,
         kneel: (i + j) % 3 === 0,
-        buddy: i === BUDDY_CELL && j === 0 ? 0 : null,
+        buddy: j === 0 && i in BUDDY_CELLS ? BUDDY_CELLS[i] : null,
         medic: MEDIC_CELLS.includes(i) && j === 0,
         exits,
       });
