@@ -1,6 +1,6 @@
 # Plan: Bonus level "Prison Break"
 
-Status: milestones 1 to 3 built (on foot; Cell Block A and the squad; guards, the jam riot cannon, capturing guards and medics). Decisions from the owner are below.
+Status: milestones 1 to 4 built (on foot; Cell Block A and the squad; guards, the jam riot cannon, capturing guards and medics; the whole compound). Next: the Alcatraz-style opening, then the breakout. Decisions from the owner are below.
 
 ## The level in one paragraph
 
@@ -149,8 +149,21 @@ mission 4 never rolls on into it: the bonus is only picked by hand.
      by standing by him; anyone left alone gets up by himself after 25 seconds.
    `src/prison/NavGraph.ts` links hand-placed waypoints (a grid over the open yard, the
    doorway, the corridor, each cell) for these errands.
-4. **The rest of the compound.** Cell Block B and control room, yard and guard towers,
-   barracks and flag, all four buddies.
+4. **The rest of the compound.** *(Done.)* The compound grew wings either side of the yard:
+   Cell Block B (east, with a lever box that opens every door), the barracks and punishment
+   hut (west). Four guard towers in the yard (ten rifle hits topple one; the guard on top
+   falls with it). The barracks' tan flag (three hits, then a green one goes up). The four
+   parts are zones: each is "taken" once its guards are down, its cells open, and its towers
+   or flag dealt with, and becomes the checkpoint. 22 guards, 21 prisoners, all four buddies.
+   Also: the squad keeps out of the camera's way.
+4b. **Alcatraz opening** (owner's request, next). Replace the start with the 1962 Alcatraz
+   escape's route, without the digging or planning: Cell Block A becomes a cellhouse with
+   two rows of cells back to back and a utility corridor (pipe chase) between them. Out
+   through the loose vent grille at the back of your cell, along the pipe chase (freeing
+   Keston and Max through their vents), up the pipes and out through a roof ventilator; a
+   searchlight sequence across the cellhouse roof (get caught and you're back at the
+   hatch); then down the bakery pipe to the ground, where it turns into the fight-your-way-
+   out level above.
 5. **Breakout.** Motor pool fight, swapping into `PlayerTank`, hull riders, trucks full of
    freed soldiers, the road home, chasing jeeps, ending cutscene and end screen.
 6. **Polish.** Sounds, intro cutscene, Low graphics check, README.

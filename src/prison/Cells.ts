@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { PartBuilder } from '../utils/modelKit';
 import { plastic } from '../utils/plastic';
-import type { CellSpot } from './Facility';
+import type { CellSpot, LeverSpot } from './Facility';
 
 const STEEL = 0x3e4246;
 const BRASS = 0xd8a93a;
@@ -44,9 +44,33 @@ interface Door extends Cell {
   lockLanded: boolean;
 }
 
-// Built once, shared by every door: nothing here is disposed.
-let doorGeos: Map<THREE.Material, THREE.BufferGeometry> | null = null;
+// Built once (per door height), shared by every door: nothing here is disposed.
+const doorGeos = new Map<number, Map<THREE.Material, THREE.BufferGeometry>>();
 let lockGeos: Map<THREE.Material, THREE.BufferGeometry> | null = null;
+let leverGeos: { box: Map<THREE.Material, THREE.BufferGeometry>; handle: Map<THREE.Material, THREE.BufferGeometry> } | null = null;
+
+interface Lever {
+  spot: LeverSpot;
+  handle: THREE.Group;
+  collider: RAPIER.Collider;
+  pulled: boolean;
+  /** 0 up, 1 thrown down. */
+  throw: number;
+}
+
+/** A yellow and black control box with a big red handle, facing -Z (the handle pivots at the origin). */
+function leverGeometry(): { box: Map<THREE.Material, THREE.BufferGeometry>; handle: Map<THREE.Material, THREE.BufferGeometry> } {
+  const b = new PartBuilder();
+  const yellow = plastic(0xe8c23a);
+  const black = plastic(0x222222);
+  b.add(new THREE.BoxGeometry(0.6, 0.8, 0.22), yellow, 0, 0, 0.08);
+  for (const y of [-0.3, -0.1, 0.1, 0.3]) b.add(new THREE.BoxGeometry(0.62, 0.07, 0.23), black, 0, y, 0.08, 0, 0, 0.5);
+  b.add(new THREE.CylinderGeometry(0.08, 0.08, 0.12, 12), black, 0, 0, -0.06, Math.PI / 2);
+  const box = b.buildGeometries();
+  b.add(new THREE.CylinderGeometry(0.035, 0.035, 0.5, 8), plastic(0x9aa0a6), 0, 0.25, -0.14);
+  b.add(new THREE.SphereGeometry(0.09, 10, 8), plastic(0xd8262e), 0, 0.52, -0.14);
+  return { box, handle: b.buildGeometries() };
+}
 
 /** A barred door `width` wide, hinged at x = 0 and running along +X, standing on y = 0. */
 function doorGeometry(width: number, height: number): Map<THREE.Material, THREE.BufferGeometry> {
@@ -87,23 +111,29 @@ function meshes(geos: Map<THREE.Material, THREE.BufferGeometry>, into: THREE.Obj
 /**
  * The cell doors: barred doors with a big brass padlock on the corridor side. Shoot the padlock
  * and it flies off and the door swings open, right round flat against the bars. A locked door is
- * solid (and stops bullets); an open one is out of the way.
+ * solid (and stops bullets); an open one is out of the way. A lever box (Cell Block B's control
+ * room has one) opens a whole block's doors at once when it's shot.
  */
 export class Cells {
   readonly group = new THREE.Group();
   private readonly doors: Door[] = [];
   private readonly byLock = new Map<number, Door>();
   private readonly body: RAPIER.RigidBody;
+  private readonly levers: Lever[] = [];
 
-  constructor(private readonly world: RAPIER.World, spots: CellSpot[]) {
+  constructor(private readonly world: RAPIER.World, spots: CellSpot[], levers: LeverSpot[] = []) {
     this.body = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
     spots.forEach((spot, index) => {
       const width = spot.doorX1 - spot.doorX0;
-      doorGeos ??= doorGeometry(width, spot.height);
+      let geos = doorGeos.get(spot.height);
+      if (!geos) {
+        geos = doorGeometry(width, spot.height);
+        doorGeos.set(spot.height, geos);
+      }
       lockGeos ??= lockGeometry();
       const pivot = new THREE.Group();
       pivot.position.set(spot.doorX0, 0, spot.frontZ);
-      meshes(doorGeos, pivot);
+      meshes(geos, pivot);
       this.group.add(pivot);
 
       // The padlock hangs on the corridor side of the latch end.
@@ -140,6 +170,47 @@ export class Cells {
       this.doors.push(door);
       this.byLock.set(lockCollider.handle, door);
     });
+    leverGeos ??= leverGeometry();
+    for (const spot of levers) {
+      const root = new THREE.Group();
+      root.position.set(spot.x, spot.y, spot.z);
+      root.rotation.y = spot.yaw;
+      meshes(leverGeos.box, root);
+      const handle = new THREE.Group();
+      meshes(leverGeos.handle, handle);
+      root.add(handle);
+      this.group.add(root);
+      // Big enough to hit from the far end of the corridor.
+      const collider = world.createCollider(RAPIER.ColliderDesc.cuboid(0.4, 0.5, 0.4).setTranslation(spot.x, spot.y, spot.z), this.body);
+      this.levers.push({ spot, handle, collider, pulled: false, throw: 0 });
+    }
+  }
+
+  /** Lever boxes not yet thrown, for prompts. */
+  get leversLeft(): LeverSpot[] {
+    return this.levers.filter((l) => !l.pulled).map((l) => l.spot);
+  }
+
+  /**
+   * A shot hit `collider`: if it was a lever box, the lever's thrown and every locked door it
+   * works swings open. Returns those cells (empty if they were all open already), or null if
+   * it wasn't a lever.
+   */
+  hitLever(collider: RAPIER.Collider): Cell[] | null {
+    const lever = this.levers.find((l) => l.collider.handle === collider.handle);
+    if (!lever || lever.pulled) return null;
+    lever.pulled = true;
+    const opened: Cell[] = [];
+    for (const i of lever.spot.cells) {
+      const door = this.doors[i];
+      if (!door.locked) continue;
+      this.open(door);
+      // The padlocks spring off.
+      door.lockVelocity.set((Math.random() - 0.5) * 2, 3 + Math.random(), -2 - Math.random());
+      door.lockSpin = 8 + Math.random() * 6;
+      opened.push(door);
+    }
+    return opened;
   }
 
   get all(): readonly Cell[] {
@@ -205,6 +276,11 @@ export class Cells {
   }
 
   update(dt: number): void {
+    for (const l of this.levers) {
+      if (!l.pulled || l.throw >= 1) continue;
+      l.throw = Math.min(1, l.throw + dt * 5);
+      l.handle.rotation.z = Math.PI * 0.8 * l.throw; // thrown over and down
+    }
     for (const d of this.doors) {
       if (d.locked) continue;
       if (d.swing !== d.swingTo) {

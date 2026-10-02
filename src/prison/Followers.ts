@@ -31,7 +31,7 @@ const PERSONAL_SPACE = 0.95;
 /** In sight of the player (and this close), followers gather round him instead of walking the trail. */
 const DIRECT_RANGE = 30;
 /** The first to reach him stops this far off, the rest a bit further each, so they gather in a loose crowd. */
-const CROWD_NEAR = 1.6;
+const CROWD_NEAR = 2.2;
 const CROWD_SPREAD = 0.9;
 /** Rejoining the trail only looks this many crumbs back (older bits may loop the long way round). */
 const REJOIN_LOOKBACK = 200;
@@ -64,6 +64,14 @@ const UP = new THREE.Vector3(0, 1, 0);
 /** How often jobs are handed out, how far anyone's sent, and how many carry guards at once. */
 const DISPATCH_EVERY = 0.5;
 const JOB_RANGE = 45;
+/** Carriers are sent from further: a guard left lying across the prison still gets collected. */
+const CARRY_RANGE = 90;
+/**
+ * The over-the-shoulder camera sits behind the player: the squad keeps this far from it (and
+ * from the point halfway to it), and anyone who still ends up right in front of it is hidden.
+ */
+const CAMERA_ROOM = 2;
+const HIDE_NEAR_CAMERA = 1.3;
 const MAX_CARRIERS = 2;
 /** A medic patches someone up in this long; the player can help a friend up by standing by him this long. */
 const TREAT_TIME = 2.2;
@@ -96,6 +104,8 @@ export interface SquadWorld {
   nav: NavGraph;
   /** Is there a clear line from `a` to `b` (walls and bars, not people)? */
   sees(a: THREE.Vector3, b: THREE.Vector3): boolean;
+  /** Where the camera is (the squad keeps out of its way). */
+  camera: THREE.Vector3;
 }
 
 type State = 'caged' | 'leaving' | 'following' | 'holding';
@@ -603,8 +613,8 @@ export class Followers {
       if (carrying >= MAX_CARRIERS) break;
       const cell = this.cellFor(guard, world);
       if (!cell) break;
-      const carrier = this.nearestFree(guard.pos, (p) => !p.medic);
-      if (!carrier) break;
+      const carrier = this.nearestFree(guard.pos, (p) => !p.medic, CARRY_RANGE);
+      if (!carrier) continue;
       const target = new THREE.Vector2(guard.pos.x, guard.pos.z);
       const path = world.nav.path({ x: carrier.pos.x, z: carrier.pos.z }, { x: guard.pos.x, z: guard.pos.z });
       if (!path) continue;
@@ -616,9 +626,9 @@ export class Followers {
   }
 
   /** The nearest one of the squad who's free and `fits`, within reach of `at`. */
-  private nearestFree(at: THREE.Vector3, fits: (p: Prisoner) => boolean): Prisoner | null {
+  private nearestFree(at: THREE.Vector3, fits: (p: Prisoner) => boolean, range = JOB_RANGE): Prisoner | null {
     let best: Prisoner | null = null;
-    let bestD = JOB_RANGE;
+    let bestD = range;
     for (const p of this.squad) {
       if (!p.free || !fits(p)) continue;
       const d = Math.hypot(p.pos.x - at.x, p.pos.z - at.z);
@@ -867,6 +877,10 @@ export class Followers {
       if (!busy) {
         for (const o of this.squad) if (o !== p && !o.down) push(o.pos.x, o.pos.z, PERSONAL_SPACE);
         push(player.x, player.z, PERSONAL_SPACE + 0.2);
+        // Out of the camera's way: off the spot it's at, and off the line from it to the player.
+        const cam = world.camera;
+        push(cam.x, cam.z, CAMERA_ROOM);
+        push((cam.x + player.x) / 2, (cam.z + player.z) / 2, CAMERA_ROOM * 0.75);
       }
       p.move(vx, vz, dt);
     }
@@ -876,5 +890,6 @@ export class Followers {
     if (p.velocity.length() > 0.6) p.yaw = Math.atan2(-p.velocity.x, -p.velocity.y);
     else if (p.state !== 'caged' && !p.job && !p.target) p.yaw = Math.atan2(-(player.x - p.pos.x), -(player.z - p.pos.z));
     p.pose(dt);
+    p.root.visible = Math.hypot(world.camera.x - p.pos.x, world.camera.y - p.pos.y - 1, world.camera.z - p.pos.z) > HIDE_NEAR_CAMERA;
   }
 }
