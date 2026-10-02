@@ -89,16 +89,25 @@ export class PlayerSoldier {
   }
 
   /** Puts him straight back on his feet at (x, z), facing `yaw`. */
-  teleport(x: number, z: number, yaw: number): void {
-    this.body.setNextKinematicTranslation({ x, y: 0.9, z });
-    this.body.setTranslation({ x, y: 0.9, z }, true);
-    this.pos.set(x, 0, z);
+  teleport(x: number, z: number, yaw: number, y = 0): void {
+    this.body.setNextKinematicTranslation({ x, y: y + 0.9, z });
+    this.body.setTranslation({ x, y: y + 0.9, z }, true);
+    this.pos.set(x, y, z);
     this.yaw = yaw;
     this.pitch = 0;
     this.velocity.set(0, 0, 0);
     this.fallSpeed = 0;
     this.downFor = 0;
     this.health = MAX_HEALTH;
+    this.applyTransform(0);
+  }
+
+  /** Mid-climb: drawn at `at` facing `yaw`, not moving under his own steam (the game moves him). */
+  climbAt(at: THREE.Vector3, yaw: number): void {
+    this.pos.copy(at);
+    this.yaw = yaw;
+    this.pitch = 0;
+    this.velocity.set(0, 0, 0);
     this.applyTransform(0);
   }
 

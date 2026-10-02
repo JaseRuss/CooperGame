@@ -71,6 +71,12 @@ const CARRY_RANGE = 90;
  * from the point halfway to it), and anyone who still ends up right in front of it is hidden.
  */
 const CAMERA_ROOM = 2;
+/**
+ * How many follow the player: the four buddies, the two medics and a couple of others. Anyone
+ * else freed stays behind to hold the prison: guarding the cells with captured guards in them,
+ * or securing the doorways.
+ */
+const SQUAD_SIZE = 8;
 const HIDE_NEAR_CAMERA = 1.3;
 const MAX_CARRIERS = 2;
 /** A medic patches someone up in this long; the player can help a friend up by standing by him this long. */
@@ -92,6 +98,8 @@ export interface PrisonerSpot {
   medic: boolean;
   /** The way out of his cell once it's open: inside the door, then out in the corridor. */
   exits: THREE.Vector2[];
+  /** The way out through his cell's vent instead (into the pipe chase), if it has one. */
+  ventExits?: THREE.Vector2[];
 }
 
 /** What the squad needs to know about the rest of the prison each frame. */
@@ -106,9 +114,30 @@ export interface SquadWorld {
   sees(a: THREE.Vector3, b: THREE.Vector3): boolean;
   /** Where the camera is (the squad keeps out of its way). */
   camera: THREE.Vector3;
+  /** Sneaking out (the escape): nobody opens fire. */
+  readonly quiet: boolean;
+  /** Doorways for those staying behind to secure, most important first. */
+  doorPosts: DoorPost[];
 }
 
-type State = 'caged' | 'leaving' | 'following' | 'holding';
+type State = 'caged' | 'leaving' | 'following' | 'holding' | 'garrison';
+
+/** A post for one of those holding the prison: outside a cell full of captured guards, or by a doorway. */
+interface Post {
+  key: string;
+  kind: 'cell' | 'door';
+  x: number;
+  z: number;
+  yaw: number;
+}
+
+/** A doorway to secure (a post either side of it), from the facility's layout. */
+export interface DoorPost {
+  x: number;
+  z: number;
+  /** Which way the man on it faces (out through the doorway). */
+  yaw: number;
+}
 
 /** Someone being patched up: a downed prisoner, or the player. */
 type Patient = Prisoner | 'player';
@@ -178,6 +207,12 @@ class Prisoner {
   /** The medic on his way to him. */
   healer: Prisoner | null = null;
   job: Job | null = null;
+  /** Climbing up or down after the player: where he comes out, and in how long. */
+  climb: { to: THREE.Vector3; in: number } | null = null;
+  /** Staying behind to hold the prison (not following), on this post, and the way there. */
+  stays = false;
+  post: Post | null = null;
+  postPath: THREE.Vector2[] = [];
   fireTimer = Math.random() * FIRE_EVERY;
   scanTimer = Math.random() * SCAN_EVERY;
   target: Guard | null = null;
@@ -236,10 +271,10 @@ class Prisoner {
     if (dt > 0) this.velocity.set(m.x / dt, m.z / dt);
   }
 
-  teleport(x: number, z: number): void {
-    this.body.setTranslation({ x, y: 0.9, z }, true);
-    this.body.setNextKinematicTranslation({ x, y: 0.9, z });
-    this.pos.set(x, 0, z);
+  teleport(x: number, z: number, y = 0): void {
+    this.body.setTranslation({ x, y: y + 0.9, z }, true);
+    this.body.setNextKinematicTranslation({ x, y: y + 0.9, z });
+    this.pos.set(x, y, z);
     this.velocity.set(0, 0);
     this.fallSpeed = 0;
   }
@@ -318,14 +353,19 @@ export class Followers {
     }
   }
 
-  /** How many are out of their cells. */
+  /** How many are out of their cells and following the player. */
   get count(): number {
-    return this.squad.length;
+    return this.squad.filter((p) => !p.stays).length;
   }
 
-  /** Out of their cells and on their feet. */
+  /** Following the player and on their feet. */
   get standing(): number {
-    return this.squad.filter((p) => !p.down).length;
+    return this.squad.filter((p) => !p.stays && !p.down).length;
+  }
+
+  /** Out, but staying behind to hold the prison. */
+  get onGuard(): number {
+    return this.squad.filter((p) => p.stays).length;
   }
 
   get isHolding(): boolean {
@@ -381,18 +421,36 @@ export class Followers {
     }
   }
 
-  /** The cell's door is open: everyone inside cheers and heads out. Returns the buddies among them. */
-  release(cell: number): number[] {
+  /**
+   * The cell's door (or its vent) is open: everyone inside cheers and heads out. Returns the
+   * buddies among them.
+   */
+  release(cell: number, viaVent = false): number[] {
     const freed: number[] = [];
+    this.stayedBehind = 0;
     for (const p of this.all) {
       if (p.spot.cell !== cell || p.state !== 'caged') continue;
+      if (viaVent && p.spot.ventExits) p.exits = p.spot.ventExits.map((e) => e.clone());
       p.state = 'leaving';
       p.cheer = CHEER_TIME + Math.random() * 0.3;
       this.squad.push(p);
       if (p.spot.buddy !== null) freed.push(p.spot.buddy);
+      // Only so many follow. Buddies and medics always do (if the squad's full, someone else
+      // steps out of it to hold the prison instead).
+      if (this.count <= SQUAD_SIZE) continue;
+      const vip = (q: Prisoner) => q.spot.buddy !== null || q.medic;
+      const stepsOut = vip(p) ? [...this.squad].reverse().find((q) => !q.stays && !vip(q)) : p;
+      if (stepsOut) {
+        stepsOut.stays = true;
+        if (stepsOut.state === 'following' || stepsOut.state === 'holding') stepsOut.state = 'garrison';
+        this.stayedBehind++;
+      }
     }
     return freed;
   }
+
+  /** How many of those just released are staying behind to hold the prison. */
+  stayedBehind = 0;
 
   /**
    * A guard's shot hit `collider`: if it was one of the squad on his feet, he takes the hit.
@@ -431,14 +489,36 @@ export class Followers {
     this.trail.push(new THREE.Vector2(at.x, at.z));
     this.playerHealer = null;
     this.squad.forEach((p, i) => {
-      if (p.state === 'caged') return;
+      if (p.state === 'caged' || p.stays) return;
       this.endJob(p, world);
       if (p.down) this.revive(p);
-      p.teleport(at.x + Math.sin(i * 2.4) * 0.4, at.z + Math.cos(i * 2.4) * 0.4);
+      p.teleport(at.x + Math.sin(i * 2.4) * 0.4, at.z + Math.cos(i * 2.4) * 0.4, at.y);
+      p.climb = null;
       p.exits.length = 0;
       p.cursor = 0;
       p.cheer = 0;
       if (p.state === 'leaving') p.state = this.holding ? 'holding' : 'following';
+    });
+  }
+
+  /**
+   * The player's climbed up (or down) to `to`: everyone out of the cells climbs after him, one
+   * after another, and comes out there. Anyone down gets up; jobs are dropped.
+   */
+  climbAfter(to: THREE.Vector3, yaw: number, world: SquadWorld): void {
+    // The trail starts again where he comes out.
+    this.trail.length = 0;
+    this.trail.push(new THREE.Vector2(to.x, to.z));
+    this.squad.forEach((p, i) => {
+      if (p.stays) return;
+      p.cursor = 0;
+      this.endJob(p, world);
+      if (p.down) this.revive(p);
+      // Out a couple of metres ahead of him (not on top of him, or in front of the camera).
+      const ahead = 2.5 + Math.floor(i / 3) * 1.2;
+      const side = ((i % 3) - 1) * 1.2;
+      const at = new THREE.Vector3(to.x - Math.sin(yaw) * ahead + Math.cos(yaw) * side, to.y, to.z - Math.cos(yaw) * ahead - Math.sin(yaw) * side);
+      p.climb = { to: at, in: 1.2 + i * 0.5 };
     });
   }
 
@@ -464,6 +544,21 @@ export class Followers {
     // are already gathering round him, so the rest close up behind.
     const onTrail = this.squad.filter((p) => p.state === 'following' && !p.direct && p.free);
     for (const p of this.all) {
+      if (p.climb) {
+        // Climbing after the player: out of sight until he comes out at the top (or bottom).
+        p.climb.in -= dt;
+        p.root.visible = false;
+        if (p.climb.in > 0) continue;
+        p.teleport(p.climb.to.x, p.climb.to.z, p.climb.to.y);
+        p.climb = null;
+        p.cheer = 0;
+        p.exits.length = 0;
+        if (p.state === 'leaving') p.state = 'following';
+        if (p.state === 'following') this.join(p);
+        p.pose(0);
+        p.root.visible = true;
+        continue;
+      }
       if (p.down) {
         this.lieDown(p, world, dt);
         continue;
@@ -477,12 +572,20 @@ export class Followers {
       } else if (p.state === 'leaving') {
         if (p.exits.length && Math.hypot(p.exits[0].x - p.pos.x, p.exits[0].y - p.pos.z) < 0.5) p.exits.shift();
         if (p.exits.length) goal = p.exits[0];
+        else if (p.stays) p.state = 'garrison';
         else if (this.holding) p.state = 'holding';
         else this.join(p);
       } else if (p.job) {
         const step = this.work(p, world, dt);
         goal = step.goal;
         arrive = step.arrive;
+      } else if (p.state === 'garrison') {
+        // To his post (once he's been given one) and stand there.
+        if (p.post) {
+          const step = this.followPath(p, p.postPath, new THREE.Vector2(p.post.x, p.post.z), 0.3);
+          goal = step.goal;
+          arrive = step.arrive;
+        }
       } else if (p.state === 'following') {
         const slot = Math.max(0, last - Math.ceil((FIRST_GAP + place * GAP) / SPACING));
         p.shortcutTimer -= dt;
@@ -511,10 +614,10 @@ export class Followers {
         }
       }
       this.steer(p, goal, arrive, world, dt);
-      if (p.free && p.state === 'following') this.unstick(p, goal, arrive, last, place, dt, world);
+      if ((p.free && p.state === 'following') || (p.state === 'garrison' && p.post)) this.unstick(p, goal, arrive, last, place, dt, world);
       else if (p.job) this.unstick(p, goal, arrive, last, place, dt, world);
       else p.stuckFrom.set(p.pos.x, p.pos.z);
-      if (p.free) this.fight(p, world, dt, shots);
+      if (p.free && !world.quiet) this.fight(p, world, dt, shots);
     }
     return shots;
   }
@@ -589,8 +692,43 @@ export class Followers {
 
   // ---------- jobs: carrying guards to the cells, patching people up ----------
 
-  /** Hands out jobs: medics to whoever's down, carriers to downed guards. */
+  /**
+   * Gives those holding the prison their posts: first one outside each cell with captured
+   * guards in it, then the doorways. A cell that needs guarding takes a man off a doorway if
+   * there's nobody spare.
+   */
+  private assignPosts(world: SquadWorld): void {
+    const garrison = this.squad.filter((p) => p.stays && p.state === 'garrison');
+    if (!garrison.length) return;
+    const posts: Post[] = [];
+    for (const c of world.cells.all) {
+      if (c.guards === 0) continue;
+      posts.push({ key: `cell${c.index}`, kind: 'cell', x: c.spot.doorX1 + 0.7, z: c.spot.frontZ - 1.5, yaw: Math.PI });
+    }
+    world.doorPosts.forEach((d, i) => posts.push({ key: `door${i}`, kind: 'door', x: d.x, z: d.z, yaw: d.yaw }));
+    for (const post of posts) {
+      if (garrison.some((p) => p.post?.key === post.key)) continue;
+      const spare = garrison.filter((p) => !p.post || (post.kind === 'cell' && p.post.kind === 'door'));
+      // Someone with no post first; only then a man off a doorway.
+      const pool = spare.some((p) => !p.post) ? spare.filter((p) => !p.post) : spare;
+      let best: Prisoner | null = null;
+      let bestD = Infinity;
+      for (const p of pool) {
+        const d = Math.hypot(p.pos.x - post.x, p.pos.z - post.z);
+        if (d < bestD) {
+          bestD = d;
+          best = p;
+        }
+      }
+      if (!best) continue;
+      best.post = post;
+      best.postPath = world.nav.path({ x: best.pos.x, z: best.pos.z }, { x: post.x, z: post.z }) ?? [new THREE.Vector2(post.x, post.z)];
+    }
+  }
+
+  /** Hands out jobs: medics to whoever's down, carriers to downed guards, and posts to those holding the prison. */
   private dispatch(world: SquadWorld): void {
+    this.assignPosts(world);
     // Medics first: the player, then the squad, nearest medic to each.
     const patients: Patient[] = [];
     if (world.playerDown && !this.playerHealer) patients.push('player');
@@ -748,6 +886,7 @@ export class Followers {
       job.patient.healer = null;
     }
     if (!p.down && p.state === 'following') this.join(p);
+    if (p.state === 'garrison' && p.post) p.postPath = world.nav.path({ x: p.pos.x, z: p.pos.z }, { x: p.post.x, z: p.post.z }) ?? [new THREE.Vector2(p.post.x, p.post.z)];
   }
 
   /** Shuts cells on the guards inside once nobody's carrying another in and the doorway's clear. */
@@ -776,6 +915,16 @@ export class Followers {
     p.stuckWanted = false;
     p.stuckFrom.set(p.pos.x, p.pos.z);
     if (!p.strikes) return;
+    if (!p.job && p.state === 'garrison' && p.post) {
+      // On his way to his post: plan the way again, and as a last resort hop to the next waypoint.
+      if (p.strikes >= STUCK_WARP && p.postPath.length) {
+        p.teleport(p.postPath[0].x, p.postPath[0].y);
+        p.strikes = 0;
+      } else {
+        p.postPath = world.nav.path({ x: p.pos.x, z: p.pos.z }, { x: p.post.x, z: p.post.z }) ?? [new THREE.Vector2(p.post.x, p.post.z)];
+      }
+      return;
+    }
     const job = p.job;
     if (job) {
       // On a job: plan the way again, and as a last resort hop to the next waypoint.
@@ -888,7 +1037,8 @@ export class Followers {
     if (p.tag) p.tag.visible = this.tagsOn && Math.hypot(player.x - p.pos.x, player.z - p.pos.z) > 3;
     // Face where he's going, or the player when he's stood still.
     if (p.velocity.length() > 0.6) p.yaw = Math.atan2(-p.velocity.x, -p.velocity.y);
-    else if (p.state !== 'caged' && !p.job && !p.target) p.yaw = Math.atan2(-(player.x - p.pos.x), -(player.z - p.pos.z));
+    else if (p.state === 'garrison' && p.post && !p.job && !p.target) p.yaw = p.post.yaw;
+    else if (p.state !== 'caged' && p.state !== 'garrison' && !p.job && !p.target) p.yaw = Math.atan2(-(player.x - p.pos.x), -(player.z - p.pos.z));
     p.pose(dt);
     p.root.visible = Math.hypot(world.camera.x - p.pos.x, world.camera.y - p.pos.y - 1, world.camera.z - p.pos.z) > HIDE_NEAR_CAMERA;
   }
