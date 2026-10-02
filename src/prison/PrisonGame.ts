@@ -9,7 +9,8 @@ import { ImpactEffects } from '../combat/ImpactEffects';
 import { JamCannon } from '../combat/JamCannon';
 import { loadSettings, saveSettings, AIM_SPEED_SCALE, GRAPHICS_QUALITY, type Settings } from '../core/Settings';
 import { MISSION, startMission } from '../core/config';
-import { Facility, type CellSpot, type ZoneId } from './Facility';
+import { Facility, ROOF_TOP, type ClimbSpot, type FacilityLayout, type ZoneId } from './Facility';
+import { Searchlights } from './Searchlights';
 import { PlayerSoldier, MAX_HEALTH } from './PlayerSoldier';
 import { ShoulderCam } from './ShoulderCam';
 import { Cells } from './Cells';
@@ -30,9 +31,21 @@ const TRACER_TIME = 0.06;
  * Who's locked in each cell: Cell Block A (the first is the player's own), Cell Block B, then
  * the punishment hut. Which cells hold the buddies (cell: buddy), and the medics.
  */
-const CELL_PRISONERS = [0, 2, 1, 2, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1, 1];
-const BUDDY_CELLS: Record<number, number> = { 4: 0, 9: 1, 12: 2, 14: 3 };
-const MEDIC_CELLS = [2, 6, 11];
+const CELL_PRISONERS = [0, 1, 1, 2, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1, 1];
+const BUDDY_CELLS: Record<number, number> = { 1: 0, 2: 1, 9: 2, 14: 3 };
+const MEDIC_CELLS = [4, 11];
+/**
+ * The opening, after Alcatraz's 1962 escape: out through the vent at the back of the cell,
+ * along the pipe chase (letting Keston and Max out through theirs), up the pipes to the roof,
+ * across it past the searchlights and down the bakery pipe. From there it's a fight.
+ */
+type EscapeStage = 'cell' | 'pipechase' | 'roof' | 'out';
+/** Seconds to climb up the pipes, and down the bakery pipe. */
+const CLIMB_UP_TIME = 3.2;
+const CLIMB_DOWN_TIME = 2.8;
+/** He starts a climb when he's this close to the foot (or top) of it. */
+const CLIMB_REACH = 1.1;
+const VENT_PROMPT_RANGE = 4;
 /** Prompts for the lever box, a tower and the flag show this close. */
 const LEVER_PROMPT_RANGE = 16;
 const TOWER_PROMPT_RANGE = 14;
@@ -118,7 +131,13 @@ export class PrisonGame {
   private time = 0;
   private squadWorld!: SquadWorld;
   /** Where he gets back up: his cell, until he's out of it. */
-  private checkpoint = { x: 0, z: 0, yaw: 0 };
+  private checkpoint: { x: number; z: number; yaw: number; y?: number } = { x: 0, z: 0, yaw: 0 };
+  private escape: EscapeStage = 'cell';
+  private searchlights!: Searchlights;
+  /** Mid-climb: the way he goes (waypoints), how far along (0..1), how long it takes, which way he faces, and what happens at the end. */
+  private climbing: { path: THREE.Vector3[]; t: number; duration: number; yaw: number; spot: ClimbSpot; up: boolean } | null = null;
+  /** How close the searchlights are to spotting him (0..1). */
+  private spotted = 0;
   /** The jam riot cannon's tank (0..1) and the time to its next glob. */
   private jamTank = 1;
   private jamCooldown = 0;
@@ -179,9 +198,9 @@ export class PrisonGame {
     this.player = new PlayerSoldier(this.world, layout.start.x, layout.start.z, layout.start.yaw);
     this.scene.add(this.player.root);
     this.cam = new ShoulderCam(this.camera, this.world);
-    this.cells = new Cells(this.world, layout.cells, layout.levers);
+    this.cells = new Cells(this.world, layout.cells, layout.levers, layout.vents);
     this.scene.add(this.cells.group);
-    this.followers = new Followers(this.world, prisonerSpots(layout.cells), this.settings.buddyNames);
+    this.followers = new Followers(this.world, prisonerSpots(layout), this.settings.buddyNames);
     this.scene.add(this.followers.group);
     this.guards = new Guards(this.world, layout.guards);
     this.scene.add(this.guards.group);
@@ -189,6 +208,8 @@ export class PrisonGame {
     this.scene.add(this.towers.group);
     this.flag = new Flag(this.world, layout.flag);
     this.scene.add(this.flag.mesh);
+    this.searchlights = new Searchlights(this.world, layout.searchlights, ROOF_TOP);
+    this.scene.add(this.searchlights.group);
     this.checkpoint = { ...layout.start };
     // Colliders added this frame aren't in the query pipeline until a step (and the nav graph needs them).
     this.world.step();
@@ -210,6 +231,10 @@ export class PrisonGame {
       nav: this.nav,
       sees: (a, b) => this.sees(a, b),
       camera: this.camera.position,
+      doorPosts: layout.doorPosts,
+      get quiet() {
+        return game.escape !== 'out';
+      },
     };
 
     this.hud.setOnFoot(CONTROLS);
@@ -224,7 +249,9 @@ export class PrisonGame {
 
     this.loadingLabel.remove();
     this.ready = true;
-    this.hud.showBanner('BONUS: PRISON BREAK', "They've locked you up and taken your tank! Shoot the padlock to get out");
+    this.hud.showBanner('BONUS: PRISON BREAK', "They've locked you up and taken your tank! The vent at the back of your cell is loose...");
+    // Sneaking out to the night tune; the prison's own song once it turns into a fight.
+    this.sound.music.setNight(true);
     this.sound.music.start();
     this.clock.start();
     if (import.meta.env.DEV) (window as unknown as { prison: PrisonGame }).prison = this;
@@ -286,6 +313,13 @@ export class PrisonGame {
     this.cam.addShake(0.08);
     this.addTracer(muzzle, end, this.friendTracer);
     if (!hit) return;
+    const vented = this.cells.hitVent(hit.collider);
+    if (vented) {
+      this.sound.play('clang', { at: end, volume: 0.9, rate: 0.9 });
+      this.impacts.dustPuff(end);
+      this.onVentOpened(vented);
+      return;
+    }
     const cell = this.cells.hit(hit.collider, dir);
     if (cell) {
       this.sound.play('clang', { at: end, volume: 0.9, rate: 1.1 });
@@ -412,17 +446,84 @@ export class PrisonGame {
 
   private toCheckpoint(): void {
     const c = this.checkpoint;
-    this.player.teleport(c.x, c.z, c.yaw);
+    this.player.teleport(c.x, c.z, c.yaw, c.y ?? 0);
     this.followers.gather(this.player.position, this.squadWorld);
+  }
+
+  /** A vent grille's knocked out: his own (he's out into the pipe chase), or a buddy's. */
+  private onVentOpened(cell: Cell): void {
+    if (cell.index === 0) {
+      this.escape = 'pipechase';
+      this.checkpoint = { ...this.facility.layout.pipeChaseCheckpoint };
+      this.hud.showBanner('THROUGH THE VENT!', 'You\'re in the pipe chase behind the cells. Let your buddies out of theirs, then climb the pipes at the far end');
+      return;
+    }
+    const names = this.settings.buddyNames;
+    const buddies = this.followers.release(cell.index, true);
+    if (buddies.length) this.hud.showBanner(`${buddies.map((b) => names[b].toUpperCase()).join(' & ')} IS OUT!`, 'Squeezing out through the vent to join you');
+    this.sound.play('uiConfirm', { volume: 0.6 });
+  }
+
+  /** Starts a climb: up the pipes to the roof, or down the bakery pipe. */
+  private startClimb(spot: ClimbSpot, up: boolean): void {
+    const f = spot.from;
+    const t = spot.to;
+    const path = up
+      ? [new THREE.Vector3(f.x, f.y, f.z), new THREE.Vector3(f.x + 0.2, t.y - 0.4, f.z), new THREE.Vector3(t.x, t.y, t.z)]
+      : [new THREE.Vector3(f.x, f.y, f.z), new THREE.Vector3(f.x - 1.1, f.y + 0.3, f.z), new THREE.Vector3(f.x - 1.1, 0.4, f.z), new THREE.Vector3(t.x, t.y, t.z)];
+    // Facing the pipes (east, +X) going up; facing the wall (east) going down too.
+    this.climbing = { path, t: 0, duration: up ? CLIMB_UP_TIME : CLIMB_DOWN_TIME, yaw: -Math.PI / 2, spot, up };
+    this.sound.play('clang', { volume: 0.4, rate: 1.4 });
+  }
+
+  /** One frame of a climb; at the end he's off it and the squad climbs after him. */
+  private updateClimb(dt: number): void {
+    const c = this.climbing;
+    if (!c) return;
+    c.t = Math.min(1, c.t + dt / c.duration);
+    // Along the waypoints, each leg taking its share of the time.
+    const legs = c.path.length - 1;
+    const f = c.t * legs;
+    const i = Math.min(legs - 1, Math.floor(f));
+    const at = c.path[i].clone().lerp(c.path[i + 1], f - i);
+    this.player.climbAt(at, c.yaw);
+    // Going up through the roof ventilator: a quick blackout as he squeezes through.
+    if (c.up) this.hud.setFade(c.t > 0.7 ? Math.min(1, (c.t - 0.7) * 6) : 0, '#000000');
+    if (Math.floor(c.t * 8) !== Math.floor((c.t - dt / c.duration) * 8)) this.sound.play('thud', { volume: 0.2, rate: 2, minGap: 0.1 });
+    if (c.t < 1) return;
+    this.climbing = null;
+    const to = c.spot.to;
+    this.player.teleport(to.x, to.z, to.yaw, to.y);
+    this.followers.climbAfter(new THREE.Vector3(to.x, to.y, to.z), to.yaw, this.squadWorld);
+    this.checkpoint = { ...to };
+    if (c.up) {
+      this.hud.setFade(0);
+      this.escape = 'roof';
+      this.searchlights.setActive(true);
+      this.hud.showBanner('ON THE ROOF!', 'Keep out of the searchlights and get to the bakery pipe at the far end');
+    } else {
+      this.escape = 'out';
+      this.searchlights.setActive(false);
+      this.sound.music.setNight(false);
+      this.sound.music.stinger();
+      this.hud.showBanner('DOWN THE BAKERY PIPE!', "That's how they got out of Alcatraz. Here it turns into a fight: take the prison!");
+    }
+  }
+
+  /** On the roof: caught in a searchlight, he's back at the ventilator. */
+  private updateSearchlights(dt: number): void {
+    const p = this.player.position;
+    this.spotted = this.searchlights.update(dt, p, this.escape === 'roof' && this.facility.layout.onRoof(p.x, p.y, p.z));
+    if (this.spotted < 1) return;
+    this.sound.music.alarm();
+    this.hud.showBanner('SPOTTED!', 'Back to the ventilator. Keep to the shadows behind the vents and the skylights');
+    this.searchlights.reset();
+    this.spotted = 0;
+    this.toCheckpoint();
   }
 
   /** Cells just opened (one padlock, or a whole block from its lever): the prisoners come out. */
   private onCellsOpened(cells: Cell[], byLever = false): void {
-    if (cells.some((c) => c.index === 0)) {
-      this.checkpoint = { ...this.facility.layout.corridorCheckpoint };
-      this.hud.showBanner("YOU'RE OUT!", 'Watch out for the guards! Shoot the padlocks on the other cells and free everyone');
-      return;
-    }
     const names = this.settings.buddyNames;
     const buddies = cells.flatMap((c) => this.followers.release(c.index));
     const freed = buddies.map((b) => names[b]).join(' & ');
@@ -431,6 +532,8 @@ export class PrisonGame {
       this.hud.showBanner('EVERY DOOR IS OPEN!', `${out} prisoners are out${buddies.length ? `, ${freed} too` : ''}!`);
     } else if (buddies.length) {
       this.hud.showBanner(`${freed.toUpperCase()} IS FREE!`, 'Your buddies will help you get your tank back');
+    } else if (this.followers.stayedBehind) {
+      this.hud.showCallout(`+${out} · ${this.followers.stayedBehind} STAY TO HOLD THE PRISON`, '#9be27a');
     } else {
       this.hud.showCallout(`+${out} · SQUAD ${this.followers.count}`, '#9be27a');
     }
@@ -445,7 +548,7 @@ export class PrisonGame {
   /** The cells in a part of the prison, and how many are open. */
   private cellsIn(zone: ZoneId): { open: number; total: number } {
     const cells = this.cells.all.filter((c) => c.spot.block === zone && c.index !== 0);
-    return { open: cells.filter((c) => !c.locked).length, total: cells.length };
+    return { open: cells.filter((c) => !c.locked || c.vented).length, total: cells.length };
   }
 
   /** Is that part of the prison ours yet? */
@@ -477,11 +580,10 @@ export class PrisonGame {
     const p = this.player.position;
     const down = this.player.downFor;
     const cells = this.cells.all;
-    const own = cells[0];
     const names = this.settings.buddyNames;
     const buddies = this.followers.buddiesHere;
     const freed = this.followers.buddiesFreed;
-    const nearLock = cells.some((c) => c.locked && Math.hypot(c.lockAt.x - p.x, c.lockAt.z - p.z) < LOCK_PROMPT_RANGE);
+    const nearLock = cells.some((c) => c.locked && c.padlocked && Math.hypot(c.lockAt.x - p.x, c.lockAt.z - p.z) < LOCK_PROMPT_RANGE);
     const nearLever = this.cells.leversLeft.some((l) => Math.hypot(l.x - p.x, l.z - p.z) < LEVER_PROMPT_RANGE);
     const nearTower = this.towers.up.some((t) => Math.hypot(t.x - p.x, t.z - p.z) < TOWER_PROMPT_RANGE);
     const flagSpot = this.facility.layout.flag;
@@ -490,10 +592,23 @@ export class PrisonGame {
     const total = this.guards.total;
     const friendDown = this.player.isDown ? null : this.followers.downNear(p, 6);
     let prompt: string | null = null;
-    if (down > 0) {
+
+    const ventNear = this.cells.ventsLeft.find((v) => v.cell !== 0 && Math.hypot((v.x0 + v.x1) / 2 - p.x, v.z - p.z) < VENT_PROMPT_RANGE);
+    if (this.climbing) {
+      prompt = this.climbing.up ? 'Climbing up the pipes…' : 'Sliding down the bakery pipe…';
+    } else if (this.escape === 'roof' && this.spotted > 0) {
+      prompt = "You're in the light! Get out of it!";
+    } else if (down > 0) {
       prompt = this.followers.medicComing ? 'Knocked down! Hang on, a medic is coming…' : `Knocked down! Back on your feet in ${Math.ceil(down)}…`;
-    } else if (own.locked) {
-      prompt = 'Shoot the padlock on your cell door!';
+    } else if (this.escape === 'cell') {
+      prompt = 'The grille at the back of your cell is loose: shoot it out!';
+    } else if (ventNear) {
+      const buddy = BUDDY_CELLS[ventNear.cell];
+      prompt = `Shoot the grille to let ${buddy === undefined ? 'them' : names[buddy]} out`;
+    } else if (this.escape === 'pipechase') {
+      prompt = 'Climb the pipes at the far (east) end of the pipe chase';
+    } else if (this.escape === 'roof') {
+      prompt = 'Keep out of the searchlights! Get to the bakery pipe at the far (west) end';
     } else if (friendDown) {
       const who = friendDown.name ?? 'A friend';
       prompt = friendDown.progress > 0 ? `Helping ${who} up… ${Math.round(friendDown.progress * 100)}%` : `${who} is down: stand right next to them to help them up`;
@@ -507,9 +622,8 @@ export class PrisonGame {
       prompt = 'Shoot their flag off the barracks roof! (Stand back for a clear shot over the edge)';
     }
     return {
-      title: `PRISON BREAK${squad ? ` · SQUAD ${this.followers.standing}${this.followers.isHolding ? ' (HOLDING)' : ''}` : ''}`,
-      objectives: [
-        ...(own.locked ? [{ label: 'Break out of your cell', done: false }] : []),
+      title: `PRISON BREAK${this.escape !== 'out' ? ' · THE ESCAPE' : ''}${squad ? ` · SQUAD ${this.followers.standing}${this.followers.isHolding ? ' (HOLDING)' : ''}` : ''}${this.followers.onGuard ? ` · ${this.followers.onGuard} ON GUARD` : ''}`,
+      objectives: this.escape !== 'out' ? this.escapeObjectives() : [
         ...this.facility.layout.zones.map((z) => ({ label: `${z.name}: ${this.zoneProgress(z.id)}`, done: this.taken.has(z.id) })),
         { label: `Free your buddies (${freed.length} / ${buddies.length})${freed.length ? `: ${freed.map((b) => names[b]).join(', ')}` : ''}`, done: freed.length === buddies.length },
         { label: `Lock the guards in the cells (${this.guards.jailed} / ${total})`, done: this.guards.jailed === total },
@@ -518,6 +632,21 @@ export class PrisonGame {
       downFor: down,
       jam: this.jamTank,
     };
+  }
+
+  /** The checklist while he's escaping (Alcatraz-style), before it turns into a fight. */
+  private escapeObjectives(): { label: string; done: boolean }[] {
+    const names = this.settings.buddyNames;
+    const ventBuddies = this.facility.layout.vents.filter((v) => v.cell !== 0).map((v) => v.cell);
+    const out = ventBuddies.filter((c) => this.cells.all[c].vented).length;
+    const who = ventBuddies.map((c) => names[BUDDY_CELLS[c]]).join(' and ');
+    const stage = ['cell', 'pipechase', 'roof', 'out'].indexOf(this.escape);
+    return [
+      { label: 'Out through the loose vent at the back of your cell', done: stage > 0 },
+      { label: `Let ${who} out through their vents (${out} / ${ventBuddies.length})`, done: out === ventBuddies.length },
+      { label: 'Climb the pipes up to the roof', done: stage > 1 },
+      { label: 'Across the roof without being spotted, and down the bakery pipe', done: stage > 2 },
+    ];
   }
 
   /** What's left to do in a part of the prison, for the HUD's checklist. */
@@ -616,13 +745,28 @@ export class PrisonGame {
       this.downTime += dt;
       if (this.followers.medicComing && this.downTime < MEDIC_WAIT) this.player.downFor = Math.max(this.player.downFor, 0.5);
     }
-    const wasDown = this.player.isDown;
-    if (this.player.step(input, dt)) this.fireRifle();
-    // Back on his feet at the last checkpoint (with the squad) when asked, or when he gets up with nobody having patched him up.
-    if (input.resetPressed || (wasDown && !this.player.isDown && this.player.health === 0)) this.toCheckpoint();
-    this.updateJam(input, dt);
+    const layout = this.facility.layout;
+    const p = this.player.position;
+    if (this.climbing) {
+      this.updateClimb(dt);
+    } else {
+      const wasDown = this.player.isDown;
+      if (this.player.step(input, dt)) this.fireRifle();
+      // Back on his feet at the last checkpoint (with the squad) when asked, or when he gets up with nobody having patched him up.
+      if (input.resetPressed || (wasDown && !this.player.isDown && this.player.health === 0)) this.toCheckpoint();
+      this.updateJam(input, dt);
+      // Up the pipes at the end of the pipe chase; down the bakery pipe from the roof.
+      const near = (s: ClimbSpot) => Math.hypot(p.x - s.from.x, p.z - s.from.z) < CLIMB_REACH && Math.abs(p.y - s.from.y) < 1.5;
+      if (this.escape === 'pipechase' && near(layout.ladder)) this.startClimb(layout.ladder, true);
+      else if (this.escape === 'roof' && near(layout.bakeryPipe)) this.startClimb(layout.bakeryPipe, false);
+    }
+    if (this.escape === 'roof' && !this.climbing) this.updateSearchlights(dt);
+    else this.searchlights.update(dt, p, false);
 
-    const targets = this.player.isDown ? this.followers.targets() : [this.player.position, ...this.followers.targets()];
+    // Nobody on the roof is shot at from the ground (it's a sneaking bit), and nobody mid-climb.
+    const shootable = (at: THREE.Vector3) => !layout.onRoof(at.x, at.y, at.z);
+    const playerTarget = this.player.isDown || this.climbing || !shootable(p) ? [] : [p];
+    const targets = [...playerTarget, ...this.followers.targets().filter(shootable)];
     for (const shot of this.guards.update(dt, targets, (a, b) => this.sees(a, b))) this.resolveShot(shot, 'enemy');
     for (const shot of this.followers.update(dt, this.squadWorld)) this.resolveShot(shot, 'friend');
     this.world.step();
@@ -643,18 +787,21 @@ export class PrisonGame {
     this.impacts.update(dt);
     this.updateTracers(dt);
 
-    const p = this.player.position;
     this.sun.position.set(p.x + 30, p.y + 60, p.z + 20);
     this.sun.target.position.copy(p);
   }
 }
 
 /** Who's in each cell: a couple of prisoners (some sat waiting), the four buddies and three medics. */
-function prisonerSpots(cells: CellSpot[]): PrisonerSpot[] {
+function prisonerSpots(layout: FacilityLayout): PrisonerSpot[] {
   const spots: PrisonerSpot[] = [];
-  cells.forEach((cell, i) => {
+  layout.cells.forEach((cell, i) => {
     const doorX = (cell.doorX0 + cell.doorX1) / 2;
     const exits = [new THREE.Vector2(doorX, cell.frontZ + 0.9), new THREE.Vector2(doorX, cell.frontZ - 1.6)];
+    // Out through the vent at the back instead, into the pipe chase.
+    const vent = layout.vents.find((v) => v.cell === i);
+    const ventX = vent ? (vent.x0 + vent.x1) / 2 : 0;
+    const ventExits = vent ? [new THREE.Vector2(ventX, cell.backZ - 0.9), new THREE.Vector2(ventX, layout.pipeChaseCheckpoint.z)] : undefined;
     for (let j = 0; j < (CELL_PRISONERS[i] ?? 0); j++) {
       spots.push({
         x: cell.minX + 1.4 + j * 1.6,
@@ -664,6 +811,7 @@ function prisonerSpots(cells: CellSpot[]): PrisonerSpot[] {
         buddy: j === 0 && i in BUDDY_CELLS ? BUDDY_CELLS[i] : null,
         medic: MEDIC_CELLS.includes(i) && j === 0,
         exits,
+        ventExits,
       });
     }
   });

@@ -365,30 +365,35 @@ knocked over. Press A or Enter to play again.
 A bonus level on foot. The tan army has locked you up and taken your tank: break out, free
 your buddies and the other prisoners, take over the prison and drive your tank home. So far:
 
-- You start locked in a cell in Cell Block A. Shoot the big brass padlock on the door to get
-  out, then shoot the padlocks on the other cells. Everyone inside cheers and follows you
-  (Keston is in there too; Max and Innes are in Cell Block B). They follow your path round corners and through doors and gather
-  round you when they can see you. Press X to tell them to hold where they are, and X again
-  to follow.
-- Nine **tan guards** hold the corridor and the exercise yard. Your squad shoots back at any
-  guard they can see. Three rifle hits knock a guard over.
+- **The escape**, after the famous 1962 Alcatraz escape (without the digging). You start in a
+  cell with a dummy head on the pillow. The grille at the back of the cell is loose: shoot it
+  out and squeeze into the pipe chase, the narrow passage full of pipes between the two rows of
+  cells. Shoot out the grilles of Keston's and Max's cells next door to let them out, then
+  climb the pipes at the far end up through a ventilator onto the roof. Searchlights sweep the
+  roof: stay out of their pools of light (hide behind the ventilators and the raised skylight
+  roof), or you're spotted and sent back to the ventilator. Slide down the bakery's flue pipe
+  at the far end, and from there it's a fight.
+- **Taking the prison.** Four parts to take, listed top-centre with what's left in each:
+  **Cell Block A** (shoot the padlocks to free the rest of the prisoners; a guard walks the
+  back corridor too), **the yard** (four wooden guard towers with a guard up each: shoot the
+  legs and the tower topples, guard and all), **Cell Block B** in the east wing (Innes is
+  there; shoot the yellow lever box at the end of its corridor and every door opens at once)
+  and **the barracks** in the west wing (shoot their tan flag off the roof and a green one goes
+  up; Jason is in the punishment hut behind it). Each part you take becomes your checkpoint.
+- **Your squad** is the four buddies, two medics and two others: eight follow you. Press X to
+  tell them to hold where they are, and X again to follow. Everyone else you free stays
+  behind to **hold the prison**: one stands guard outside each cell with captured guards in
+  it, and the rest secure the doorways.
+- **Tan guards** shoot at you and the squad, who shoot back. Three rifle hits knock a guard
+  over.
 - The **jam riot cannon** (hold LT / E) sprays strawberry jam at the crosshair, out to about
-  20 m. A guard it lands on is stuck fast and can't shoot, then slips over a few seconds
-  later. It runs out if you hold it down too long and refills when you let go.
-- The prison has four parts to take, listed top-centre with what's left in each:
-  **Cell Block A**, **the yard** (four wooden guard towers with a guard up each: shoot the
-  legs and the tower topples, guard and all), **Cell Block B** in the east wing (shoot the
-  yellow lever box at the end of its corridor and every cell door opens at once) and **the
-  barracks** in the west wing (shoot their tan flag off the roof and a green one goes up;
-  Jason is locked in the punishment hut behind it). Each part you take becomes your
-  checkpoint.
-- Knocked-over guards are **captured**: one of your squad picks him up, carries him over his
+  20 m. A guard it lands on is stuck fast and can't shoot, then slips over. It runs out if
+  you hold it down too long and refills when you let go.
+- Knocked-over guards are **captured**: one of your side picks him up, carries him over his
   head to an empty cell and sits him down inside, and the door swings shut on him.
-- Two of the prisoners are **medics**, with a white helmet band and a red cross on their
-  pack. When one of the squad is knocked down, a medic runs over and patches him up; you
-  can help a friend up yourself by standing right next to him. If you're knocked down and
-  a medic's nearby, they come for you too; otherwise you're back at the last checkpoint.
-  Your health comes back by itself if you keep out of trouble for a few seconds.
+- The two **medics** (white helmet band, red cross on the pack) run to anyone knocked down and
+  patch them up, you included. You can help a friend up yourself by standing right next to
+  them. Your health comes back by itself if you keep out of trouble for a few seconds.
 
 Run about as a green army man (he hops, like all the toy soldiers) and aim over his shoulder.
 Move with the left stick or W A S D, aim with the right stick or mouse, fire with RT or a

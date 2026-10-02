@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { PartBuilder } from '../utils/modelKit';
 import { plastic } from '../utils/plastic';
-import type { CellSpot, LeverSpot } from './Facility';
+import type { CellSpot, LeverSpot, VentSpot } from './Facility';
 
 const STEEL = 0x3e4246;
 const BRASS = 0xd8a93a;
@@ -28,6 +28,18 @@ export interface Cell {
   booked: number;
   /** Where the padlock hangs, for prompts and the HUD. */
   readonly lockAt: THREE.Vector3;
+  /** Has a padlock that can be shot off (the player's own door doesn't: the way out is the vent). */
+  readonly padlocked: boolean;
+  /** Its vent grille's been shot out (the way out of the cell's at the back, into the pipe chase). */
+  vented: boolean;
+}
+
+interface Vent {
+  spot: VentSpot;
+  grille: THREE.Group;
+  collider: RAPIER.Collider | null;
+  /** 0 in place, rising to 1 as it falls flat into the pipe chase. */
+  fall: number;
 }
 
 interface Door extends Cell {
@@ -120,8 +132,9 @@ export class Cells {
   private readonly byLock = new Map<number, Door>();
   private readonly body: RAPIER.RigidBody;
   private readonly levers: Lever[] = [];
+  private readonly vents: Vent[] = [];
 
-  constructor(private readonly world: RAPIER.World, spots: CellSpot[], levers: LeverSpot[] = []) {
+  constructor(private readonly world: RAPIER.World, spots: CellSpot[], levers: LeverSpot[] = [], vents: VentSpot[] = []) {
     this.body = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
     spots.forEach((spot, index) => {
       const width = spot.doorX1 - spot.doorX0;
@@ -131,6 +144,7 @@ export class Cells {
         doorGeos.set(spot.height, geos);
       }
       lockGeos ??= lockGeometry();
+      const padlocked = !spot.noLock;
       const pivot = new THREE.Group();
       pivot.position.set(spot.doorX0, 0, spot.frontZ);
       meshes(geos, pivot);
@@ -141,14 +155,14 @@ export class Cells {
       const lock = new THREE.Group();
       lock.position.copy(lockAt);
       meshes(lockGeos, lock);
-      this.group.add(lock);
+      if (padlocked) this.group.add(lock);
 
       const doorCollider = world.createCollider(
         RAPIER.ColliderDesc.cuboid(width / 2, spot.height / 2, 0.06).setTranslation(spot.doorX0 + width / 2, spot.height / 2, spot.frontZ),
         this.body,
       );
       // Bigger than the lock and right through the door, so it can be shot from inside the cell too.
-      const lockCollider = world.createCollider(RAPIER.ColliderDesc.cuboid(0.24, 0.24, 0.22).setTranslation(lockAt.x, lockAt.y, spot.frontZ), this.body);
+      const lockCollider = padlocked ? world.createCollider(RAPIER.ColliderDesc.cuboid(0.24, 0.24, 0.22).setTranslation(lockAt.x, lockAt.y, spot.frontZ), this.body) : null;
       const door: Door = {
         spot,
         index,
@@ -157,6 +171,8 @@ export class Cells {
         guards: 0,
         booked: 0,
         lockAt,
+        padlocked,
+        vented: false,
         pivot,
         lock,
         doorCollider,
@@ -168,8 +184,32 @@ export class Cells {
         lockLanded: false,
       };
       this.doors.push(door);
-      this.byLock.set(lockCollider.handle, door);
+      if (lockCollider) this.byLock.set(lockCollider.handle, door);
     });
+    for (const spot of vents) {
+      const grille = new THREE.Group();
+      grille.position.set(spot.x0, 0, spot.z + 0.2);
+      const steel = plastic(0x8a9096);
+      const w = spot.x1 - spot.x0;
+      const bar = new THREE.BoxGeometry(1, 1, 1);
+      // A frame, and a grid of slats.
+      for (const [x, y, sx, sy] of [[w / 2, 0.06, w, 0.12], [w / 2, spot.height - 0.06, w, 0.12], [0.06, spot.height / 2, 0.12, spot.height], [w - 0.06, spot.height / 2, 0.12, spot.height]]) {
+        const m = new THREE.Mesh(bar, steel);
+        m.position.set(x, y, 0);
+        m.scale.set(sx, sy, 0.08);
+        grille.add(m);
+      }
+      for (let y = 0.25; y < spot.height - 0.1; y += 0.2) {
+        const m = new THREE.Mesh(bar, steel);
+        m.position.set(w / 2, y, 0);
+        m.scale.set(w - 0.1, 0.05, 0.05);
+        grille.add(m);
+      }
+      this.group.add(grille);
+      // Solid until it's shot out; big enough to hit from either side.
+      const collider = world.createCollider(RAPIER.ColliderDesc.cuboid(w / 2, spot.height / 2, 0.25).setTranslation(spot.x0 + w / 2, spot.height / 2, spot.z + 0.1), this.body);
+      this.vents.push({ spot, grille, collider, fall: 0 });
+    }
     leverGeos ??= leverGeometry();
     for (const spot of levers) {
       const root = new THREE.Group();
@@ -184,6 +224,23 @@ export class Cells {
       const collider = world.createCollider(RAPIER.ColliderDesc.cuboid(0.4, 0.5, 0.4).setTranslation(spot.x, spot.y, spot.z), this.body);
       this.levers.push({ spot, handle, collider, pulled: false, throw: 0 });
     }
+  }
+
+  /** Vent grilles still in place, for prompts. */
+  get ventsLeft(): VentSpot[] {
+    return this.vents.filter((v) => v.collider).map((v) => v.spot);
+  }
+
+  /** A shot hit `collider`: if it was a vent grille, it's knocked out. Returns that cell, or null. */
+  hitVent(collider: RAPIER.Collider): Cell | null {
+    const vent = this.vents.find((v) => v.collider?.handle === collider.handle);
+    if (!vent?.collider) return null;
+    this.world.removeCollider(vent.collider, false);
+    vent.collider = null;
+    vent.fall = 0.001;
+    const cell = this.doors[vent.spot.cell];
+    cell.vented = true;
+    return cell;
   }
 
   /** Lever boxes not yet thrown, for prompts. */
@@ -276,6 +333,13 @@ export class Cells {
   }
 
   update(dt: number): void {
+    for (const v of this.vents) {
+      if (v.fall === 0 || v.fall >= 1) continue;
+      // Knocked out, it falls flat on the pipe chase floor.
+      v.fall = Math.min(1, v.fall + dt * 3.5);
+      v.grille.rotation.x = (Math.PI / 2) * v.fall * v.fall;
+      v.grille.position.y = 0.02 * v.fall;
+    }
     for (const l of this.levers) {
       if (!l.pulled || l.throw >= 1) continue;
       l.throw = Math.min(1, l.throw + dt * 5);
