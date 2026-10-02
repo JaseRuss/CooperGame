@@ -219,6 +219,7 @@ export class Facility {
     this.buildRoof();
     this.buildBakery();
     this.buildMotorPool();
+    this.buildYardDressing();
     this.buildCellBlock(BLOCK_B, 'B');
     this.buildBarracks();
     this.buildHut();
@@ -351,9 +352,70 @@ export class Facility {
   }
 
   /** An outside wall (4 m, with a coping strip along the top) from (x0, z0) to (x1, z1), one of which is the same. */
-  private wall(x0: number, z0: number, x1: number, z1: number): void {
-    this.solid(x0, 0, z0, x1, COMPOUND_WALL, z1, CONCRETE);
-    this.solid(x0 - 0.15, COMPOUND_WALL, z0 - 0.15, x1 + 0.15, COMPOUND_WALL + 0.25, z1 + 0.15, CONCRETE_DARK, false);
+  private wall(x0: number, z0: number, x1: number, z1: number, outside?: { x: number; z: number }): void {
+    const h = COMPOUND_WALL;
+    this.solid(x0, 0, z0, x1, h, z1, CONCRETE);
+    this.solid(x0 - 0.15, h, z0 - 0.15, x1 + 0.15, h + 0.25, z1 + 0.15, CONCRETE_DARK, false);
+    // Cast-concrete panels: a pilaster every few metres on both faces, a seam between each, a footing.
+    const alongX = x1 - x0 > z1 - z0;
+    const len = alongX ? x1 - x0 : z1 - z0;
+    const dark = plastic(CONCRETE_DARK);
+    const seam = plastic(0x86827a);
+    for (let t = 1.5; t < len - 0.5; t += 3) {
+      const pilaster = Math.round((t - 1.5) / 3) % 2 === 0;
+      const cx = alongX ? x0 + t : (x0 + x1) / 2;
+      const cz = alongX ? (z0 + z1) / 2 : z0 + t;
+      const thick = (alongX ? z1 - z0 : x1 - x0) + (pilaster ? 0.3 : 0.04);
+      const w = pilaster ? 0.5 : 0.06;
+      this.parts.add(this.box, pilaster ? dark : seam, cx, h / 2, cz, 0, 0, 0, alongX ? w : thick, pilaster ? h : h - 0.3, alongX ? thick : w);
+    }
+    this.parts.add(this.box, dark, (x0 + x1) / 2, 0.15, (z0 + z1) / 2, 0, 0, 0, alongX ? len : x1 - x0 + 0.2, 0.3, alongX ? z1 - z0 + 0.2 : len);
+    if (outside) this.barbedWire(x0, z0, x1, z1, alongX, outside);
+  }
+
+  /**
+   * Barbed wire along the top of an outside wall: posts leaning out over the outside (the way
+   * `outside` points), three strands, and a coil of razor wire.
+   */
+  private barbedWire(x0: number, z0: number, x1: number, z1: number, alongX: boolean, outside: { x: number; z: number }): void {
+    const top = COMPOUND_WALL + 0.25;
+    const steel = plastic(0x5a5e62);
+    const wire = plastic(0x9aa0a6);
+    const mx = alongX ? 0 : outside.x * ((x1 - x0) / 2);
+    const mz = alongX ? outside.z * ((z1 - z0) / 2) : 0;
+    const cx = (x0 + x1) / 2 + mx;
+    const cz = (z0 + z1) / 2 + mz;
+    const len = alongX ? x1 - x0 : z1 - z0;
+    // Leaning posts.
+    for (let t = 0.3; t < len; t += 3) {
+      const px = alongX ? x0 + t : cx;
+      const pz = alongX ? cz : z0 + t;
+      this.parts.beam(new THREE.Vector3(px, top - 0.05, pz), new THREE.Vector3(px + outside.x * 0.45, top + 0.9, pz + outside.z * 0.45), 0.06, steel);
+    }
+    // Strands, stepping out as they go up.
+    for (let i = 1; i <= 3; i++) {
+      const y = top + i * 0.28;
+      const off = i * 0.14;
+      const strand = new THREE.CylinderGeometry(0.015, 0.015, len, 3);
+      if (alongX) strand.rotateZ(Math.PI / 2);
+      else strand.rotateX(Math.PI / 2);
+      this.parts.add(strand, wire, cx + outside.x * off, y, cz + outside.z * off);
+      strand.dispose();
+    }
+    // A coil of razor wire along the top, as a helix.
+    const turns = Math.floor(len / 0.8);
+    const pts: THREE.Vector3[] = [];
+    for (let i = 0; i <= turns * 5; i++) {
+      const a = (i / 5) * Math.PI * 2;
+      const t = (i / (turns * 5)) * len;
+      const r = 0.28;
+      const along = alongX ? new THREE.Vector3(x0 + t, 0, cz) : new THREE.Vector3(cx, 0, z0 + t);
+      const side = Math.cos(a) * r;
+      pts.push(new THREE.Vector3(along.x + (alongX ? 0 : side) + outside.x * 0.2, top + 0.32 + Math.sin(a) * r, along.z + (alongX ? side : 0) + outside.z * 0.2));
+    }
+    const coil = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), pts.length, 0.02, 3, false);
+    this.parts.add(coil, wire);
+    coil.dispose();
   }
 
   /**
@@ -441,20 +503,69 @@ export class Facility {
   /** The perimeter (a locked gate in the north side, out of the yard) and the walls between the yard and the wings. */
   private buildWalls(): void {
     const { minX, maxX, minZ, maxZ } = COMPOUND;
-    this.wall(minX - WALL, minZ - WALL, -3, minZ);
-    this.wall(3, minZ - WALL, maxX + WALL, minZ);
-    this.wall(minX - WALL, maxZ, maxX + WALL, maxZ + WALL);
-    this.wall(minX - WALL, minZ, minX, maxZ);
-    this.wall(maxX, minZ, maxX + WALL, maxZ);
+    // The perimeter has barbed wire along the top, leaning out.
+    this.wall(minX - WALL, minZ - WALL, -6.6, minZ, { x: 0, z: -1 });
+    this.wall(6.6, minZ - WALL, maxX + WALL, minZ, { x: 0, z: -1 });
+    this.wall(minX - WALL, maxZ, maxX + WALL, maxZ + WALL, { x: 0, z: 1 });
+    this.wall(minX - WALL, minZ, minX, maxZ, { x: -1, z: 0 });
+    this.wall(maxX, minZ, maxX + WALL, maxZ, { x: 1, z: 0 });
+    this.buildGatehouse();
     for (const x of [-YARD_EDGE, YARD_EDGE]) {
       this.wall(x - WALL / 2, minZ, x + WALL / 2, DOORWAY_Z0);
       this.wall(x - WALL / 2, DOORWAY_Z1, x + WALL / 2, maxZ);
       // Posts either side of the doorway.
       for (const z of [DOORWAY_Z0, DOORWAY_Z1]) this.solid(x - 0.5, 0, z - 0.3, x + 0.5, COMPOUND_WALL + 0.5, z + 0.3, CONCRETE_DARK);
     }
-    // The main gate's posts (the gate itself is in Breakout: it gets blown open).
-    this.solid(-3.6, 0, minZ - WALL - 0.2, -3, COMPOUND_WALL + 0.6, minZ + 0.2, CONCRETE_DARK);
-    this.solid(3, 0, minZ - WALL - 0.2, 3.6, COMPOUND_WALL + 0.6, minZ + 0.2, CONCRETE_DARK);
+  }
+
+  /**
+   * The gatehouse over the main gate (the gate itself is in Breakout: it gets blown open): a
+   * tower either side with a lookout window and a little roof, an arch across the top with the
+   * prison's name on it, and lamps either side of the way through.
+   */
+  private buildGatehouse(): void {
+    const z0 = COMPOUND.minZ - WALL - 0.6;
+    const z1 = COMPOUND.minZ + 0.6;
+    const h = 7.5;
+    for (const side of [-1, 1]) {
+      const xa = side < 0 ? -6.6 : 3;
+      const xb = side < 0 ? -3 : 6.6;
+      this.solid(xa, 0, z0, xb, h, z1, CONCRETE);
+      this.solid(xa - 0.25, h, z0 - 0.25, xb + 0.25, h + 0.3, z1 + 0.25, CONCRETE_DARK, false);
+      this.parts.add(new THREE.ConeGeometry(2.9, 1.4, 4), plastic(ROOF), (xa + xb) / 2, h + 1, (z0 + z1) / 2, 0, Math.PI / 4, 0);
+      // Lookout windows, front and back, and arrow-slit stripes down the front.
+      for (const z of [z0 - 0.02, z1 + 0.02]) {
+        this.solid((xa + xb) / 2 - 0.8, 5, Math.min(z, z + 0.03), (xa + xb) / 2 + 0.8, 6.2, Math.max(z, z + 0.03), 0x2a3040, false);
+        this.solid(xa + 0.6, 0.6, Math.min(z, z + 0.03), xa + 0.85, 3.6, Math.max(z, z + 0.03), CONCRETE_DARK, false);
+        this.solid(xb - 0.85, 0.6, Math.min(z, z + 0.03), xb - 0.6, 3.6, Math.max(z, z + 0.03), CONCRETE_DARK, false);
+      }
+      // A lamp on each tower, over the way through.
+      this.parts.add(this.box, plastic(STEEL), side * 3.2, 4.6, z0 - 0.3, 0, 0, 0, 0.12, 0.12, 0.6);
+      this.parts.add(new THREE.SphereGeometry(0.2, 10, 8), new THREE.MeshBasicMaterial({ color: LAMP }), side * 3.2, 4.45, z0 - 0.6);
+    }
+    // The arch across the top, with the name board on the outside face.
+    this.solid(-3, 4.8, z0 + 0.2, 3, 6.4, z1 - 0.2, CONCRETE);
+    this.solid(-3.2, 6.4, z0, 3.2, 6.7, z1, CONCRETE_DARK, false);
+    const c = document.createElement('canvas');
+    c.width = 512;
+    c.height = 96;
+    const ctx = c.getContext('2d') as CanvasRenderingContext2D;
+    ctx.fillStyle = '#c4a468';
+    ctx.fillRect(0, 0, 512, 96);
+    ctx.strokeStyle = '#5a4a2a';
+    ctx.lineWidth = 8;
+    ctx.strokeRect(4, 4, 504, 88);
+    ctx.fillStyle = '#3a2e1a';
+    ctx.font = '900 46px "Black Ops One", Impact, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('TAN ARMY PRISON', 256, 50);
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    const board = new THREE.Mesh(new THREE.PlaneGeometry(5.6, 1.05), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.8 }));
+    board.position.set(0, 5.6, z0 + 0.15);
+    board.rotation.y = Math.PI;
+    this.group.add(board);
   }
 
   /** Crates for cover round the yard and the wings, and a low wall in the yard to run along. */
@@ -516,11 +627,17 @@ export class Facility {
     this.solid(-2, 3.15, H.minZ - WALL - 0.12, 2, 3.55, H.minZ - WALL, SIGN, false);
     this.letter('A', 0, 3.35, H.minZ - WALL - 0.14);
     this.solid(H.minX, 0, H.minZ, H.maxX, 0.02, H.maxZ, CONCRETE_DARK, false);
-    // Tall dark windows high up the hall's long walls.
+    // Tall barred windows high up the hall's long walls, pilasters between them, a cornice along the top.
     for (let x = H.minX + 3; x < H.maxX - 2; x += 5) {
-      this.solid(x, 4.2, H.minZ - WALL - 0.03, x + 1.4, 6.6, H.minZ - WALL, 0x2a3040, false);
-      this.solid(x, 4.2, H.maxZ + WALL, x + 1.4, 6.6, H.maxZ + WALL + 0.03, 0x2a3040, false);
+      if (Math.abs(x + 0.7) < 3) continue; // not over the front door's porch
+      this.barredWindow(x, x + 1.4, 4.2, 6.6, H.minZ - WALL, -1);
+      this.barredWindow(x, x + 1.4, 4.2, 6.6, H.maxZ + WALL, 1);
     }
+    this.pilasters(H.minX - WALL, H.maxX + WALL, H.minZ - WALL, h, -1, 5, H.minX + 0.5);
+    this.pilasters(H.minX - WALL, H.maxX + WALL, H.maxZ + WALL, h, 1, 5, H.minX + 0.5);
+    this.cornice(H.minX - WALL, H.minZ - WALL, H.maxX + WALL, H.maxZ + WALL, h - 0.35);
+    // A lamp over the front door.
+    this.parts.add(new THREE.SphereGeometry(0.22, 10, 8), new THREE.MeshBasicMaterial({ color: LAMP }), 0, 3.4, H.minZ - 2.3);
 
     // The block's ends, full height (they close off the pipe chase).
     this.solid(minX - 0.3, 0, corridor, minX, h, BACK_ROW.front, CONCRETE);
@@ -709,6 +826,130 @@ export class Facility {
     this.solid(46.8, 0, 39.6, 47.6, 1.8, 40.4, 0xc0392b);
   }
 
+  /** A window on a wall facing ±Z (`out` -1 north, 1 south): dark glass, a lighter surround and bars in front. */
+  private barredWindow(x0: number, x1: number, y0: number, y1: number, z: number, out: number): void {
+    const f = (d: number) => z + out * d;
+    this.solid(x0, y0, Math.min(f(0), f(0.03)), x1, y1, Math.max(f(0), f(0.03)), 0x2a3040, false);
+    const frame = plastic(0xb4ae9e);
+    this.parts.add(this.box, frame, (x0 + x1) / 2, y0 - 0.08, f(0.06), 0, 0, 0, x1 - x0 + 0.4, 0.16, 0.14);
+    this.parts.add(this.box, frame, (x0 + x1) / 2, y1 + 0.06, f(0.04), 0, 0, 0, x1 - x0 + 0.3, 0.12, 0.08);
+    const steel = plastic(STEEL);
+    for (let x = x0 + 0.2; x < x1 - 0.05; x += 0.3) this.parts.add(this.box, steel, x, (y0 + y1) / 2, f(0.08), 0, 0, 0, 0.05, y1 - y0, 0.05);
+  }
+
+  /** Pilasters up a wall facing ±Z (`out`), every `every` metres from `from`. */
+  private pilasters(x0: number, x1: number, z: number, h: number, out: number, every: number, from: number): void {
+    const mat = plastic(CONCRETE_DARK);
+    for (let x = from; x < x1 - 0.2; x += every) {
+      if (x < x0 + 0.2) continue;
+      this.parts.add(this.box, mat, x, h / 2, z + out * 0.1, 0, 0, 0, 0.45, h, 0.2);
+    }
+  }
+
+  /** A cornice: a strip standing proud all round a building's walls at height `y`. */
+  private cornice(x0: number, z0: number, x1: number, z1: number, y: number): void {
+    const mat = plastic(CONCRETE_DARK);
+    const t = 0.25;
+    this.parts.add(this.box, mat, (x0 + x1) / 2, y, z0 - t / 2, 0, 0, 0, x1 - x0 + 2 * t, 0.28, t);
+    this.parts.add(this.box, mat, (x0 + x1) / 2, y, z1 + t / 2, 0, 0, 0, x1 - x0 + 2 * t, 0.28, t);
+    this.parts.add(this.box, mat, x0 - t / 2, y, (z0 + z1) / 2, 0, 0, 0, t, 0.28, z1 - z0);
+    this.parts.add(this.box, mat, x1 + t / 2, y, (z0 + z1) / 2, 0, 0, 0, t, 0.28, z1 - z0);
+  }
+
+  /** A painted board with `text` on it, facing -Z, centred at (x, y, z). */
+  private textBoard(text: string, x: number, y: number, z: number, w: number, h: number, bg: string, fg: string): void {
+    const c = document.createElement('canvas');
+    c.width = 512;
+    c.height = Math.round((512 * h) / w);
+    const ctx = c.getContext('2d') as CanvasRenderingContext2D;
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, c.width, c.height);
+    ctx.fillStyle = fg;
+    ctx.font = `900 ${Math.round(c.height * 0.62)}px "Black Ops One", Impact, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, c.width / 2, c.height / 2 + 2);
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    const board = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.8 }));
+    board.position.set(x, y, z);
+    board.rotation.y = Math.PI;
+    this.group.add(board);
+  }
+
+  /**
+   * Things round the yard and the wings: floodlight poles, a painted basketball court with a
+   * hoop, benches by the cellhouse, and a water tower in the west wing.
+   */
+  private buildYardDressing(): void {
+    const steel = plastic(STEEL);
+    const lampGlow = new THREE.MeshBasicMaterial({ color: LAMP });
+    // Floodlights on tall poles, two lamps each, turned in towards the yard.
+    for (const [x, z] of [[-28.4, -14], [28.4, -14], [-14, -23.4], [14, -23.4], [-28.4, 22], [28.4, 22], [50, -23.4], [-50, -23.4]]) {
+      const pole = new THREE.CylinderGeometry(0.1, 0.14, 8, 8);
+      this.parts.add(pole, steel, x, 4, z);
+      pole.dispose();
+      const inward = Math.atan2(-x, -(z + 5));
+      this.parts.add(this.box, steel, x, 8, z, 0, inward, 0, 1.6, 0.1, 0.1);
+      for (const s of [-0.6, 0.6]) {
+        const lx = x + Math.cos(inward) * s;
+        const lz = z - Math.sin(inward) * s;
+        this.parts.add(this.box, steel, lx, 8.25, lz, -0.5, inward, 0, 0.45, 0.35, 0.3);
+        this.parts.add(this.box, lampGlow, lx - Math.sin(inward) * 0.16, 8.15, lz - Math.cos(inward) * 0.16, -0.5, inward, 0, 0.36, 0.26, 0.02);
+      }
+      this.blocker(x - 0.15, 0, z - 0.15, x + 0.15, 8, z + 0.15);
+    }
+
+    // A basketball court painted on the yard (the lines are just paint), with a hoop at the west end.
+    const paint = plastic(0xe8e4d0);
+    const court = { minX: -21, maxX: -7, minZ: -21.5, maxZ: -13.5 };
+    const line = (x0: number, z0: number, x1: number, z1: number) =>
+      this.parts.add(this.box, paint, (x0 + x1) / 2, 0.015, (z0 + z1) / 2, 0, 0, 0, Math.max(0.1, x1 - x0), 0.01, Math.max(0.1, z1 - z0));
+    line(court.minX, court.minZ, court.maxX, court.minZ);
+    line(court.minX, court.maxZ, court.maxX, court.maxZ);
+    line(court.minX, court.minZ, court.minX, court.maxZ);
+    line(court.maxX, court.minZ, court.maxX, court.maxZ);
+    line(-14, court.minZ, -14, court.maxZ);
+    line(court.minX, -19.5, court.minX + 3.5, -19.5);
+    line(court.minX, -15.5, court.minX + 3.5, -15.5);
+    line(court.minX + 3.5, -19.5, court.minX + 3.5, -15.5);
+    const ring = new THREE.RingGeometry(1.7, 1.8, 32).rotateX(-Math.PI / 2);
+    this.parts.add(ring, paint, -14, 0.016, -17.5);
+    ring.dispose();
+    this.parts.add(new THREE.CylinderGeometry(0.08, 0.08, 3.2, 8), steel, court.minX - 0.8, 1.6, -17.5);
+    this.parts.add(this.box, steel, court.minX - 0.45, 3.1, -17.5, 0, 0, 0, 0.8, 0.08, 0.08);
+    this.parts.add(this.box, plastic(0xf4f1e4), court.minX - 0.05, 3.3, -17.5, 0, 0, 0, 0.06, 1, 1.6);
+    const hoop = new THREE.TorusGeometry(0.24, 0.025, 6, 16).rotateX(Math.PI / 2);
+    this.parts.add(hoop, plastic(0xd8572a), court.minX + 0.27, 3.05, -17.5);
+    hoop.dispose();
+    this.blocker(court.minX - 0.9, 0, -17.6, court.minX - 0.7, 3.2, -17.4);
+
+    // Benches either side of the cellhouse door.
+    for (const x of [-9, 9]) {
+      this.solid(x - 1.2, 0.42, CELLHOUSE.minZ - 3.2, x + 1.2, 0.5, CELLHOUSE.minZ - 2.7, WOOD);
+      for (const lx of [x - 1, x + 1]) this.solid(lx - 0.06, 0, CELLHOUSE.minZ - 3.15, lx + 0.06, 0.42, CELLHOUSE.minZ - 2.75, STEEL);
+    }
+
+    // A water tower in the west wing: four braced legs, a tank and a pointed roof.
+    const wt = { x: -52, z: 30 };
+    const v = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
+    const legs: [number, number][] = [[-2, -2], [2, -2], [2, 2], [-2, 2]];
+    for (const [dx, dz] of legs) {
+      this.parts.beam(v(wt.x + dx * 1.2, 0, wt.z + dz * 1.2), v(wt.x + dx, 10, wt.z + dz), 0.25, steel);
+      this.blocker(wt.x + dx * 1.2 - 0.2, 0, wt.z + dz * 1.2 - 0.2, wt.x + dx * 1.2 + 0.2, 3, wt.z + dz * 1.2 + 0.2);
+    }
+    for (let i = 0; i < 4; i++) {
+      const [ax, az] = legs[i];
+      const [bx, bz] = legs[(i + 1) % 4];
+      this.parts.beam(v(wt.x + ax * 1.15, 1, wt.z + az * 1.15), v(wt.x + bx * 1.05, 6, wt.z + bz * 1.05), 0.08, steel);
+      this.parts.beam(v(wt.x + bx * 1.15, 1, wt.z + bz * 1.15), v(wt.x + ax * 1.05, 6, wt.z + az * 1.05), 0.08, steel);
+    }
+    this.parts.add(new THREE.CylinderGeometry(3, 3, 3.6, 20), plastic(0x9aa2a8), wt.x, 11.8, wt.z);
+    this.parts.add(new THREE.ConeGeometry(3.3, 1.6, 20), plastic(ROOF), wt.x, 14.4, wt.z);
+    this.parts.add(new THREE.CylinderGeometry(3.15, 3.15, 0.15, 20), steel, wt.x, 10, wt.z);
+    for (let y = 0.5; y < 10; y += 0.5) this.parts.add(this.box, steel, wt.x + 2.6, y, wt.z, 0, 0, 0, 0.05, 0.05, 0.5);
+  }
+
   /** A cell block: outside walls, a doorway in the middle of the front, a corridor, then a row of barred cells. */
   private buildCellBlock(b: BlockPlan, letter: string): void {
     const { minX, maxX, minZ, maxZ, corridor, doorX } = b;
@@ -725,6 +966,13 @@ export class Facility {
     this.solid(doorX - 2, 3.15, minZ - WALL - 0.12, doorX + 2, 3.55, minZ - WALL, SIGN, false);
     this.letter(letter, doorX, 3.35, minZ - WALL - 0.14);
     this.solid(minX, 0, minZ, maxX, 0.02, maxZ, CONCRETE_DARK, false);
+    // Small barred windows along the front, pilasters, and a cornice under the roof.
+    for (let x = minX + 2; x < maxX - 1; x += 5) {
+      if (Math.abs(x + 0.6 - doorX) < 3) continue;
+      this.barredWindow(x, x + 1.2, 2, 3, minZ - WALL, -1);
+    }
+    this.pilasters(minX - WALL, maxX + WALL, minZ - WALL, h, -1, 5, minX + 0.5);
+    this.cornice(minX - WALL, minZ - WALL, maxX + WALL, maxZ + WALL, h - 0.3);
 
     // Cells: partition walls, and a barred front on each with a gap for its door (see Cells).
     for (let x = minX + CELL_WIDTH; x < maxX; x += CELL_WIDTH) this.solid(x - 0.15, 0, corridor, x + 0.15, h, maxZ, CONCRETE);
@@ -758,8 +1006,17 @@ export class Facility {
       this.solid(x, 1.4, minZ - WALL - 0.03, x + 1.6, 2.4, minZ - WALL, 0x2a3040, false);
       this.solid(x, 1.4, maxZ + WALL, x + 1.6, 2.4, maxZ + WALL + 0.03, 0x2a3040, false);
     }
-    // A sign over the door.
+    // A sign over the door, a porch roof on posts, plank siding, and a chimney.
     this.solid(maxX + WALL, 2.75, doorZ0 - 0.6, maxX + WALL + 0.12, 3.25, doorZ1 + 0.6, SIGN, false);
+    this.solid(maxX + WALL, 3.05, doorZ0 - 1.2, maxX + WALL + 1.8, 3.2, doorZ1 + 1.2, 0x6b5a3a, false);
+    for (const z of [doorZ0 - 1, doorZ1 + 1]) this.solid(maxX + WALL + 1.5, 0, z - 0.1, maxX + WALL + 1.7, 3.05, z + 0.1, WOOD);
+    const plank = plastic(0x8a7a5a);
+    for (let y = 0.4; y < h - 0.2; y += 0.42) {
+      this.parts.add(this.box, plank, (minX + maxX) / 2, y, minZ - WALL - 0.01, 0, 0, 0, maxX - minX + 2 * WALL, 0.04, 0.03);
+      this.parts.add(this.box, plank, (minX + maxX) / 2, y, maxZ + WALL + 0.01, 0, 0, 0, maxX - minX + 2 * WALL, 0.04, 0.03);
+      this.parts.add(this.box, plank, minX - WALL - 0.01, y, (minZ + maxZ) / 2, 0, 0, 0, 0.03, 0.04, maxZ - minZ + 2 * WALL);
+    }
+    this.solid(minX + 4, h, maxZ - 3, minX + 5, h + 2.2, maxZ - 2, 0x7a4a3a, false);
     // Bunks along both long walls, with a gangway down the middle; lockers at the far end.
     for (let x = minX + 1; x < maxX - 4; x += 3.5) {
       for (const [z0, z1] of [[minZ + 0.2, minZ + 1.2], [maxZ - 1.2, maxZ - 0.2]]) {
@@ -788,6 +1045,7 @@ export class Facility {
     this.barsX(minX + DOOR_TO, maxX, frontZ, h);
     this.blocker(minX + DOOR_TO, 0, frontZ - 0.05, maxX, h, frontZ + 0.05);
     this.solid(minX + 0.4, 0, backZ - 0.9, minX + 2.4, 0.45, backZ - 0.1, WOOD);
+    this.textBoard('SOLITARY', (minX + maxX) / 2, h + 0.55, frontZ - 0.62, 3.6, 0.6, '#c4a468', '#3a2e1a');
   }
 
   /** Steel bars from x0 to x1 along z, floor to `h`, with rails top and bottom (drawn only). */

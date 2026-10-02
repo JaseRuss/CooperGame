@@ -363,7 +363,8 @@ knocked over. Press A or Enter to play again.
 ## Bonus: Prison Break
 
 A bonus level on foot. The tan army has locked you up and taken your tank: break out, free
-your buddies and the other prisoners, take over the prison and drive your tank home.
+your buddies and the other prisoners, take over the prison and drive your tank home. It opens
+with a flyover of the prison (any button or key skips it).
 
 - **The escape**, after the famous 1962 Alcatraz escape (without the digging). You start in a
   cell with a dummy head on the pillow. The grille at the back of the cell is loose: shoot it
@@ -380,7 +381,8 @@ your buddies and the other prisoners, take over the prison and drive your tank h
   there; shoot the yellow lever box at the end of its corridor and every door opens at once)
   and **the barracks** in the west wing (shoot their tan flag off the roof and a green one goes
   up; Jason is in the punishment hut behind it). Each part you take becomes your checkpoint.
-  The guard towers always topple into the yard.
+  The guard towers always topple into the yard. When a part is down to its last guard or two,
+  a gold arrow points to them.
 - **The breakout.** Once the whole prison's yours, the motor pool's gate (in the south of the
   east wing) slides open. Deal with its guards and walk up to your tank to climb back in: your
   four buddies jump up on the hull and everyone else piles into the tan army's trucks. Blow the

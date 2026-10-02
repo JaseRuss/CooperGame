@@ -49,6 +49,17 @@ const CLIMB_DOWN_TIME = 2.8;
 /** He starts a climb when he's this close to the foot (or top) of it. */
 const CLIMB_REACH = 1.1;
 const VENT_PROMPT_RANGE = 4;
+/** The opening flyover: where the camera is and what it looks at, at each second-or-so mark, and how long it runs. */
+const INTRO: { at: number; pos: [number, number, number]; look: [number, number, number] }[] = [
+  { at: 0, pos: [0, 70, -160], look: [0, 0, -10] },
+  { at: 2.5, pos: [70, 40, -50], look: [0, 3, 0] },
+  { at: 4.5, pos: [34, 20, 2], look: [-10, 4, 20] },
+  { at: 6, pos: [8, 14, 6], look: [-18, 2, 18] },
+];
+const INTRO_TIME = 6;
+/** The "last guard" arrow shows when a part of the prison is down to this many, and he's this far off. */
+const LAST_GUARDS = 2;
+const LAST_GUARD_RANGE = 12;
 /** Prompts for the lever box, a tower and the flag show this close. */
 const LEVER_PROMPT_RANGE = 16;
 const TOWER_PROMPT_RANGE = 14;
@@ -146,6 +157,9 @@ export class PrisonGame {
   private passengers = 0;
   /** The ending at Cooper's Base: seconds since it started (null until then). */
   private ending: number | null = null;
+  /** The opening flyover: seconds into it (null once it's over). */
+  private intro: number | null = 0;
+  private lastTankSpot = new THREE.Vector3();
   /** Mid-climb: the way he goes (waypoints), how far along (0..1), how long it takes, which way he faces, and what happens at the end. */
   private climbing: { path: THREE.Vector3[]; t: number; duration: number; yaw: number; spot: ClimbSpot; up: boolean } | null = null;
   /** How close the searchlights are to spotting him (0..1). */
@@ -278,7 +292,7 @@ export class PrisonGame {
 
     this.loadingLabel.remove();
     this.ready = true;
-    this.hud.showBanner('BONUS: PRISON BREAK', "They've locked you up and taken your tank! The vent at the back of your cell is loose...");
+
     // Sneaking out to the night tune; the prison's own song once it turns into a fight.
     this.sound.music.setNight(true);
     this.sound.music.start();
@@ -693,11 +707,33 @@ export class PrisonGame {
 
   /** Where the gold arrow points: the tank, then the main gate, then home. */
   private waypoint(): HUDState['waypoint'] {
-    if (!this.allTaken || this.ending !== null) return null;
+    if (this.intro !== null || this.ending !== null) return null;
+    if (!this.allTaken) return this.lastGuardWaypoint();
     const layout = this.facility.layout;
     if (!this.inTank) return this.waypointTo(this.breakout.tank.position.clone().setY(2.5), 'YOUR TANK');
     if (!this.breakout.gateOpen) return this.waypointTo(new THREE.Vector3(0, 3, layout.mainGate.z), 'MAIN GATE');
     return this.waypointTo(new THREE.Vector3(layout.home.x, 4, layout.home.z), `HOME ${Math.round(this.breakout.distanceHome)} m`);
+  }
+
+  /**
+   * When a part of the prison is down to its last guard or two (they can be easy to miss, round
+   * the back of a building), an arrow to the nearest of them.
+   */
+  private lastGuardWaypoint(): HUDState['waypoint'] {
+    if (this.escape !== 'out') return null;
+    const p = this.player.position;
+    let best: { at: THREE.Vector3; d: number; n: number } | null = null;
+    for (const zone of this.facility.layout.zones) {
+      const n = this.guardsLeft(zone.id);
+      if (this.taken.has(zone.id) || n === 0 || n > LAST_GUARDS) continue;
+      for (const g of this.guards.list) {
+        if (g.post.zone !== zone.id || (g.state !== 'active' && g.state !== 'jammed')) continue;
+        const d = g.pos.distanceTo(p);
+        if (!best || d < best.d) best = { at: g.chest(), d, n };
+      }
+    }
+    if (!best || best.d < LAST_GUARD_RANGE) return null;
+    return this.waypointTo(best.at.setY(best.at.y + 1.5), best.n > 1 ? 'LAST GUARDS' : 'LAST GUARD');
   }
 
   /** A marker over `point` on screen, or pinned to the edge pointing at it (as in the main game). */
@@ -785,7 +821,7 @@ export class PrisonGame {
       buddyRoster: [],
       buddyOut: [],
       buddyMax: 0,
-      cinematic: false,
+      cinematic: this.intro !== null,
       cinematicLabel: '',
       waypoint: this.hud.paused ? null : this.waypoint(),
       enemyBasesLeft: 0,
@@ -808,6 +844,7 @@ export class PrisonGame {
     const input = this.input.update(dt);
 
     if (this.hud.paused) {
+      this.sound.updateEngine(0, 'tank', false);
       this.hud.handleMenu(input.menu);
       if (input.mapTogglePressed && this.hud.paused) this.hud.toggleBigMap();
       this.hud.update(this.hudState(input));
@@ -818,7 +855,8 @@ export class PrisonGame {
       return;
     }
     this.pausedRendered = false;
-    this.step(input, dt);
+    if (this.intro !== null) this.updateIntro(input, dt);
+    else this.step(input, dt);
     this.sound.setListener(this.camera);
     this.hud.update(this.hudState(input));
     this.renderer.render(this.scene, this.camera);
@@ -836,8 +874,40 @@ export class PrisonGame {
     const names = this.settings.buddyNames;
     this.breakout.board(aboard.buddies.map((b) => ({ name: names[b] })), aboard.others, this.settings.nameTags);
     this.breakout.tank.driveStyle = this.settings.driveStyle;
+    this.lastTankSpot.copy(this.breakout.tank.position);
     this.hud.showBanner('BACK IN YOUR TANK!', 'Your buddies are on the hull and everyone else is in the trucks. Blow the main gate open!');
     this.sound.music.stinger();
+  }
+
+  /**
+   * The opening flyover: in over the prison and down to the cellhouse, then into the cell. Any
+   * button or key skips it. The world carries on underneath (the searchlights, the guards' beats).
+   */
+  private updateIntro(input: InputState, dt: number): void {
+    const t = (this.intro = (this.intro ?? 0) + dt);
+    const skip = input.firing || input.jamFiring || input.menu.confirm || input.menu.back || input.moveX !== 0 || input.moveY !== 0 || input.throttle !== 0;
+    if (t >= INTRO_TIME || (skip && t > 0.3)) {
+      this.intro = null;
+      this.hud.setFade(0);
+      this.hud.showBanner('BONUS: PRISON BREAK', "They've locked you up and taken your tank! The vent at the back of your cell is loose...");
+      return;
+    }
+    let i = 0;
+    while (i < INTRO.length - 2 && t > INTRO[i + 1].at) i++;
+    const a = INTRO[i];
+    const b = INTRO[i + 1];
+    const f = Math.min(1, (t - a.at) / (b.at - a.at));
+    const e = f * f * (3 - 2 * f);
+    const lerp = (u: [number, number, number], v: [number, number, number]) => new THREE.Vector3(u[0] + (v[0] - u[0]) * e, u[1] + (v[1] - u[1]) * e, u[2] + (v[2] - u[2]) * e);
+    this.camera.position.copy(lerp(a.pos, b.pos));
+    this.camera.lookAt(lerp(a.look, b.look));
+    // Fade to black at the end, before it cuts to the cell.
+    this.hud.setFade(t > INTRO_TIME - 0.8 ? (t - (INTRO_TIME - 0.8)) / 0.8 : 0, '#000000');
+    this.time += dt;
+    this.searchlights.update(dt, this.player.position, false);
+    this.guards.update(dt, [], () => false);
+    this.flag.update(dt, this.time);
+    this.world.step();
   }
 
   /** One frame in the tank: drive, shoot, and the trucks and the raiders follow. */
@@ -848,6 +918,10 @@ export class PrisonGame {
     } else {
       if (input.cameraTogglePressed) this.rig.toggle();
       const shot = tank.step(input, dt);
+      // The engine note rises with the tank's speed.
+      const moved = Math.hypot(tank.position.x - this.lastTankSpot.x, tank.position.z - this.lastTankSpot.z);
+      this.lastTankSpot.copy(tank.position);
+      this.sound.updateEngine(dt > 0 ? Math.min(30, moved / dt) : 0, 'tank', true);
       if (shot) this.breakout.fire(shot.origin, shot.direction);
       if (input.jamFiring) {
         const glob = tank.tryJam();
@@ -874,6 +948,7 @@ export class PrisonGame {
   /** Home at Cooper's Base: everyone jumps down and cheers, and the end screen comes up. */
   private startEnding(): void {
     this.ending = 0;
+    this.sound.updateEngine(0, 'tank', false);
     this.breakout.arrive();
     this.outside.cheer();
     this.sound.music.fanfare();
