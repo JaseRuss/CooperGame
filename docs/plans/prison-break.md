@@ -1,6 +1,6 @@
 # Plan: Bonus level "Prison Break"
 
-Status: milestones 1 to 4 built (on foot; Cell Block A and the squad; guards, the jam riot cannon, capturing guards and medics; the whole compound). The Alcatraz-style opening (4b) and the breakout (5) are built too: the level plays start to finish. Next: polish (6). Decisions from the owner are below.
+Status: milestones 1 to 4 built (on foot; Cell Block A and the squad; guards, the jam riot cannon, capturing guards and medics; the whole compound). The Alcatraz-style opening (4b), the breakout (5) and the polish (6) are built: the level is finished. Decisions from the owner are below.
 
 ## The level in one paragraph
 
@@ -175,7 +175,14 @@ mission 4 never rolls on into it: the bonus is only picked by hand.
    (`Outside.ts`: road, trees, fences, Cooper's Base); home, everyone jumps down and cheers.
    Also from the owner: the prisoners' only weapon is the jam cannon, and the towers always
    fall into the yard.
-6. **Polish.** Sounds, intro cutscene, Low graphics check, README.
+6. **Polish.** *(Done.)* An opening flyover (skippable), the tank's engine note, a gold arrow
+   to the last guard or two in a part of the prison, checked on Low graphics (no shadows,
+   lower resolution, about twice as fast). And, from the owner, better geometry: cast-concrete
+   walls with pilasters, panel seams and a footing; barbed wire and razor wire along the
+   perimeter; a gatehouse with two towers and a "TAN ARMY PRISON" sign; barred windows,
+   pilasters and cornices on the cell blocks; plank siding, a porch and a chimney on the
+   barracks; a "SOLITARY" sign on the hut; floodlight poles; a basketball court in the yard;
+   benches; a water tower in the west wing.
 
 ## Risks
 
