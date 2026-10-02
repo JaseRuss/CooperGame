@@ -11,6 +11,9 @@ import { loadSettings, saveSettings, AIM_SPEED_SCALE, GRAPHICS_QUALITY, type Set
 import { MISSION, startMission } from '../core/config';
 import { Facility, ROOF_TOP, type ClimbSpot, type FacilityLayout, type ZoneId } from './Facility';
 import { Searchlights } from './Searchlights';
+import { Breakout } from './Breakout';
+import { Outside } from './Outside';
+import { CameraRig } from '../camera/CameraRig';
 import { PlayerSoldier, MAX_HEALTH } from './PlayerSoldier';
 import { ShoulderCam } from './ShoulderCam';
 import { Cells } from './Cells';
@@ -134,6 +137,15 @@ export class PrisonGame {
   private checkpoint: { x: number; z: number; yaw: number; y?: number } = { x: 0, z: 0, yaw: 0 };
   private escape: EscapeStage = 'cell';
   private searchlights!: Searchlights;
+  private breakout!: Breakout;
+  private outside!: Outside;
+  /** The tank's chase camera, once he's back in it (the main game's). */
+  private rig!: CameraRig;
+  private inTank = false;
+  /** How many prisoners (not counting the buddies) rode out in the trucks. */
+  private passengers = 0;
+  /** The ending at Cooper's Base: seconds since it started (null until then). */
+  private ending: number | null = null;
   /** Mid-climb: the way he goes (waypoints), how far along (0..1), how long it takes, which way he faces, and what happens at the end. */
   private climbing: { path: THREE.Vector3[]; t: number; duration: number; yaw: number; spot: ClimbSpot; up: boolean } | null = null;
   /** How close the searchlights are to spotting him (0..1). */
@@ -204,16 +216,33 @@ export class PrisonGame {
     this.scene.add(this.followers.group);
     this.guards = new Guards(this.world, layout.guards);
     this.scene.add(this.guards.group);
-    this.towers = new Towers(this.world, layout.towers);
+    this.towers = new Towers(this.world, layout.towers, layout.yardMiddle);
     this.scene.add(this.towers.group);
     this.flag = new Flag(this.world, layout.flag);
     this.scene.add(this.flag.mesh);
     this.searchlights = new Searchlights(this.world, layout.searchlights, ROOF_TOP);
     this.scene.add(this.searchlights.group);
+    this.outside = new Outside(layout.road, layout.home, layout.ground);
+    this.scene.add(this.outside.group);
+    this.rig = new CameraRig(this.camera);
+    this.breakout = new Breakout(this.world, layout, {
+      explode: (at, size) => this.impacts.explode(at, size),
+      dust: (at) => this.impacts.dustPuff(at),
+      puff: (at) => this.impacts.changePuff(at, 1.4),
+      sound: (name, at, volume = 1, rate = 1) => this.sound.play(name, { at, volume, rate, minGap: 0.05 }),
+      shake: (amount) => this.rig.addShake(amount),
+      tracer: (from, to) => this.addTracer(from, to, this.enemyTracer),
+      blast: (at, radius) => {
+        for (const g of this.guards.list) {
+          if ((g.state === 'active' || g.state === 'jammed') && g.pos.distanceTo(at) < radius) g.knockDown(g.pos.clone().sub(at).setY(0).normalize());
+        }
+      },
+    });
+    this.scene.add(this.breakout.group);
     this.checkpoint = { ...layout.start };
     // Colliders added this frame aren't in the query pipeline until a step (and the nav graph needs them).
     this.world.step();
-    this.nav = new NavGraph(this.world, layout.navPoints, (c) => this.cells.isDoor(c));
+    this.nav = new NavGraph(this.world, layout.navPoints, (c) => this.cells.isDoor(c) || this.breakout.isGate(c));
     const game = this;
     this.squadWorld = {
       get player() {
@@ -336,14 +365,14 @@ export class PrisonGame {
       return;
     }
     this.impacts.dustPuff(end);
-    const tower = this.towers.hit(hit.collider, dir);
+    const tower = this.towers.hit(hit.collider);
     if (tower) {
       this.sound.play('thud', { at: end, volume: 0.6, rate: 0.8, minGap: 0.05 });
       if (tower.felled) {
         this.hud.showCallout("TIMBER! THE TOWER'S COMING DOWN!", '#ffd24a');
         // Whoever's up there comes down with it.
         for (const g of this.guards.list) {
-          if (g.post.height && g.post.x === tower.x && g.post.z === tower.z && (g.state === 'active' || g.state === 'jammed')) g.knockDown(dir);
+          if (g.post.height && g.post.x === tower.x && g.post.z === tower.z && (g.state === 'active' || g.state === 'jammed')) g.knockDown(tower.dir);
         }
       }
       return;
@@ -361,6 +390,12 @@ export class PrisonGame {
 
   /** A shot from the squad (at the guards) or a guard (at the player and the squad): what it hits. */
   private resolveShot(shot: Shot, side: 'friend' | 'enemy'): void {
+    // The prisoners fire jam, not bullets.
+    if (shot.at) {
+      this.lobJam(shot.from, shot.at);
+      this.sound.play('jamShot', { at: shot.from, volume: 0.18, rate: 1.2, minGap: 0.06 });
+      return;
+    }
     const hit = this.world.castRay(new RAPIER.Ray(shot.from, shot.dir), SHOT_RANGE, true, undefined, side === 'friend' ? FRIEND_SHOTS : ENEMY_SHOTS);
     const end = shot.from.clone().addScaledVector(shot.dir, hit ? hit.timeOfImpact : 60);
     this.impacts.muzzleFlash(shot.from, shot.dir, 0.25);
@@ -398,16 +433,7 @@ export class PrisonGame {
       this.jamCooldown -= dt;
       if (this.jamCooldown <= 0) {
         this.jamCooldown = JAM_INTERVAL;
-        const muzzle = this.player.muzzle();
-        const dir = this.aimPoint().sub(muzzle);
-        // Lobbed up just enough to come down on the crosshair (out to its range), with a bit of
-        // scatter: it's a hose, not a rifle.
-        const reach = Math.min(JAM_RANGE, Math.hypot(dir.x, dir.z));
-        dir.normalize();
-        dir.x += (Math.random() - 0.5) * 0.08;
-        dir.y += Math.min(0.4, (JAM_GRAVITY * reach) / (2 * JAM_SPEED * JAM_SPEED)) + (Math.random() - 0.5) * 0.05;
-        dir.z += (Math.random() - 0.5) * 0.08;
-        this.jam.fire(muzzle, dir.normalize(), JAM_SPEED * (0.95 + Math.random() * 0.1));
+        this.lobJam(this.player.muzzle(), this.aimPoint());
         this.sound.play('jamShot', { volume: 0.22, rate: 1.1, minGap: 0.09 });
       }
     } else {
@@ -420,10 +446,24 @@ export class PrisonGame {
       this.player.collider,
       (point) => {
         this.sound.play('splat', { at: point, volume: 0.9, minGap: 0.1 });
-        if (this.guards.jamAt(point, JAM_RADIUS) > 0) this.hud.showCallout('GUARD STUCK IN JAM!', '#ff8aa8');
+        if (this.guards.jamAt(point, JAM_RADIUS) > 0 && point.distanceTo(this.player.position) < 25) this.hud.showCallout('GUARD STUCK IN JAM!', '#ff8aa8');
       },
       (point) => this.guards.jamAt(point, JAM_DRIP_RADIUS),
     );
+  }
+
+  /**
+   * A glob of jam from `from`, lobbed up just enough to come down on `target` (out to its
+   * range), with a bit of scatter: it's a hose, not a rifle.
+   */
+  private lobJam(from: THREE.Vector3, target: THREE.Vector3): void {
+    const dir = target.clone().sub(from);
+    const reach = Math.min(JAM_RANGE, Math.hypot(dir.x, dir.z));
+    dir.normalize();
+    dir.x += (Math.random() - 0.5) * 0.08;
+    dir.y += Math.min(0.4, (JAM_GRAVITY * reach) / (2 * JAM_SPEED * JAM_SPEED)) + (Math.random() - 0.5) * 0.05;
+    dir.z += (Math.random() - 0.5) * 0.08;
+    this.jam.fire(from, dir.normalize(), JAM_SPEED * (0.95 + Math.random() * 0.1));
   }
 
   private addTracer(from: THREE.Vector3, to: THREE.Vector3, material: THREE.LineBasicMaterial): void {
@@ -572,7 +612,8 @@ export class PrisonGame {
     }
     if (!this.allTaken && this.taken.size === this.facility.layout.zones.length) {
       this.allTaken = true;
-      this.hud.showBanner('THE PRISON IS OURS!', 'Every part of it is taken. Next: get your tank back from the motor pool');
+      this.breakout.openLot();
+      this.hud.showBanner('THE PRISON IS OURS!', "The motor pool's gate is open: get your tank back!");
     }
   }
 
@@ -609,6 +650,10 @@ export class PrisonGame {
       prompt = 'Climb the pipes at the far (east) end of the pipe chase';
     } else if (this.escape === 'roof') {
       prompt = 'Keep out of the searchlights! Get to the bakery pipe at the far (west) end';
+    } else if (this.inTank) {
+      prompt = this.ending !== null ? null : !this.breakout.gateOpen ? 'Shoot the main gate to blow it open!' : 'Follow the road north, home to Cooper\'s Base!';
+    } else if (this.breakout.lotOpen && Math.hypot(this.breakout.tank.position.x - p.x, this.breakout.tank.position.z - p.z) < 12) {
+      prompt = 'Walk up to your tank to climb back in!';
     } else if (friendDown) {
       const who = friendDown.name ?? 'A friend';
       prompt = friendDown.progress > 0 ? `Helping ${who} up… ${Math.round(friendDown.progress * 100)}%` : `${who} is down: stand right next to them to help them up`;
@@ -622,16 +667,66 @@ export class PrisonGame {
       prompt = 'Shoot their flag off the barracks roof! (Stand back for a clear shot over the edge)';
     }
     return {
-      title: `PRISON BREAK${this.escape !== 'out' ? ' · THE ESCAPE' : ''}${squad ? ` · SQUAD ${this.followers.standing}${this.followers.isHolding ? ' (HOLDING)' : ''}` : ''}${this.followers.onGuard ? ` · ${this.followers.onGuard} ON GUARD` : ''}`,
-      objectives: this.escape !== 'out' ? this.escapeObjectives() : [
+      title: this.inTank ? 'PRISON BREAK · THE BREAKOUT' : `PRISON BREAK${this.escape !== 'out' ? ' · THE ESCAPE' : ''}${squad ? ` · SQUAD ${this.followers.standing}${this.followers.isHolding ? ' (HOLDING)' : ''}` : ''}${this.followers.onGuard ? ` · ${this.followers.onGuard} ON GUARD` : ''}`,
+      objectives: this.escape !== 'out' ? this.escapeObjectives() : this.allTaken ? this.breakoutObjectives() : [
         ...this.facility.layout.zones.map((z) => ({ label: `${z.name}: ${this.zoneProgress(z.id)}`, done: this.taken.has(z.id) })),
         { label: `Free your buddies (${freed.length} / ${buddies.length})${freed.length ? `: ${freed.map((b) => names[b]).join(', ')}` : ''}`, done: freed.length === buddies.length },
         { label: `Lock the guards in the cells (${this.guards.jailed} / ${total})`, done: this.guards.jailed === total },
       ],
       prompt,
       downFor: down,
+      inTank: this.inTank,
       jam: this.jamTank,
     };
+  }
+
+  /** The checklist for the breakout, once the prison's taken. */
+  private breakoutObjectives(): { label: string; done: boolean }[] {
+    const left = this.guardsLeft('motorpool');
+    const b = this.breakout;
+    return [
+      { label: `Get your tank back from the motor pool${left && !this.inTank ? ` · ${left} guard${left === 1 ? '' : 's'}` : ''}`, done: this.inTank },
+      { label: 'Blast the main gate open', done: b.gateOpen },
+      { label: `Drive home to Cooper's Base${this.inTank && !b.home ? ` (${Math.round(b.distanceHome)} m)` : ''}`, done: b.home },
+    ];
+  }
+
+  /** Where the gold arrow points: the tank, then the main gate, then home. */
+  private waypoint(): HUDState['waypoint'] {
+    if (!this.allTaken || this.ending !== null) return null;
+    const layout = this.facility.layout;
+    if (!this.inTank) return this.waypointTo(this.breakout.tank.position.clone().setY(2.5), 'YOUR TANK');
+    if (!this.breakout.gateOpen) return this.waypointTo(new THREE.Vector3(0, 3, layout.mainGate.z), 'MAIN GATE');
+    return this.waypointTo(new THREE.Vector3(layout.home.x, 4, layout.home.z), `HOME ${Math.round(this.breakout.distanceHome)} m`);
+  }
+
+  /** A marker over `point` on screen, or pinned to the edge pointing at it (as in the main game). */
+  private waypointTo(point: THREE.Vector3, label: string): HUDState['waypoint'] {
+    const view = point.clone().applyMatrix4(this.camera.matrixWorldInverse);
+    let x = view.x;
+    let y = view.y;
+    let onScreen = false;
+    if (view.z < -1) {
+      const ndc = point.clone().project(this.camera);
+      x = ndc.x;
+      y = ndc.y;
+      onScreen = Math.abs(x) < 0.92 && Math.abs(y) < 0.8;
+    } else {
+      y = -Math.abs(y) - 0.2 * Math.abs(x) - 1e-3;
+    }
+    if (!onScreen) {
+      const k = Math.max(Math.abs(x) / 0.9, Math.abs(y) / 0.75);
+      x /= k;
+      y /= k;
+    }
+    return { x: ((x + 1) / 2) * window.innerWidth, y: ((1 - y) / 2) * window.innerHeight, onScreen, angle: Math.atan2(-y, x), label };
+  }
+
+  /** Where the tank's next shell comes down, on screen (null off it). */
+  private tankAim(): { x: number; y: number } | null {
+    const ndc = this.breakout.aim().project(this.camera);
+    if (ndc.z > 1 || Math.abs(ndc.x) > 1 || Math.abs(ndc.y) > 1) return null;
+    return { x: ((ndc.x + 1) / 2) * window.innerWidth, y: ((1 - ndc.y) / 2) * window.innerHeight };
   }
 
   /** The checklist while he's escaping (Alcatraz-style), before it turns into a fight. */
@@ -665,16 +760,16 @@ export class PrisonGame {
   private hudState(input: InputState): HUDState {
     return {
       zombies: null,
-      health: this.player.health,
-      maxHealth: MAX_HEALTH,
-      reloadFraction: 0,
+      health: this.inTank ? this.breakout.tank.maxHealth : this.player.health,
+      maxHealth: this.inTank ? this.breakout.tank.maxHealth : MAX_HEALTH,
+      reloadFraction: this.inTank ? this.breakout.tank.fireCooldown / this.breakout.tank.fireInterval : 0,
       damageBoost: 0,
       ride: null,
-      cameraMode: this.cam.mode,
+      cameraMode: this.inTank ? this.rig.mode : this.cam.mode,
       usingGamepad: input.usingGamepad,
       insideBase: null,
       map: NO_MAP,
-      aimScreen: this.hud.paused ? null : { x: window.innerWidth / 2, y: window.innerHeight / 2 },
+      aimScreen: this.hud.paused || this.ending !== null ? null : this.inTank ? this.tankAim() : { x: window.innerWidth / 2, y: window.innerHeight / 2 },
       aimRange: null,
       aimTarget: 'none',
       rocketCharge: 0,
@@ -692,7 +787,7 @@ export class PrisonGame {
       buddyMax: 0,
       cinematic: false,
       cinematicLabel: '',
-      waypoint: null,
+      waypoint: this.hud.paused ? null : this.waypoint(),
       enemyBasesLeft: 0,
       enemyBasesTotal: 0,
       nearbyBase: null,
@@ -730,9 +825,83 @@ export class PrisonGame {
     this.hud.recordFrame();
   };
 
+  /** Back in the tank: the player's off the field, the squad's aboard (buddies on the hull, the rest in the trucks). */
+  private boardTank(): void {
+    this.inTank = true;
+    this.player.setVisible(false);
+    this.player.root.visible = false;
+    this.player.collider.setEnabled(false);
+    const aboard = this.followers.board(this.squadWorld);
+    this.passengers = aboard.others;
+    const names = this.settings.buddyNames;
+    this.breakout.board(aboard.buddies.map((b) => ({ name: names[b] })), aboard.others, this.settings.nameTags);
+    this.breakout.tank.driveStyle = this.settings.driveStyle;
+    this.hud.showBanner('BACK IN YOUR TANK!', 'Your buddies are on the hull and everyone else is in the trucks. Blow the main gate open!');
+    this.sound.music.stinger();
+  }
+
+  /** One frame in the tank: drive, shoot, and the trucks and the raiders follow. */
+  private stepTank(input: InputState, dt: number): void {
+    const tank = this.breakout.tank;
+    if (this.ending !== null) {
+      this.updateEnding(input, dt);
+    } else {
+      if (input.cameraTogglePressed) this.rig.toggle();
+      const shot = tank.step(input, dt);
+      if (shot) this.breakout.fire(shot.origin, shot.direction);
+      if (input.jamFiring) {
+        const glob = tank.tryJam();
+        if (glob) this.jam.fire(glob.origin, glob.direction, JAM_SPEED * glob.speedScale, true);
+      }
+      this.rig.update(tank, dt);
+      if (this.breakout.home) this.startEnding();
+    }
+    this.updateJam({ ...input, jamFiring: false }, dt);
+    for (const shot of this.guards.update(dt, [tank.position], (a, b) => this.sees(a, b))) this.resolveShot(shot, 'enemy');
+    this.world.step();
+    this.time += dt;
+    this.breakout.update(dt, this.time);
+    this.flag.update(dt, this.time);
+    this.towers.update(dt);
+    this.cells.update(dt);
+    this.impacts.update(dt);
+    this.updateTracers(dt);
+    const p = tank.position;
+    this.sun.position.set(p.x + 30, p.y + 60, p.z + 20);
+    this.sun.target.position.copy(p);
+  }
+
+  /** Home at Cooper's Base: everyone jumps down and cheers, and the end screen comes up. */
+  private startEnding(): void {
+    this.ending = 0;
+    this.breakout.arrive();
+    this.outside.cheer();
+    this.sound.music.fanfare();
+    this.hud.showEnding(
+      true,
+      'MISSION ACCOMPLISHED!',
+      `You broke out with your buddies and ${this.passengers} more prisoners, locked up ${this.guards.jailed} guards, knocked out ${this.breakout.jeepsKnockedOut} jeeps and got your tank home to Cooper's Base!`,
+    );
+  }
+
+  /** The ending: the camera circles the party; A / Enter plays again. */
+  private updateEnding(input: InputState, dt: number): void {
+    const t = (this.ending = (this.ending ?? 0) + dt);
+    this.breakout.celebrate(this.time);
+    const c = this.breakout.tank.position;
+    const a = t * 0.25;
+    this.rig.updateCinematic(new THREE.Vector3(c.x + Math.sin(a) * 18, 9, c.z + Math.cos(a) * 18), c.clone().setY(1.5), dt, 2);
+    if (t > 3) this.hud.setVictoryFooter('Press A / Enter to play it again (or Start / M for the level select)');
+    if (t > 3 && input.menu.confirm) startMission(MISSION);
+  }
+
   /** One frame of the game (everything but drawing it). */
   private step(input: InputState, dt: number): void {
     if (input.mapTogglePressed) this.hud.toggleBigMap();
+    if (this.inTank) {
+      this.stepTank(input, dt);
+      return;
+    }
     if (input.cameraTogglePressed) this.cam.toggle();
     if (input.megaJamPressed && this.followers.count > 0) {
       const holding = this.followers.toggleHold();
@@ -759,6 +928,7 @@ export class PrisonGame {
       const near = (s: ClimbSpot) => Math.hypot(p.x - s.from.x, p.z - s.from.z) < CLIMB_REACH && Math.abs(p.y - s.from.y) < 1.5;
       if (this.escape === 'pipechase' && near(layout.ladder)) this.startClimb(layout.ladder, true);
       else if (this.escape === 'roof' && near(layout.bakeryPipe)) this.startClimb(layout.bakeryPipe, false);
+      else if (!this.player.isDown && this.breakout.canBoard(p)) this.boardTank();
     }
     if (this.escape === 'roof' && !this.climbing) this.updateSearchlights(dt);
     else this.searchlights.update(dt, p, false);
@@ -773,6 +943,7 @@ export class PrisonGame {
 
     this.checkZones();
     this.time += dt;
+    this.breakout.update(dt, this.time);
     if (this.flag.update(dt, this.time)) this.hud.showCallout('OUR FLAG FLIES OVER THE BARRACKS!', '#9be27a');
     for (const at of this.towers.update(dt)) {
       // The tower crashes down in a cloud of dust.

@@ -68,7 +68,8 @@ export class Towers {
   private readonly list: Tower[] = [];
   private readonly body: RAPIER.RigidBody;
 
-  constructor(private readonly world: RAPIER.World, spots: { x: number; z: number }[]) {
+  /** `fallToward`: where they topple towards (the middle of the yard, so they come down inside it). */
+  constructor(private readonly world: RAPIER.World, spots: { x: number; z: number }[], private readonly fallToward: { x: number; z: number }) {
     this.body = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
     geos ??= towerGeometry();
     for (const spot of spots) {
@@ -102,20 +103,22 @@ export class Towers {
   }
 
   /**
-   * A shot along `dir` hit `collider`. Returns null if it wasn't a tower; otherwise the tower's
-   * spot, its hits left, and whether this shot brought it down.
+   * A shot hit `collider`. Returns null if it wasn't a tower; otherwise the tower's spot, its
+   * hits left, whether this shot brought it down, and which way it's falling (into the yard,
+   * whichever side it was shot from).
    */
-  hit(collider: RAPIER.Collider, dir: THREE.Vector3): { x: number; z: number; left: number; felled: boolean } | null {
+  hit(collider: RAPIER.Collider): { x: number; z: number; left: number; felled: boolean; dir: THREE.Vector3 } | null {
     const t = this.list.find((tw) => tw.collider?.handle === collider.handle);
     if (!t) return null;
     t.hp--;
-    if (t.hp > 0) return { x: t.x, z: t.z, left: t.hp, felled: false };
-    // Over it goes, away from the shot.
+    const dir = new THREE.Vector3(this.fallToward.x - t.x, 0, this.fallToward.z - t.z).normalize();
+    if (t.hp > 0) return { x: t.x, z: t.z, left: t.hp, felled: false, dir };
+    // Over it goes, into the yard.
     if (t.collider) this.world.removeCollider(t.collider, false);
     t.collider = null;
-    t.axis.set(dir.z, 0, -dir.x).normalize();
+    t.axis.set(dir.z, 0, -dir.x);
     t.fall = 0.001;
-    return { x: t.x, z: t.z, left: 0, felled: true };
+    return { x: t.x, z: t.z, left: 0, felled: true, dir };
   }
 
   /** Tips falling towers over. Returns the spots of any that hit the ground this frame. */
