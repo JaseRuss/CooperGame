@@ -15,6 +15,8 @@ const HALF_HEIGHT = 0.9 - RADIUS;
  */
 const SKIN = 0.08;
 const RUN_SPEED = 6;
+/** Creeping along (Shift): slow, but the guards' vision cones see only half as far. */
+const SNEAK_SPEED = 2.5;
 /** How far he veers off (radians) to get round a corner he's run into, and how far to the side he looks for a way past. */
 const VEER = 0.9;
 const SIDESTEP = [0.5, 0.9];
@@ -56,6 +58,8 @@ export class PlayerSoldier {
   private fallSpeed = 0;
   private settling = false;
   private hopPhase = 0;
+  /** Creeping along this frame (the sneak button held). */
+  sneaking = false;
   private fireCooldown = 0;
   private sinceHit = REGEN_DELAY;
   private readonly pos = new THREE.Vector3();
@@ -147,6 +151,7 @@ export class PlayerSoldier {
    */
   step(input: InputState, dt: number): boolean {
     if (this.isDown) {
+      this.sneaking = false;
       this.downFor = Math.max(0, this.downFor - dt);
       this.velocity.set(0, 0, 0);
       this.applyTransform(0);
@@ -167,8 +172,10 @@ export class PlayerSoldier {
     }
     const sin = Math.sin(this.yaw);
     const cos = Math.cos(this.yaw);
-    const wantX = (-sin * my + cos * mx) * RUN_SPEED;
-    const wantZ = (-cos * my - sin * mx) * RUN_SPEED;
+    this.sneaking = input.sneak;
+    const top = this.sneaking ? SNEAK_SPEED : RUN_SPEED;
+    const wantX = (-sin * my + cos * mx) * top;
+    const wantZ = (-cos * my - sin * mx) * top;
     const k = 1 - Math.exp(-ACCEL * dt);
     this.velocity.x += (wantX - this.velocity.x) * k;
     this.velocity.z += (wantZ - this.velocity.z) * k;
@@ -194,7 +201,7 @@ export class PlayerSoldier {
     let hop = 0;
     if (speed > 0.4) {
       this.hopPhase += dt * (6 + speed * 1.2);
-      hop = Math.abs(Math.sin(this.hopPhase)) * 0.25;
+      hop = Math.abs(Math.sin(this.hopPhase)) * (this.sneaking ? 0.1 : 0.25);
     } else {
       this.hopPhase = 0;
     }

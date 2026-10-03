@@ -19,6 +19,8 @@ export interface InputState {
   rocketPressed: boolean;
   /** A salvo of drunken AA missiles (Q / right bumper). */
   aaPressed: boolean;
+  /** Held: creep along quietly (on foot), or lie flat under the tarp (on the raft). Shift / Ctrl, RB or a click of the left stick. */
+  sneak: boolean;
   /** Mega jam: a ring of jam all round the tank (X / X button). */
   megaJamPressed: boolean;
   usingGamepad: boolean;
@@ -195,6 +197,7 @@ export class InputManager {
     let rocketHeld = this.keys.has('KeyF') || this.rightMouseDown;
     let aaHeld = this.keys.has('KeyQ');
     let megaJamHeld = this.keys.has('KeyX');
+    let sneak = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight') || this.keys.has('ControlLeft') || this.keys.has('ControlRight');
     const k = (...codes: string[]) => codes.some((c) => this.keys.has(c));
     // While a name is being typed, letters, Space and Backspace are text, not menu moves.
     const typing = this.textEntry;
@@ -248,6 +251,7 @@ export class InputManager {
       rocketHeld ||= pad.buttons[4]?.pressed ?? false; // LB / L1
       aaHeld ||= pad.buttons[5]?.pressed ?? false; // RB / R1
       megaJamHeld ||= pad.buttons[2]?.pressed ?? false; // X / Square
+      sneak ||= (pad.buttons[5]?.pressed ?? false) || (pad.buttons[10]?.pressed ?? false); // RB / R1 or the left stick's click
 
       const btn = (i: number) => pad.buttons[i]?.pressed ?? false;
       menuHeld.up ||= btn(12) || rawY < -MENU_STICK;
@@ -296,6 +300,7 @@ export class InputManager {
       rocketPressed,
       aaPressed,
       megaJamPressed,
+      sneak,
       usingGamepad,
       pointerLocked: this.pointerLocked,
       pointerLockAvailable: !this.pointerLockRefused,

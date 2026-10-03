@@ -362,56 +362,67 @@ knocked over. Press A or Enter to play again.
 
 ## Bonus: Prison Break
 
-A bonus level on foot. The tan army has locked you up and taken your tank: break out, free
-your buddies and the other prisoners, take over the prison and drive your tank home. It opens
-with a flyover of the prison (any button or key skips it).
+A bonus level on foot, played at night as a **stealth** escape. The tan army has locked you
+up and taken your tank. Break out of your cell, steal the gear for a raft (as the 1962 Alcatraz
+escapers did, from raincoats), paddle the long way across the sea past the search helicopters,
+and creep home to Cooper's Base as the dawn breaks. It opens with a flyover of the prison (any
+button or key skips it). The whole level is night, with the sky brightening as the raft nears
+the far shore, and full morning by the time you reach the base.
 
-- **The escape**, after the famous 1962 Alcatraz escape (without the digging). You start in a
-  cell with a dummy head on the pillow. The grille at the back of the cell is loose: shoot it
-  out and squeeze into the pipe chase, the narrow passage full of pipes between the two rows of
-  cells. Shoot out the grilles of Keston's and Max's cells next door to let them out, then
-  climb the pipes at the far end up through a ventilator onto the roof. Searchlights sweep the
-  roof: stay out of their pools of light (hide behind the ventilators and the raised skylight
-  roof), or you're spotted and sent back to the ventilator. Slide down the bakery's flue pipe
-  at the far end, and from there it's a fight.
-- **Taking the prison.** Four parts to take, listed top-centre with what's left in each:
-  **Cell Block A** (shoot the padlocks to free the rest of the prisoners; a guard walks the
-  back corridor too), **the yard** (four wooden guard towers with a guard up each: shoot the
-  legs and the tower topples, guard and all), **Cell Block B** in the east wing (Innes is
-  there; shoot the yellow lever box at the end of its corridor and every door opens at once)
-  and **the barracks** in the west wing (shoot their tan flag off the roof and a green one goes
-  up; Jason is in the punishment hut behind it). Each part you take becomes your checkpoint.
-  The guard towers always topple into the yard. When a part is down to its last guard or two,
-  a gold arrow points to them.
-- **The breakout.** Once the whole prison's yours, the motor pool's gate (in the south of the
-  east wing) slides open. Deal with its guards and walk up to your tank to climb back in: your
-  four buddies jump up on the hull and everyone else piles into the tan army's trucks. Blow the
-  main gate open with the main gun, then follow the gold arrow up the road north through
-  mission 1's woods (the trees go over when you drive into or shell them) to Cooper's Base,
-  the same camp as on mission 1. The trucks (captured tan ones, daubed with green paint by the
-  escapees) follow in your tracks and tan jeeps race after you (they can't hurt the tank, but
-  a shell knocks one out, and they turn tail in sight of the base's watchtowers). Roll in
-  through the base's gate and everyone jumps down to celebrate.
-- **Your squad** is the four buddies, two medics and two others: eight follow you. Press X to
-  tell them to hold where they are, and X again to follow. Everyone else you free stays
-  behind to **hold the prison**: one stands guard outside each cell with captured guards in
-  it, and the rest secure the doorways.
-- **Tan guards** shoot at you and the squad. Three rifle hits knock a guard over. The
-  prisoners' only weapon is the jam cannon: they spray jam at any guard they can see, and it
-  sticks him fast until he slips over.
-- The **jam riot cannon** (hold LT / E) sprays strawberry jam at the crosshair, out to about
-  20 m. A guard it lands on is stuck fast and can't shoot, then slips over. It runs out if
-  you hold it down too long and refills when you let go.
-- Knocked-over guards are **captured**: one of your side picks him up, carries him over his
-  head to an empty cell and sits him down inside, and the door swings shut on him.
-- The two **medics** (white helmet band, red cross on the pack) run to anyone knocked down and
-  patch them up, you included. You can help a friend up yourself by standing right next to
-  them. Your health comes back by itself if you keep out of trouble for a few seconds.
+- **The escape.** You start in a cell with a dummy head on the pillow. The grille at the back
+  of the cell is loose: shoot it out and squeeze into the pipe chase, the narrow passage full
+  of pipes between the two rows of cells. Shoot out the grilles of Keston's and Max's cells
+  next door to let them out, then climb the pipes at the far end up through a ventilator onto
+  the roof. Searchlights sweep the roof: stay out of their pools of light (hide behind the
+  ventilators and the raised skylight roof), or you're spotted and sent back to the ventilator.
+  Slide down the bakery's flue pipe at the far end.
+- **The gear.** Five pieces of escape gear are lying about the prison, each marked by a tall
+  golden beam you can see from across the yard (and an arrow on screen points to the nearest):
+  **raincoats** for the raft (in the barracks lockers), **life jackets** (in Cell Block B's
+  corridor), a **bellows pump**, which is a squeezebox as in 1962 (in the workshop bay in the
+  motor pool), **paddles** (in the punishment hut, behind a padlock) and a tin of **contact
+  cement** (out in the yard). Walk over a piece to take it. With the lot, shoot the padlock on
+  the **sea gate** in the north wall (it winds up into the gatehouse) and walk out along the
+  beach and the jetty to launch.
+- **Vision cones.** Every guard's field of view is drawn on the ground in front of him: pale
+  while he's calm, amber as he gets suspicious, red once he's raised the alarm, with a "?" or
+  "!" over his head. Stand in a cone with a clear line to him and the stealth meter (top
+  centre) fills, faster the closer you are. The cones are blocked by walls, crates, hedges
+  and hay bales. **Creeping** (hold Shift, or RB) halves how far they reach (the bright inner
+  part of each cone) but slows you right down. Guards pace their beats, stand and look slowly
+  from side to side, or watch from the two guard towers.
+- **Being found.** When a guard's sure, he raises the alarm: he and the guards near him shoot
+  if they can see you, otherwise go to the last place you were seen, search it, and finally
+  give up and go back to their beats. A **rifle shot is heard from far off** and brings guards
+  to look (so shooting a padlock or a tower isn't quiet), and a guard you shoot knows exactly
+  where you are. You can still fight a bit: three rifle hits knock a guard over, and the **jam
+  riot cannon** (hold LT / E, quiet) sticks him fast until he slips over. Knocked down, you
+  get back up at your last checkpoint with the guards stood down. Your squad (Keston and Max)
+  keep their heads down until the alarm goes up; X tells them to hold where they are.
+- **The crossing.** Launch the raft from the jetty (the squad climbs aboard) and paddle north:
+  W paddles, S backs water, A and D steer, and the mouse swings the camera round the raft.
+  It's about **five minutes** to the far shore. Four tan **search helicopters** sweep the sea
+  with searchlights: three work back and forth across the course in bands, and a fourth keeps
+  drifting over you. Stay out of the beams. A beam on you fills the meter and then they all
+  converge and fire (a life jacket takes the first three hits, the raft the next two, and then
+  it goes down and you're put back at the last buoy). Ways to survive: the white **mist
+  banks** hide you completely (they can't see in, and they give up in a few seconds if
+  you're hidden), and holding Shift pulls a **tarp** over you, which makes the beams
+  smaller on you and the helicopters worse shots, at the cost of speed. Lit **buoys** down
+  the middle are checkpoints, each with a spare life jacket tied to it.
+- **The far shore.** The raft grounds on a beach as the sun comes up. It's a few hundred
+  metres up the road to Cooper's Base, the same camp as on mission 1, through fields split by
+  hedges, a farm with a barn, mission 1's woods and a roadblock, with a dozen tan guards out
+  searching: pacing the beach, working the lanes between the hedges, watching from the barn and
+  holding the road. Hug the hedges, hay bales and trees, creep past the cones, and keep going.
+  Walk in through the base's gate and everyone celebrates; the end screen says whether you
+  were ever seen.
 
 Run about as a green army man (he hops, like all the toy soldiers) and aim over his shoulder.
 Move with the left stick or W A S D, aim with the right stick or mouse, fire with RT or a
-click, Y / C swaps to first person and Back / R goes back to the last checkpoint. It's in the
-level select as **5 · Bonus: Prison Break**. The plan is in `docs/plans/prison-break.md`.
+click, creep with RB / Shift, Y / C swaps to first person and Back / R goes back to the last
+checkpoint. It's in the level select as **5 · Bonus: Prison Break**. The plan is in
+`docs/plans/prison-break.md`.
 
 ## Level select
 

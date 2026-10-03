@@ -1,5 +1,11 @@
 # Plan: Bonus level "Prison Break"
 
+> **Redesigned (milestone 8).** The level is now a night-time stealth escape by raft, not a
+> fight for the prison and a tank drive. The beat-by-beat below and milestones 1 to 7 describe
+> the original design and are kept as history; see **Milestone 8** at the end for what the level
+> is now, and what was removed (the zones, the tank, trucks and jeeps, Cell Block B's lever,
+> the medics and most of the prisoners).
+
 Status: milestones 1 to 4 built (on foot; Cell Block A and the squad; guards, the jam riot cannon, capturing guards and medics; the whole compound). The Alcatraz-style opening (4b), the breakout (5) and the polish (6) are built: the level is finished. Decisions from the owner are below.
 
 ## The level in one paragraph
@@ -215,9 +221,72 @@ mission 4 never rolls on into it: the bonus is only picked by hand.
 ## Decisions
 
 1. **Unlocking:** in the level select as a bonus while it's tested.
-2. **Stealth:** none, just fighting.
+2. **Stealth:** none, just fighting. *(Reversed in milestone 8: the level is now a stealth escape, with a bit of fighting allowed.)*
 3. **Enemies:** tan only.
 4. **The freed soldiers at the end:** follow you out, in trucks.
 5. **Home:** Cooper's Base.
 6. **Added later:** beaten guards are carried to the cells by the squad; a jam riot cannon;
    medics who pick up downed allies.
+
+## Milestone 8: the stealth rework (night, gear, raft, shore)
+
+*(Done.)* From the owner: fix the bakery pipe's top, swap the tank escape for a raft, cut down
+the prison-break elements and replace them with collecting escape gear closer to the Alcatraz
+escape (makeshift raft, life jackets, a pump), keep a bit of fighting but make it mostly
+stealth; on foot to Cooper's Base after landing, with vision cones and guards searching;
+the whole level at night with the dawn breaking as you land; helicopters searching during the
+raft part, about five minutes long.
+
+### What the level is now
+
+1. **Cell, pipe chase, roof, bakery pipe** as before (night, searchlights on the roof). The
+   bakery flue's elbow now starts exactly on the pipe's top (the torus was centred on the pipe's
+   axis instead of a bend radius in from it) and turns in over the roof.
+2. **The gear** (`Gear.ts`, stage `out`). Five pieces lie about the compound under golden
+   beams: raincoats (barracks lockers), life jackets (Cell Block B corridor), a bellows pump
+   (workshop bay), paddles (punishment hut, behind a padlock) and contact cement (the yard).
+   Then shoot the padlock on the sea gate (`SeaGate.ts`, a portcullis in the north wall) and
+   walk out the jetty to launch.
+3. **Stealth** (`Guards.ts`, `VisionCones.ts`). Each guard has a vision cone (17 m, 26 m up a
+   tower, 70 degrees wide) drawn flat on the ground, clipped by walls with a ray per slice.
+   Suspicion fills while the player is in a cone with a clear line (faster when closer);
+   creeping (Shift / RB) shortens the reach to 55% (the bright inner part of the drawn cone).
+   At full, the guard raises the alarm: guards within 32 m start searching the spot, he and
+   anyone who sees the player shoot. Alarmed guards that lose sight hunt the last known spot
+   (by the nav graph in the compound, straight in the open), look round it, then give up and
+   walk back to their beat. Rifle shots are heard 26 m off and bring guards to look; a shot
+   guard is alarmed at once. The squad (Keston and Max only) holds fire until the alarm goes
+   up. Guards: 14 in the compound (down from 22), 12 on the far shore.
+4. **The raft** (`Raft.ts`, `Sea.ts`, `Helis.ts`, stage `raft`). About 1130 m of open sea:
+   at 3.7 m/s paddling flat out that is just over five minutes, longer with hiding. W/S paddle,
+   A/D steer, Shift pulls a tarp over you. Four search helicopters (`createGunshipModel` from
+   `HelicopterEnemy.ts`): three zigzag across the course through a band of it each, one weaves
+   over the raft. Standing in a beam fills a meter; when full they all hunt, firing bursts
+   (28% to hit, 10% if flat). Hull 5: three life jackets then two raft hits, then it goes down
+   and the player is put back at the last buoy (four of them, each also gives a spare jacket).
+   Eight mist banks along the course hide the raft completely; hunters give up in a few seconds
+   when hidden. A naive straight run at full speed is caught about once and sinks about
+   40% of the time (checked with `debugAdvance` runs).
+5. **The far shore** (`Outside.ts`, stage `shore`). A beach, hedged fields, a farm, mission
+   1's woods, a roadblock and the road up to the same Cooper's Base, 450 m, with twelve guards
+   out (beach pacers, lane patrols, a loop round the wood, a guard at the barn, the roadblock,
+   the perimeter). Checkpoints after the beach, the first fields and the roadblock. Within 32 m
+   of the base the ending plays.
+6. **Night and dawn** (`DayCycle.ts`). The look is night (moon out over the sea, stars, a few
+   real floodlight lights that follow the player round the compound). Dawn creeps in over the
+   last 45% of the crossing and finishes about 280 m up the shore.
+
+### Removed
+
+`Breakout.ts` and `Trucks.ts` (the tank, riders, trucks and jeeps), the zones and their
+checklist, the barracks flag objective, Cell Block B's lever box and prisoners, the medics, the
+guards on two of the four towers, and the prisoners holding the prison. Cell Block B, the
+barracks, the hut, the motor pool and the towers are still there as places to look for gear.
+
+### Notes for later
+
+- The helicopters' spotlights are real `SpotLight`s (four), the floodlights four `PointLight`s;
+  both sets are only switched on when they matter (toggling `visible` recompiles the materials
+  once), and the point lights are left out on Low graphics.
+- `PrisonGame.debugAdvance(seconds, input)` runs the game ahead without drawing (used to test
+  the crossing); `debugCam` pins the camera for screenshots. Both are dev only.
