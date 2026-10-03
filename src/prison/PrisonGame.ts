@@ -160,6 +160,8 @@ export class PrisonGame {
   /** The opening flyover: seconds into it (null once it's over). */
   private intro: number | null = 0;
   private lastTankSpot = new THREE.Vector3();
+  /** Dev only: pins the camera for screenshots. */
+  debugCam: { pos: [number, number, number]; look: [number, number, number] } | null = null;
   /** Mid-climb: the way he goes (waypoints), how far along (0..1), how long it takes, which way he faces, and what happens at the end. */
   private climbing: { path: THREE.Vector3[]; t: number; duration: number; yaw: number; spot: ClimbSpot; up: boolean } | null = null;
   /** How close the searchlights are to spotting him (0..1). */
@@ -1040,6 +1042,10 @@ export class PrisonGame {
 
     this.sun.position.set(p.x + 30, p.y + 60, p.z + 20);
     this.sun.target.position.copy(p);
+    if (import.meta.env.DEV && this.debugCam) {
+      this.camera.position.set(...this.debugCam.pos);
+      this.camera.lookAt(...this.debugCam.look);
+    }
   }
 }
 

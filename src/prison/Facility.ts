@@ -775,10 +775,18 @@ export class Facility {
     this.solid(b.minX + 1.4, 2.6, b.minZ - 0.12, b.maxX - 0.6, 3.2, b.minZ, 0xe6d27a, false);
     // The flue: up the cellhouse wall from the ground to above the roof's edge, with brackets.
     const p = PIPE_SPOT;
-    const pipe = new THREE.CylinderGeometry(0.2, 0.2, ROOF_TOP + 1.2, 12);
-    this.parts.add(pipe, plastic(0x55595e), p.x, (ROOF_TOP + 1.2) / 2, p.z);
+    const top = ROOF_TOP + 1.2;
+    const flue = plastic(0x55595e);
+    const pipe = new THREE.CylinderGeometry(0.2, 0.2, top, 12);
+    this.parts.add(pipe, flue, p.x, top / 2, p.z);
     pipe.dispose();
-    this.parts.add(new THREE.TorusGeometry(0.35, 0.2, 8, 12, Math.PI / 2), plastic(0x55595e), p.x, ROOF_TOP + 1.2, p.z, 0, Math.PI / 2, 0);
+    // The elbow: a quarter turn centred a bend radius in from the pipe, so it starts exactly on the pipe's top and ends heading in over the roof.
+    const bend = 0.35;
+    this.parts.add(new THREE.TorusGeometry(bend, 0.2, 8, 12, Math.PI / 2), flue, p.x + bend, top, p.z, 0, 0, Math.PI / 2);
+    const stub = new THREE.CylinderGeometry(0.2, 0.2, 0.9, 12).rotateZ(Math.PI / 2);
+    this.parts.add(stub, flue, p.x + bend + 0.45, top + bend, p.z);
+    stub.dispose();
+    this.parts.add(new THREE.CylinderGeometry(0.15, 0.15, 0.02, 12).rotateZ(Math.PI / 2), plastic(0x16181a), p.x + bend + 0.9, top + bend, p.z);
     for (let y = 1; y < ROOF_TOP; y += 1.6) this.parts.add(this.box, plastic(STEEL), p.x + 0.1, y, p.z, 0, 0, 0, 0.3, 0.1, 0.5);
     this.blocker(p.x - 0.2, 0, p.z - 0.2, p.x + 0.2, ROOF_TOP - 0.5, p.z + 0.2);
   }
