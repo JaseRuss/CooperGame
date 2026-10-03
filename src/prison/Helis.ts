@@ -5,19 +5,19 @@ import { SEA_LEVEL } from './Sea';
 
 /** How high they fly, and how big a pool of light a searchlight throws on the water. */
 const ALTITUDE = 44;
-const POOL = 10;
+const POOL = 9;
 /** Seconds in a beam before they're sure of the raft (a sweep crossing it takes about two). */
-const SPOT_TIME = 1.8;
+const SPOT_TIME = 2.6;
 /** Seconds of being hunted (they have to lose sight of you for this long before they go back to searching). */
-const HUNT_TIME = 18;
-const HUNT_SPEED = 15;
+const HUNT_TIME = 9;
+const HUNT_SPEED = 9;
 /** In a chase each gunship fires a burst this often, once it's within range and has had a moment to react. */
-const FIRE_EVERY = 3;
-const FIRE_RANGE = 95;
-const REACTION = 2.5;
+const FIRE_EVERY = 4.8;
+const FIRE_RANGE = 80;
+const REACTION = 4;
 /** Chance a burst hits the raft: sitting up, and lying flat under the tarp. */
-const HIT_CHANCE = 0.28;
-const HIT_CHANCE_FLAT = 0.1;
+const HIT_CHANCE = 0.12;
+const HIT_CHANCE_FLAT = 0.04;
 
 interface Heli {
   readonly model: THREE.Group;
@@ -89,9 +89,9 @@ export class SearchHelis {
   /** `start` and `end` are the z of the jetty and of the far beach. */
   constructor(private readonly start: number, private readonly end: number) {
     const beats = [
-      { at: 0.26, half: 0.12, swing: 66, passes: 8, speed: 6.5, offset: 40 },
-      { at: 0.52, half: 0.13, swing: 70, passes: 8, speed: 7, offset: 300 },
-      { at: 0.78, half: 0.13, swing: 66, passes: 8, speed: 7.5, offset: 120 },
+      { at: 0.26, half: 0.12, swing: 66, passes: 8, speed: 4.6, offset: 40 },
+      { at: 0.52, half: 0.13, swing: 70, passes: 8, speed: 5, offset: 300 },
+      { at: 0.78, half: 0.13, swing: 66, passes: 8, speed: 5.3, offset: 120 },
       null,
     ];
     beats.forEach((beat, index) => {
@@ -154,7 +154,7 @@ export class SearchHelis {
       return out.set(x, ALTITUDE, this.start - length * (b.at - b.half + 2 * b.half * bandFrac));
     }
     // The fourth weaves across the course and drifts over the raft and ahead of it, over and over.
-    return out.set(Math.sin(t * 0.13 + 1) * 85, ALTITUDE + 4, raftZ - 60 - 70 * Math.sin(t * 0.055));
+    return out.set(Math.sin(t * 0.1 + 1) * 80, ALTITUDE + 4, raftZ - 70 - 80 * Math.sin(t * 0.045));
   }
 
   update(dt: number, raft: THREE.Vector3, hidden: number, flat: number, progress: number): HeliReport {
@@ -183,6 +183,8 @@ export class SearchHelis {
     }
 
     const alive = this.helis.filter((h) => h.beat !== null || progress > 0.12);
+    // In a hunt only the two nearest gunships bother to fire; the rest just keep the beams on the area.
+    const shooters = new Set([...alive].sort((a, b) => Math.hypot(a.pos.x - raft.x, a.pos.z - raft.z) - Math.hypot(b.pos.x - raft.x, b.pos.z - raft.z)).slice(0, 2));
     alive.forEach((h, rank) => {
       // Where it wants to be: its beat, or (hunting) circling the raft's last known place.
       const want = this.tmp;
@@ -231,7 +233,7 @@ export class SearchHelis {
         h.exposure = Math.min(1, h.exposure + dt / SPOT_TIME);
         report.lit = true;
       } else {
-        h.exposure = Math.max(0, h.exposure - dt * 0.6);
+        h.exposure = Math.max(0, h.exposure - dt * 0.9);
       }
       report.exposure = Math.max(report.exposure, this.hunting ? 1 : h.exposure);
       report.nearest = Math.min(report.nearest, Math.hypot(h.pos.x - raft.x, h.pos.z - raft.z));
@@ -246,7 +248,7 @@ export class SearchHelis {
       }
 
       // Hunting: bursts from the chin gun at the raft, if they can see it.
-      if (this.hunting && seen && this.huntAge > REACTION) {
+      if (this.hunting && seen && this.huntAge > REACTION && shooters.has(h)) {
         h.fireTimer -= dt;
         const range = Math.hypot(h.pos.x - raft.x, h.pos.z - raft.z);
         if (h.fireTimer <= 0 && range < FIRE_RANGE) {

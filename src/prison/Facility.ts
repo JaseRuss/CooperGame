@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { PartBuilder } from '../utils/modelKit';
 import { plastic } from '../utils/plastic';
+import { mulberry32 } from '../utils/rng';
 
 const CONCRETE = 0x9c988c;
 const CONCRETE_DARK = 0x7d7a70;
@@ -18,11 +19,13 @@ const CEILING = 3.6;
 const WALL = 0.6;
 
 /** The whole compound's inside edges: the yard in the middle, a wing either side. */
-const COMPOUND = { minX: -72, maxX: 72, minZ: -25, maxZ: 42 };
+const COMPOUND = { minX: -100, maxX: 100, minZ: -45, maxZ: 68 };
 /** The walls between the yard and the wings (at x = ±YARD_EDGE), each with a doorway from DOORWAY_Z0 to DOORWAY_Z1. */
 const YARD_EDGE = 30;
 const DOORWAY_Z0 = -5;
 const DOORWAY_Z1 = 1;
+/** Every doorway through those walls (z from, z to): the main one, one at the north end by the recreation yard, one at the south. */
+const DOORWAYS: [number, number][] = [[-42, -36], [DOORWAY_Z0, DOORWAY_Z1], [56, 62]];
 const CELL_WIDTH = 5;
 /** Each cell's door: from this far along the cell's front to that far (the rest is fixed bars). */
 const DOOR_FROM = 3.3;
@@ -70,7 +73,7 @@ const PIPE_SPOT = { x: -24.05, z: 24 };
  */
 const LOT = { minX: 39, maxX: 71.4, minZ: 27.5, maxZ: 41.4, gateX0: 40, gateX1: 46.4 };
 /** The ground: the compound and the beach north of it, down to the water's edge. */
-const GROUND = { minX: -150, maxX: 150, minZ: -54, maxZ: 70 };
+const GROUND = { minX: -125, maxX: 125, minZ: -76, maxZ: 92 };
 /** The jetty running out into the sea from the gate: where the raft is launched. */
 export const JETTY = { x0: -2.5, x1: 2.5, z0: GROUND.minZ + 1, z1: GROUND.minZ - 8, y: 0.22 };
 const BLOCK_B: BlockPlan = { minX: 38, maxX: 68, minZ: 8, maxZ: 22, corridor: 12, doorX: 53 };
@@ -78,7 +81,7 @@ const BLOCK_B: BlockPlan = { minX: 38, maxX: 68, minZ: 8, maxZ: 22, corridor: 12
 const BARRACKS = { minX: -66, maxX: -42, minZ: -18, maxZ: -4, doorZ0: -12.5, doorZ1: -9.5, height: 3.4 };
 const HUT = { minX: -66, maxX: -61, frontZ: 8, backZ: 13 };
 /** The floodlight poles (x, z). */
-const LAMPS: [number, number][] = [[-28.4, -14], [28.4, -14], [-14, -23.4], [14, -23.4], [-28.4, 22], [28.4, 22], [50, -23.4], [-50, -23.4]];
+const LAMPS: [number, number][] = [[-28.4, -14], [28.4, -14], [-14, -43.4], [14, -43.4], [-28.4, 22], [28.4, 22], [50, -43.4], [-50, -43.4], [-28.4, -36], [28.4, 56], [-70, -30], [70, 50], [-72, 50], [72, -30], [0, 62], [-40, 62], [40, 62]];
 
 /** One cell: its sides, and the door in its barred front (which faces -Z). */
 export interface CellSpot {
@@ -302,7 +305,9 @@ export class Facility {
         // The yard: two behind crates facing the cell block, one walking the north wall, one up each tower.
         { zone: 'yard', x: -13, z: -10, yaw: Math.PI },
         { zone: 'yard', x: 6, z: -8.5, yaw: Math.PI },
-        { zone: 'yard', x: -20, z: -23, yaw: -Math.PI / 2, patrol: [{ x: -20, z: -23 }, { x: 20, z: -23 }] },
+        { zone: 'yard', x: -22, z: -41, yaw: -Math.PI / 2, patrol: [{ x: -22, z: -41 }, { x: 22, z: -41 }] },
+        // On the recreation yard's raised platform, looking back down the steps.
+        { zone: 'yard', x: 0, z: -41, yaw: Math.PI, height: 0.9, sight: 26 },
         ...towers.map((t) => ({ zone: 'yard' as const, x: t.x, z: t.z, yaw: Math.atan2(t.x, t.z + 2), height: towerTop })),
         // The east wing: one on the corridor of Cell Block B, one walking the open ground in front of it.
         { zone: 'blockB', x: 46, z: 10, yaw: -Math.PI / 2, patrol: [{ x: 46, z: 10 }, { x: 62, z: 10 }] },
@@ -313,6 +318,10 @@ export class Facility {
         // The west wing: one in the barracks, one walking outside it.
         { zone: 'barracks', x: -55, z: -12.5, yaw: -Math.PI / 2 },
         { zone: 'barracks', x: -37, z: -16, yaw: Math.PI, patrol: [{ x: -37, z: -16 }, { x: -37, z: 14 }] },
+        // Round the dining hall and hospital, along the east lane by the factory, and along the south wall.
+        { zone: 'barracks', x: -74, z: -30, yaw: Math.PI, patrol: [{ x: -74, z: -30 }, { x: -74, z: 48 }] },
+        { zone: 'blockB', x: 74, z: -22, yaw: Math.PI, patrol: [{ x: 74, z: -22 }, { x: 74, z: 28 }] },
+        { zone: 'motorpool', x: -80, z: 60, yaw: -Math.PI / 2, patrol: [{ x: -80, z: 60 }, { x: 80, z: 60 }] },
       ],
       navPoints: this.navPoints(cells),
     };
@@ -415,7 +424,7 @@ export class Facility {
       for (let z = COMPOUND.minZ + 2.5; z < COMPOUND.maxZ; z += 5.5) if (!inBlock(x, z) && open(x, z)) points.push({ x, z });
     }
     // The doorways through the yard's walls, and into the barracks.
-    for (const x of [-YARD_EDGE, YARD_EDGE]) points.push({ x: x - 1.5, z: (DOORWAY_Z0 + DOORWAY_Z1) / 2 }, { x: x + 1.5, z: (DOORWAY_Z0 + DOORWAY_Z1) / 2 });
+    for (const x of [-YARD_EDGE, YARD_EDGE]) for (const [z0, z1] of DOORWAYS) points.push({ x: x - 1.5, z: (z0 + z1) / 2 }, { x: x + 1.5, z: (z0 + z1) / 2 });
     const barracksDoor = (BARRACKS.doorZ0 + BARRACKS.doorZ1) / 2;
     points.push({ x: BARRACKS.maxX + 1.5, z: barracksDoor }, { x: BARRACKS.maxX - 1.5, z: barracksDoor });
     for (const b of [BLOCK_A, BLOCK_B]) {
@@ -529,11 +538,178 @@ export class Facility {
     this.wall(maxX, minZ, maxX + WALL, maxZ, { x: 1, z: 0 });
     this.buildGatehouse();
     for (const x of [-YARD_EDGE, YARD_EDGE]) {
-      this.wall(x - WALL / 2, minZ, x + WALL / 2, DOORWAY_Z0);
-      this.wall(x - WALL / 2, DOORWAY_Z1, x + WALL / 2, maxZ);
-      // Posts either side of the doorway.
-      for (const z of [DOORWAY_Z0, DOORWAY_Z1]) this.solid(x - 0.5, 0, z - 0.3, x + 0.5, COMPOUND_WALL + 0.5, z + 0.3, CONCRETE_DARK);
+      let from = minZ;
+      for (const [z0, z1] of DOORWAYS) {
+        this.wall(x - WALL / 2, from, x + WALL / 2, z0);
+        // Posts either side of the doorway.
+        for (const z of [z0, z1]) this.solid(x - 0.5, 0, z - 0.3, x + 0.5, COMPOUND_WALL + 0.5, z + 0.3, CONCRETE_DARK);
+        from = z1;
+      }
+      this.wall(x - WALL / 2, from, x + WALL / 2, maxZ);
     }
+    this.buildAlcatraz();
+  }
+
+  /**
+   * A plain concrete or brick building (not enterable: one solid block with a facade): rows of
+   * windows on every face, a cornice, a roof (`hip`, `flat` or the factory's `sawtooth`), and a
+   * door on the side facing `door` (E, W, N or S) with a painted sign over it.
+   */
+  private building(
+    x0: number,
+    z0: number,
+    x1: number,
+    z1: number,
+    h: number,
+    color: number,
+    o: { roof: 'hip' | 'flat' | 'sawtooth'; roofColor?: number; floors?: number; door?: 'E' | 'W' | 'N' | 'S'; sign?: string; chimney?: boolean },
+  ): void {
+    this.solid(x0, 0, z0, x1, h, z1, color);
+    this.cornice(x0, z0, x1, z1, h - 0.3);
+    const floors = o.floors ?? 1;
+    const glass = 0x2a3040;
+    const frame = 0xd9d4c4;
+    const win = (cx: number, y: number, cz: number, along: 'x' | 'z', out: number) => {
+      const w = 1.3;
+      const t = 0.05;
+      const [sx, sz] = along === 'x' ? [w + 0.3, t] : [t, w + 0.3];
+      const [gx, gz] = along === 'x' ? [w, t * 1.6] : [t * 1.6, w];
+      const ox = along === 'z' ? out * t / 2 : 0;
+      const oz = along === 'x' ? out * t / 2 : 0;
+      this.parts.add(this.box, plastic(frame), cx + ox, y, cz + oz, 0, 0, 0, sx, 1.8, sz);
+      this.parts.add(this.box, plastic(glass), cx + ox * 2, y, cz + oz * 2, 0, 0, 0, gx, 1.5, gz);
+    };
+    const doorAt = (face: string) => o.door === face;
+    for (let f = 0; f < floors; f++) {
+      const y = 1.6 + f * 3.6;
+      for (let x = x0 + 2; x < x1 - 1; x += 3.2) {
+        if (!(doorAt('N') && Math.abs(x - (x0 + x1) / 2) < 2.4 && f === 0)) win(x, y, z0, 'x', -1);
+        if (!(doorAt('S') && Math.abs(x - (x0 + x1) / 2) < 2.4 && f === 0)) win(x, y, z1, 'x', 1);
+      }
+      for (let z = z0 + 2; z < z1 - 1; z += 3.2) {
+        if (!(doorAt('W') && Math.abs(z - (z0 + z1) / 2) < 2.4 && f === 0)) win(x0, y, z, 'z', -1);
+        if (!(doorAt('E') && Math.abs(z - (z0 + z1) / 2) < 2.4 && f === 0)) win(x1, y, z, 'z', 1);
+      }
+    }
+    // The door, and the sign over it.
+    if (o.door) {
+      const cx = (x0 + x1) / 2;
+      const cz = (z0 + z1) / 2;
+      const [dx, dz, yaw] = o.door === 'E' ? [x1 + 0.04, cz, Math.PI / 2] : o.door === 'W' ? [x0 - 0.04, cz, -Math.PI / 2] : o.door === 'N' ? [cx, z0 - 0.04, Math.PI] : [cx, z1 + 0.04, 0];
+      const alongX = o.door === 'N' || o.door === 'S';
+      this.parts.add(this.box, plastic(0x3a2a1c), dx, 1.5, dz, 0, 0, 0, alongX ? 2.4 : 0.1, 3, alongX ? 0.1 : 2.4);
+      this.parts.add(this.box, plastic(CONCRETE_DARK), dx, 3.15, dz, 0, 0, 0, alongX ? 3 : 0.2, 0.3, alongX ? 0.2 : 3);
+      if (o.sign) this.textBoard(o.sign, dx + (o.door === 'E' ? 0.06 : o.door === 'W' ? -0.06 : 0), 4.1, dz + (o.door === 'S' ? 0.06 : o.door === 'N' ? -0.06 : 0), 4.4, 0.7, '#c4a468', '#3a2e1a', yaw);
+    }
+    const roof = plastic(o.roofColor ?? 0x5d6266);
+    const w = x1 - x0;
+    const d = z1 - z0;
+    if (o.roof === 'flat') {
+      this.parts.add(this.box, roof, (x0 + x1) / 2, h + 0.18, (z0 + z1) / 2, 0, 0, 0, w + 0.6, 0.36, d + 0.6);
+    } else if (o.roof === 'hip') {
+      const rise = Math.min(w, d) * 0.32;
+      const pyramid = new THREE.ConeGeometry(Math.SQRT1_2 * 1.02, 1, 4).rotateY(Math.PI / 4);
+      this.parts.add(pyramid, roof, (x0 + x1) / 2, h + rise / 2, (z0 + z1) / 2, 0, 0, 0, w + 0.8, rise, d + 0.8);
+      pyramid.dispose();
+      this.parts.add(this.box, roof, (x0 + x1) / 2, h + 0.1, (z0 + z1) / 2, 0, 0, 0, w + 0.8, 0.2, d + 0.8);
+    } else {
+      // A factory's sawtooth: slanted slabs with a glazed wall behind each.
+      this.parts.add(this.box, roof, (x0 + x1) / 2, h + 0.1, (z0 + z1) / 2, 0, 0, 0, w + 0.4, 0.2, d + 0.4);
+      const teeth = Math.round(w / 4.4);
+      const t = w / teeth;
+      for (let i = 0; i < teeth; i++) {
+        const cx = x0 + t * (i + 0.5);
+        this.parts.add(this.box, roof, cx - t * 0.05, h + 1.0, (z0 + z1) / 2, 0, 0, -0.38, t * 0.95, 0.14, d);
+        this.parts.add(this.box, plastic(0x8fb4d0), cx + t * 0.42, h + 0.85, (z0 + z1) / 2, 0, 0, 0, 0.08, 1.4, d - 0.4);
+      }
+    }
+    if (o.chimney) this.solid(x0 + 2, h, z0 + 2, x0 + 3.2, h + 4, z0 + 3.2, 0x7a4a3a, false);
+  }
+
+  /**
+   * Alcatraz: the recreation yard's concrete steps and handball wall, the dining hall, hospital,
+   * powerhouse with its tall chimney, the factory and the warden's house, concrete guard towers
+   * at the corners, the street signs in the cellhouse, and the rock the whole thing sits on.
+   * Bigger than the cellhouse and its wings: it all stands round the original compound.
+   */
+  private buildAlcatraz(): void {
+    const { minX, maxX, minZ, maxZ } = COMPOUND;
+    // The recreation yard: terraced concrete steps up to a raised platform, with a handball wall behind it.
+    for (let k = 1; k <= 3; k++) this.solid(-14, 0, minZ + 0.6, 14, 0.3 * k, -34 - (k - 1) * 0.9, k === 3 ? CONCRETE : CONCRETE_DARK);
+    // (Two wall panels, with the way to the sea gate left open between them.)
+    const paint = plastic(0xe8e4d0);
+    for (const [a, b] of [[-14, -5], [5, 14]]) {
+      this.solid(a, 0.9, minZ + 0.6, b, 4.4, minZ + 1.1, CONCRETE);
+      this.parts.add(this.box, paint, (a + b) / 2, 1.4, minZ + 1.15, 0, 0, 0, b - a, 0.1, 0.02);
+      for (let x = a + 1.5; x < b; x += 3) this.parts.add(this.box, paint, x, 2.7, minZ + 1.15, 0, 0, 0, 0.1, 2.6, 0.02);
+    }
+    // Benches along the steps.
+    for (const x of [-20, 20]) {
+      this.solid(x - 1.2, 0.42, -33, x + 1.2, 0.5, -32.5, WOOD);
+      for (const lx of [x - 1, x + 1]) this.solid(lx - 0.06, 0, -33, lx + 0.06, 0.42, -32.6, STEEL);
+    }
+
+    // Dining hall and hospital in the west; powerhouse and its chimney.
+    this.building(-96, -14, -78, 8, 5.5, 0xb8ad94, { roof: 'hip', roofColor: 0x6e4a3a, door: 'E', sign: 'DINING HALL' });
+    this.building(-96, 22, -80, 42, 8, 0xd8d4c8, { roof: 'hip', roofColor: 0x5e6a5e, floors: 2, door: 'E', sign: 'HOSPITAL' });
+    this.building(-97, -40, -83, -26, 7, 0x9a8a78, { roof: 'flat', door: 'S', sign: 'POWERHOUSE' });
+    const stack = new THREE.CylinderGeometry(1.1, 1.6, 26, 14);
+    this.parts.add(stack, plastic(0x8a4a3a), -90, 13, -33);
+    this.parts.add(new THREE.CylinderGeometry(1.2, 1.2, 1.2, 14), plastic(0xe8e4d0), -90, 22, -33);
+    this.parts.add(new THREE.CylinderGeometry(1.15, 1.1, 0.7, 14), plastic(0x1a1a1c), -90, 26.3, -33);
+    stack.dispose();
+    this.blocker(-91.4, 0, -34.4, -88.6, 26, -31.6);
+    for (const z of [-30, -36]) this.parts.add(new THREE.CylinderGeometry(0.25, 0.25, 8, 8), plastic(0x6a6e72), -90, 7.5, z, 0, 0, 0);
+    // The factory, with a loading dock, and the warden's house, in the east.
+    this.building(76, -26, 98, 6, 7, 0xa8a090, { roof: 'sawtooth', roofColor: 0x4f555a, door: 'W', sign: 'MODEL INDUSTRIES' });
+    this.solid(76, 0, 6, 98, 1.1, 8.6, CONCRETE_DARK);
+    for (const x of [80, 87, 94]) this.parts.add(this.box, plastic(0x3a4046), x, 2.6, 6.04, 0, 0, 0, 3, 2.6, 0.08);
+    this.building(78, 34, 96, 54, 7.2, 0xe4dccb, { roof: 'hip', roofColor: 0x5a6a62, floors: 2, door: 'W', sign: "WARDEN'S HOUSE", chimney: true });
+    for (const z of [38, 44, 50]) this.solid(76.6, 0, z - 0.15, 77.2, 3.4, z + 0.15, 0xf0ece0, false);
+    this.parts.add(this.box, plastic(0x5a6a62), 76.9, 3.5, 44, 0, 0, 0, 1.6, 0.2, 16);
+
+    // Concrete guard towers at the corners, each with a lamp.
+    for (const [x, z] of [[minX + 3, minZ + 3], [minX + 3, maxZ - 3], [maxX - 3, maxZ - 3]]) {
+      this.solid(x - 2, 0, z - 2, x + 2, 8, z + 2, CONCRETE);
+      this.solid(x - 2.6, 8, z - 2.6, x + 2.6, 8.4, z + 2.6, CONCRETE_DARK, false);
+      this.solid(x - 2.1, 8.4, z - 2.1, x + 2.1, 10, z + 2.1, 0x2a3040, false);
+      this.parts.add(new THREE.ConeGeometry(3.5, 1.4, 4), plastic(ROOF), x, 10.9, z, 0, Math.PI / 4, 0);
+      this.parts.add(new THREE.SphereGeometry(0.28, 10, 8), new THREE.MeshBasicMaterial({ color: LAMP }), x, 9.2, z + (z > 0 ? -2.3 : 2.3));
+      for (let y = 1; y < 8; y += 2.2) this.solid(x - 2.02, y, z - 0.4, x - 2.0, y + 0.9, z + 0.4, 0x2a3040, false);
+    }
+
+    // The streets of the cellhouse: Broadway down the front, Michigan Avenue along the back.
+    this.textBoard('BROADWAY', BLOCK_A.maxX + 0.35, 3.2, (BLOCK_A.minZ + BLOCK_A.corridor) / 2, 3, 0.55, '#2a3a52', '#e8e4d0', Math.PI / 2);
+    this.textBoard('MICHIGAN AVENUE', BLOCK_A.maxX + 0.35, 3.2, (BACK_ROW.front + CELLHOUSE.maxZ) / 2, 3.6, 0.55, '#2a3a52', '#e8e4d0', Math.PI / 2);
+
+    // The rock: a cliff all round the edge of the island, and boulders at its foot.
+    const g = GROUND;
+    const rock = plastic(0x5f625c);
+    const skirt = 6;
+    for (const [x0, z0, x1, z1] of [
+      [g.minX - 5, g.maxZ, g.maxX + 5, g.maxZ + 5],
+      [g.minX - 5, g.minZ, g.minX, g.maxZ],
+      [g.maxX, g.minZ, g.maxX + 5, g.maxZ],
+    ]) this.parts.add(this.box, rock, (x0 + x1) / 2, -skirt / 2, (z0 + z1) / 2, 0, 0, 0, x1 - x0, skirt, z1 - z0);
+    const rng = mulberry32(404);
+    const boulders = [plastic(0x6a6c66), plastic(0x55584f), plastic(0x7a7a72)];
+    const boulder = (x: number, z: number) => {
+      const r = 1.2 + rng() * 3;
+      this.parts.add(new THREE.DodecahedronGeometry(r, 0), boulders[Math.floor(rng() * 3)], x, -0.2 + r * 0.25, z, rng(), rng() * 3, rng(), 1, 0.7 + rng() * 0.4, 1);
+    };
+    for (let x = g.minX - 3; x < g.maxX + 4; x += 3.5) boulder(x + rng() * 2, g.maxZ + 1 + rng() * 3);
+    for (let z = g.minZ + 2; z < g.maxZ; z += 3.5) {
+      boulder(g.minX - 1 - rng() * 3, z + rng() * 2);
+      boulder(g.maxX + 1 + rng() * 3, z + rng() * 2);
+    }
+    // A few crates for cover in the new parts.
+    const crate = (x: number, z: number, stack = 1) => {
+      for (let i = 0; i < stack; i++) {
+        this.solid(x - 0.6, i * 1.2, z - 0.6, x + 0.6, (i + 1) * 1.2, z + 0.6, WOOD);
+        this.solid(x - 0.62, i * 1.2 + 0.5, z - 0.62, x + 0.62, i * 1.2 + 0.7, z + 0.62, 0x6e5230, false);
+      }
+    };
+    for (const [x, z, n] of [[-8, -30, 2], [-6.7, -30.3, 1], [10, -32, 2], [-74, -5, 2], [-75.2, -4.6, 1], [74, 12, 2], [75.3, 12.4, 1], [-30, 58, 2], [-28.8, 58.4, 1], [30, 60, 2], [60, 58, 1], [-60, 60, 2], [-96, 12, 1], [90, 14, 2]] as [number, number, number][]) crate(x, z, n);
   }
 
   /**
@@ -883,7 +1059,7 @@ export class Facility {
   }
 
   /** A painted board with `text` on it, facing -Z, centred at (x, y, z). */
-  private textBoard(text: string, x: number, y: number, z: number, w: number, h: number, bg: string, fg: string): void {
+  private textBoard(text: string, x: number, y: number, z: number, w: number, h: number, bg: string, fg: string, yaw = Math.PI): void {
     const c = document.createElement('canvas');
     c.width = 512;
     c.height = Math.round((512 * h) / w);
@@ -899,7 +1075,7 @@ export class Facility {
     tex.colorSpace = THREE.SRGBColorSpace;
     const board = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.8 }));
     board.position.set(x, y, z);
-    board.rotation.y = Math.PI;
+    board.rotation.y = yaw;
     this.group.add(board);
   }
 
