@@ -312,3 +312,11 @@ them, add hungry sharks in bibs as scenery, and make the prison bigger and more 
   sweeping beams that fade at dawn. The wing walls have three doorways each (north, middle and
   south). Four more guards (18 in the compound), one on the recreation yard's platform. The new
   buildings are solid blocks with facades, not enterable.
+
+## Milestone 10: the green triangle and the leaks
+
+*(Done.)* The raft is now an army-green inflatable triangle (three tubes, rounded corners, floor,
+valve), seating the crew inside it. Twice in the crossing (30% and 66% of the way) a seam splits
+and the air drains over 20 s (`PrisonGame.updateAir`): the raft sags, speed drops to 35% when flat,
+the HUD shows an Air bar, and each press of the fire button (A, Space or click) puts back 8.5%
+(about twelve presses). Flat for four seconds sinks it (back to the last buoy, as for hits).
