@@ -27,6 +27,7 @@ import { SeaGate } from './SeaGate';
 import { Sea, SEA_LEVEL } from './Sea';
 import { Raft, RaftCam, CRUISE } from './Raft';
 import { SearchHelis, type HeliReport } from './Helis';
+import { Sharks } from './Sharks';
 import { DayCycle, MOON_DIR } from './DayCycle';
 import type { Cell } from './Cells';
 import { FRIEND_SHOTS, ENEMY_SHOTS, WALLS_ONLY } from './groups';
@@ -172,6 +173,7 @@ export class PrisonGame {
   private raft!: Raft;
   private raftCam!: RaftCam;
   private helis!: SearchHelis;
+  private sharks!: Sharks;
   private sky!: NightSky;
   private day!: DayCycle;
   private searchlights!: Searchlights;
@@ -301,6 +303,8 @@ export class PrisonGame {
     this.raftCam = new RaftCam();
     this.helis = new SearchHelis(RAFT_START_Z, landing);
     this.scene.add(this.helis.group);
+    this.sharks = new Sharks(RAFT_START_Z, landing);
+    this.scene.add(this.sharks.group);
     this.outside = new Outside(this.world, await loadTreeModels());
     this.scene.add(this.outside.group);
     // Stars and a moon; the day cycle fades them and brings the dawn (there are no firefights on the horizon here).
@@ -1013,6 +1017,7 @@ export class PrisonGame {
       focus = this.player.position;
     }
     this.cones.update(this.camera.position, this.time);
+    this.sharks.update(dt, this.time, focus, this.stage === 'raft' ? this.raft.position : null);
     this.updateAtmosphere(dt, focus);
     if (import.meta.env.DEV && this.debugCam) {
       this.camera.position.set(...this.debugCam.pos);
