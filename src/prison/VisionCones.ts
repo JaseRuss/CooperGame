@@ -145,7 +145,7 @@ export class VisionCones {
     const reach = g.sight;
     const p = cone.position;
     // A guard up a tower looks down on the ground, so his cone is drawn there.
-    const ground = g.fixed ? 0 : g.pos.y;
+    const ground = g.fixed && g.pos.y > 2 ? 0 : g.pos.y;
     const y = ground + HEIGHT;
     p.setXYZ(0, g.pos.x, y, g.pos.z);
     this.origin.set(g.pos.x, ground + 0.5, g.pos.z);

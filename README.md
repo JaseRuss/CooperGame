@@ -362,7 +362,11 @@ knocked over. Press A or Enter to play again.
 
 ## Bonus: Prison Break
 
-A bonus level on foot, played at night as a **stealth** escape. The tan army has locked you
+A bonus level on foot, played at night as a **stealth** escape, on a rocky island prison
+modelled on Alcatraz: the cellhouse (with Broadway and Michigan Avenue), the dining hall,
+hospital, powerhouse and its tall chimney, the factory and the warden's house, concrete corner
+towers, a terraced recreation yard with a handball wall, and a lighthouse whose beams sweep the
+sea all night. The tan army has locked you
 up and taken your tank. Break out of your cell, steal the gear for a raft (as the 1962 Alcatraz
 escapers did, from raincoats), paddle the long way across the sea past the search helicopters,
 and creep home to Cooper's Base as the dawn breaks. It opens with a flyover of the prison (any
@@ -401,15 +405,19 @@ the far shore, and full morning by the time you reach the base.
   keep their heads down until the alarm goes up; X tells them to hold where they are.
 - **The crossing.** Launch the raft from the jetty (the squad climbs aboard) and paddle north:
   W paddles, S backs water, A and D steer, and the mouse swings the camera round the raft.
-  It's about **five minutes** to the far shore. Four tan **search helicopters** sweep the sea
-  with searchlights: three work back and forth across the course in bands, and a fourth keeps
-  drifting over you. Stay out of the beams. A beam on you fills the meter and then they all
-  converge and fire (a life jacket takes the first three hits, the raft the next two, and then
-  it goes down and you're put back at the last buoy). Ways to survive: the white **mist
-  banks** hide you completely (they can't see in, and they give up in a few seconds if
-  you're hidden), and holding Shift pulls a **tarp** over you, which makes the beams
-  smaller on you and the helicopters worse shots, at the cost of speed. Lit **buoys** down
-  the middle are checkpoints, each with a spare life jacket tied to it.
+  It's about **five minutes** to the far shore. Four tan **search helicopters** drift over the
+  sea sweeping small searchlights: three work slowly back and forth across the course in
+  bands, and a fourth keeps wandering over you. They menace rather than hound: a beam takes
+  a few seconds on you before they're sure, and once they are the nearest two circle and
+  loose off the odd, mostly wild, burst (a life jacket takes the first three hits, the raft
+  the next two, and then it goes down and you're put back at the last buoy) before giving up.
+  Ways out: the white **mist banks** hide you completely, and holding Shift pulls a **tarp**
+  over you, which shrinks the beams on you and spoils their aim, at the cost of speed. Lit
+  **buoys** down the middle are checkpoints, each with a spare life jacket tied to it.
+- **Sharks in bibs.** The water is full of hungry cartoon sharks wearing red-checked napkins
+  round their necks. Mostly it's just a fin cutting the surface; now and then one heaves its
+  head out with its jaws going, and one that smells the raft slinks over and circles it,
+  staring. They're scenery: they never touch you.
 - **The far shore.** The raft grounds on a beach as the sun comes up. It's a few hundred
   metres up the road to Cooper's Base, the same camp as on mission 1, through fields split by
   hedges, a farm with a barn, mission 1's woods and a roadblock, with a dozen tan guards out

@@ -290,3 +290,25 @@ barracks, the hut, the motor pool and the towers are still there as places to lo
   once), and the point lights are left out on Low graphics.
 - `PrisonGame.debugAdvance(seconds, input)` runs the game ahead without drawing (used to test
   the crossing); `debugCam` pins the camera for screenshots. Both are dev only.
+
+## Milestone 9: Alcatraz island, subtler helicopters, sharks
+
+*(Done.)* From the owner: make the helicopters menace the player but not try too hard to spot
+them, add hungry sharks in bibs as scenery, and make the prison bigger and more like Alcatraz.
+
+- **Helicopters** (`Helis.ts`): beams are 9 m across (was 10), take 2.6 s to be sure (was 1.8),
+  sweep at 4.6 to 5.3 m/s, a hunt lasts 9 s (was 18) at 9 m/s, only the nearest two gunships fire,
+  one burst per 4.8 s, 12% to hit (4% flat). A naive straight run is now caught about once in
+  eight and never sank in the test runs.
+- **Sharks** (`Sharks.ts`): fifteen bibbed sharks (a red-checked napkin, tied on with a string)
+  with angry eyes, a hinged toothy jaw, tongue and drool. They lurk as a fin, lift out for a
+  chomp and a stare now and then, and a raft within 48 m gets circled at about 11 m. No damage.
+- **The island** (`Facility.ts`, `Lighthouse.ts`): the compound is 200 by 113 m (was 144 by 67)
+  on an island whose cliff edge drops into the sea on three sides, with the beach and jetty on
+  the north. New in the added bands: dining hall, hospital, powerhouse and a 26 m chimney in the
+  west; the factory (sawtooth roof, loading dock) and the warden's house in the east; concrete
+  corner towers; a terraced recreation yard in the north with steps up to a platform and a
+  handball wall; street signs in the cellhouse; a lighthouse in the north-east corner with two
+  sweeping beams that fade at dawn. The wing walls have three doorways each (north, middle and
+  south). Four more guards (18 in the compound), one on the recreation yard's platform. The new
+  buildings are solid blocks with facades, not enterable.

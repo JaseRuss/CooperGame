@@ -10,7 +10,8 @@ import { JamCannon } from '../combat/JamCannon';
 import { NightSky } from '../world/NightSky';
 import { loadSettings, saveSettings, AIM_SPEED_SCALE, GRAPHICS_QUALITY, type Settings } from '../core/Settings';
 import { MISSION, startMission } from '../core/config';
-import { Facility, ROOF_TOP, type ClimbSpot, type FacilityLayout } from './Facility';
+import { Facility, ROOF_TOP, JETTY, type ClimbSpot, type FacilityLayout } from './Facility';
+import { Lighthouse } from './Lighthouse';
 import { Searchlights } from './Searchlights';
 import { Outside, SHORE, SHORE_CHECKPOINTS, SHORE_GUARDS, HOME_REACH, loadTreeModels } from './Outside';
 import { PlayerSoldier, MAX_HEALTH } from './PlayerSoldier';
@@ -62,8 +63,8 @@ const CLIMB_REACH = 1.1;
 const VENT_PROMPT_RANGE = 4;
 /** The opening flyover: where the camera is and what it looks at, at each second-or-so mark, and how long it runs. */
 const INTRO: { at: number; pos: [number, number, number]; look: [number, number, number] }[] = [
-  { at: 0, pos: [0, 70, -160], look: [0, 0, -10] },
-  { at: 2.5, pos: [70, 40, -50], look: [0, 3, 0] },
+  { at: 0, pos: [0, 110, -230], look: [0, 0, -10] },
+  { at: 2.5, pos: [120, 55, -70], look: [0, 3, 0] },
   { at: 4.5, pos: [34, 20, 2], look: [-10, 4, 20] },
   { at: 6, pos: [8, 14, 6], look: [-18, 2, 18] },
 ];
@@ -85,7 +86,7 @@ const JAM_RADIUS = 1.8;
 const JAM_DRIP_RADIUS = 1;
 /** The raft: how long it takes to blow up, where it floats off the end of the jetty, how many hits it takes, and how many of those are life jackets. */
 const RAFT_INFLATE_TIME = 5;
-const RAFT_START_Z = -66.5;
+const RAFT_START_Z = JETTY.z1 - 4.5;
 const HULL_MAX = 5;
 const JACKETS = 3;
 const CAPSIZE_TIME = 2.6;
@@ -174,6 +175,7 @@ export class PrisonGame {
   private raftCam!: RaftCam;
   private helis!: SearchHelis;
   private sharks!: Sharks;
+  private lighthouse!: Lighthouse;
   private sky!: NightSky;
   private day!: DayCycle;
   private searchlights!: Searchlights;
@@ -303,6 +305,8 @@ export class PrisonGame {
     this.raftCam = new RaftCam();
     this.helis = new SearchHelis(RAFT_START_Z, landing);
     this.scene.add(this.helis.group);
+    this.lighthouse = new Lighthouse(this.world, 88, -37);
+    this.scene.add(this.lighthouse.group);
     this.sharks = new Sharks(RAFT_START_Z, landing);
     this.scene.add(this.sharks.group);
     this.outside = new Outside(this.world, await loadTreeModels());
@@ -669,7 +673,7 @@ export class PrisonGame {
   /** The padlock's shot off: the sea gate winds up (noisily), and there's the beach and the jetty beyond. */
   private onGateOpened(): void {
     this.guards.hear(this.seaGate.position, SHOT_NOISE + 12, 'compound');
-    this.checkpoint = { x: 0, z: -20, yaw: 0 };
+    this.checkpoint = { x: 0, z: this.facility.layout.mainGate.z + 6, yaw: 0 };
     this.hud.showBanner('THE SEA GATE IS OPENING!', this.gear.complete ? 'Down the beach and out along the jetty to launch the raft' : `You still need: ${this.gear.missing.map((id) => GEAR_INFO[id].name.toLowerCase()).join(', ')}`);
   }
 
@@ -1019,6 +1023,7 @@ export class PrisonGame {
     this.cones.update(this.camera.position, this.time);
     this.sharks.update(dt, this.time, focus, this.stage === 'raft' ? this.raft.position : null);
     this.updateAtmosphere(dt, focus);
+    this.lighthouse.update(dt, this.day.value);
     if (import.meta.env.DEV && this.debugCam) {
       this.camera.position.set(...this.debugCam.pos);
       this.camera.lookAt(...this.debugCam.look);
