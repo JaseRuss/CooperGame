@@ -320,3 +320,13 @@ valve), seating the crew inside it. Twice in the crossing (30% and 66% of the wa
 and the air drains over 20 s (`PrisonGame.updateAir`): the raft sags, speed drops to 35% when flat,
 the HUD shows an Air bar, and each press of the fire button (A, Space or click) puts back 8.5%
 (about twelve presses). Flat for four seconds sinks it (back to the last buoy, as for hits).
+
+## Milestone 11: a three minute crossing and a stealth rating
+
+*(Done.)* Raft cruise is 6.2 m/s (was 3.7), so the 1110 m crossing is about 3 minutes flat out
+(drift, steering and hiding add to it). The end screen gives a stealth rating from 100 points:
+-14 per guard alarm, -10 per helicopter alarm, up to -24 for time seen by guards, up to -15 for
+time in a searchlight, up to -15 for shots fired, -4 per guard put down, -8 per knock-down,
+-12 per sinking. S 95+ (ghost), A 80+ (shadow), B 60+ (prowler), C 40+ (noisy), else D.
+
+Sharks are kept at least 8.5 m from the raft (anything closer is pushed straight out), so none ever intersects it.

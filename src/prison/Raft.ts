@@ -9,13 +9,13 @@ import { SEA_LEVEL } from './Sea';
 /** Buddies are a lighter green than the other prisoners, like their tanks in the main game. */
 const BUDDY_COLOR = 0x6a9a3c;
 /** Paddling flat out, drifting, and backing water (m/s), and how quickly the raft speeds up and slows down. */
-export const CRUISE = 3.7;
-const DRIFT = 0.7;
+export const CRUISE = 6.2;
+const DRIFT = 1.1;
 const REVERSE = -1.3;
-const SPEED_UP = 1.1;
-const SLOW_DOWN = 1.7;
+const SPEED_UP = 2;
+const SLOW_DOWN = 2.4;
 /** Lying flat under the tarp, the raft barely creeps. */
-const FLAT_SPEED = 1.5;
+const FLAT_SPEED = 2.6;
 /** The raft turns this fast (rad/s) at speed. */
 const TURN_RATE = 0.85;
 /** The raft can't leave the channel: the current turns it back at this distance from the middle. */

@@ -9,6 +9,8 @@ const ACTIVE_RANGE = 260;
 const STALK_RANGE = 48;
 const STALK_CLOSE = 11;
 const STALK_TIME = 11;
+/** No shark ever gets closer than this to the raft (it's pushed out, and keeps its head down). */
+const KEEP_CLEAR = 8.5;
 
 type Shapes = {
   body: Map<THREE.Material, THREE.BufferGeometry>;
@@ -179,8 +181,19 @@ export class Sharks {
       s.radius += ((stalking ? STALK_CLOSE : s.homeRadius) - s.radius) * Math.min(1, dt * 0.6);
       const before = s.root.position.clone();
       s.angle += (s.dir * s.speed * (stalking ? 1.3 : 1) * dt) / s.radius;
-      const x = s.anchor.x + Math.cos(s.angle) * s.radius;
-      const z = s.anchor.y + Math.sin(s.angle) * s.radius;
+      let x = s.anchor.x + Math.cos(s.angle) * s.radius;
+      let z = s.anchor.y + Math.sin(s.angle) * s.radius;
+      // Never through the raft: anything too close is shoved straight out to a safe distance.
+      if (raft) {
+        const dx = x - raft.x;
+        const dz = z - raft.z;
+        const d = Math.hypot(dx, dz);
+        if (d < KEEP_CLEAR) {
+          const k = d > 0.01 ? KEEP_CLEAR / d : 1;
+          x = d > 0.01 ? raft.x + dx * k : raft.x + KEEP_CLEAR;
+          z = d > 0.01 ? raft.z + dz * k : raft.z;
+        }
+      }
 
       // Up for a look now and then, and whenever it's close to a raft.
       s.surfaceTimer -= dt;
