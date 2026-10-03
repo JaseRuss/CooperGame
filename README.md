@@ -403,7 +403,7 @@ the far shore, and full morning by the time you reach the base.
   riot cannon** (hold LT / E, quiet) sticks him fast until he slips over. Knocked down, you
   get back up at your last checkpoint with the guards stood down. Your squad (Keston and Max)
   keep their heads down until the alarm goes up; X tells them to hold where they are.
-- **The crossing.** Launch the raft from the jetty (the squad climbs aboard) and paddle north:
+- **The crossing.** The raft is a green inflatable triangle, like the real escape boat. Twice during the crossing (about a third and two thirds of the way) a seam splits and it starts losing air, going soft, low and slow: **mash A** (Space or click) to pump it back up before it goes flat, or it sinks. Launch the raft from the jetty (the squad climbs aboard) and paddle north:
   W paddles, S backs water, A and D steer, and the mouse swings the camera round the raft.
   It's about **five minutes** to the far shore. Four tan **search helicopters** drift over the
   sea sweeping small searchlights: three work slowly back and forth across the course in

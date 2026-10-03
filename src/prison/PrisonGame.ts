@@ -90,6 +90,12 @@ const RAFT_START_Z = JETTY.z1 - 4.5;
 const HULL_MAX = 5;
 const JACKETS = 3;
 const CAPSIZE_TIME = 2.6;
+/** The raft springs a leak this far across (0 to 1), twice: mash A to pump it up before it goes flat. */
+const LEAKS = [0.3, 0.66];
+/** Seconds for a leaking raft to go flat if you don't pump, how much air one press of A puts back, and how long flat before it sinks. */
+const LEAK_TIME = 20;
+const PUMP_PRESS = 0.085;
+const FLAT_SINK = 4;
 /** The raft grounds on the beach this far out from the waterline. */
 const BEACH_REACH = 5;
 /** How far along the walk home the dawn finishes (metres up the shore from where he lands). */
@@ -192,6 +198,12 @@ export class PrisonGame {
   private raftTimer = 0;
   private hull = HULL_MAX;
   private buoysPassed = 0;
+  /** Air in the raft (1 hard), whether it's leaking, which leak is next, how long it's been flat, and the last frame's fire button. */
+  private air = 1;
+  private leaking = false;
+  private leakIndex = 0;
+  private flatFor = 0;
+  private wasFiring = false;
   private raftCheckpoint = { x: 0, z: RAFT_START_Z, yaw: 0 };
   private heliReport: HeliReport | null = null;
   /** The ending at Cooper's Base: seconds since it started (null until then). */
@@ -698,6 +710,11 @@ export class PrisonGame {
     this.raftTimer = 0;
     this.hull = HULL_MAX;
     this.buoysPassed = 0;
+    this.air = 1;
+    this.leaking = false;
+    this.leakIndex = 0;
+    this.flatFor = 0;
+    this.raft.setPressure(1);
     this.raftCheckpoint = { x: layout.launch.x, z: RAFT_START_Z, yaw: 0 };
     this.stats.startedAt = this.time;
     const names = this.followers.buddiesFreed.map((b) => this.settings.buddyNames[b]);
@@ -768,6 +785,10 @@ export class PrisonGame {
         r.inflate(1);
         this.hull = HULL_MAX - JACKETS + 1;
         this.helis.reset();
+        this.air = 1;
+        this.leaking = false;
+        this.flatFor = 0;
+        r.setPressure(1);
         this.raftPhase = 'sailing';
         this.hud.setFade(0);
         this.hud.showCallout('BACK AT THE LAST BUOY, PATCHED UP', '#9be27a');
@@ -776,6 +797,7 @@ export class PrisonGame {
     }
     r.update(dt, this.time, input, this.gear.has('paddles'));
     this.raftCam.update(this.camera, r, input, dt);
+    this.updateAir(input, dt);
     const mist = this.sea.mistAt(r.position.x, r.position.z);
     const progress = THREE.MathUtils.clamp((RAFT_START_Z - r.position.z) / (RAFT_START_Z - landingZ), 0, 1);
     const report = this.helis.update(dt, r.position, mist, r.flat, progress);
@@ -805,6 +827,39 @@ export class PrisonGame {
     const near = Math.min(report.nearest, 400);
     this.sound.updateEngine(24, 'chopper', true, Math.pow(Math.max(0, 1 - near / 320), 1.5) * 1.6);
     if (r.position.z < landingZ) this.landOnShore();
+  }
+
+  /** The leaks: a seam splits (twice in the crossing) and the air starts going; mash A to pump it back up. */
+  private updateAir(input: InputState, dt: number): void {
+    const r = this.raft;
+    const progress = THREE.MathUtils.clamp((RAFT_START_Z - r.position.z) / (RAFT_START_Z - (SHORE.waterZ + BEACH_REACH)), 0, 1);
+    if (!this.leaking && this.leakIndex < LEAKS.length && progress >= LEAKS[this.leakIndex]) {
+      this.leaking = true;
+      this.sound.play('clang', { volume: 0.5, rate: 0.7 });
+      this.hud.showBanner('A SEAM HAS SPLIT!', 'The raft is losing air: mash A (or Space / click) to pump it up!');
+    }
+    const pressed = input.firing && !this.wasFiring;
+    this.wasFiring = input.firing;
+    if (this.leaking) {
+      this.air = Math.max(0, this.air - dt / LEAK_TIME);
+      if (pressed) {
+        this.air = Math.min(1, this.air + PUMP_PRESS);
+        this.sound.play('poof', { volume: 0.4, rate: 1.4 + this.air * 0.6, minGap: 0.05 });
+        this.raftCam.addShake(0.05);
+      }
+      if (this.air >= 1) {
+        this.leaking = false;
+        this.leakIndex++;
+        this.hud.showCallout('PUMPED UP!', '#9be27a');
+      }
+      this.flatFor = this.air <= 0 ? this.flatFor + dt : 0;
+      if (this.flatFor > FLAT_SINK && this.raftPhase === 'sailing') {
+        this.flatFor = 0;
+        this.hull = 1;
+        this.onRaftHit();
+      }
+    }
+    r.setPressure(this.air);
   }
 
   /** The raft grounds on the beach: he steps ashore as the sun comes up. */
@@ -1071,6 +1126,7 @@ export class PrisonGame {
       const r = this.heliReport;
       if (this.raftPhase === 'inflating') prompt = 'Pumping up the raft…';
       else if (this.raftPhase === 'sinking') prompt = 'The raft is going down…';
+      else if (this.leaking) prompt = this.air <= 0 ? 'FLAT! Mash A to pump!' : 'The raft is losing air! MASH A (Space / click) to pump it up!';
       else if (r?.hunting) prompt = 'They\'ve found you! Head for a white mist bank and lie flat (Shift)';
       else if (r?.lit) prompt = 'You\'re in a searchlight! Paddle out of it, or lie flat (Shift)';
       else if (this.raft.atEdge) prompt = 'The current is pushing you back: keep to the channel';
@@ -1110,6 +1166,7 @@ export class PrisonGame {
       const landingZ = SHORE.waterZ + BEACH_REACH;
       const left = Math.max(0, this.raft.position.z - landingZ);
       status.push(`Raft ${'●'.repeat(this.hull)}${'○'.repeat(HULL_MAX - this.hull)} (${Math.min(this.hull, JACKETS)} life jackets)`);
+      if (this.leaking) status.push(`Air ${'▮'.repeat(Math.round(this.air * 10))}${'▯'.repeat(10 - Math.round(this.air * 10))}`);
       status.push(`Far shore ${Math.round(left)} m · about ${clock(left / CRUISE)}`);
     }
     if (this.ending !== null) prompt = null;

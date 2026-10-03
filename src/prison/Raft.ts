@@ -21,11 +21,13 @@ const TURN_RATE = 0.85;
 /** The raft can't leave the channel: the current turns it back at this distance from the middle. */
 export const CHANNEL = 125;
 const SEAT = [
-  { x: 0, z: 0.55 },
-  { x: -0.75, z: -0.45 },
-  { x: 0.75, z: -0.45 },
-  { x: 0, z: -1.25 },
+  { x: 0, z: 0.9 },
+  { x: -0.55, z: 0.1 },
+  { x: 0.55, z: 0.1 },
+  { x: 0, z: -0.9 },
 ];
+/** The triangle's corners (x, z): the bow, then the two stern corners. */
+const CORNERS: [number, number][] = [[0, -2.3], [-1.55, 1.7], [1.55, 1.7]];
 
 /**
  * The makeshift raft, stitched from raincoats: a yellow oval tube with the squad kneeling in it,
@@ -49,30 +51,41 @@ export class Raft {
   /** Blown up enough for the crew to climb in. */
   private manned = false;
   private turn = 0;
+  /** How blown up it is (0 flat, 1 full) while being pumped up at the start, and the air in it afterwards (1 hard, 0 flat). */
+  private inflation = 1;
+  pressure = 1;
   private bob = Math.random() * 10;
 
   constructor() {
-    const tube = new THREE.MeshStandardMaterial({ color: 0xd9a21c, roughness: 0.5, metalness: 0, emissive: 0x3a2a05 });
-    const patch = new THREE.MeshStandardMaterial({ color: 0x6a7a3a, roughness: 0.6, metalness: 0 });
-    const floor = new THREE.MeshStandardMaterial({ color: 0x8f6e22, roughness: 0.7, metalness: 0, emissive: 0x2a1e04 });
-    const ring = new THREE.Mesh(new THREE.TorusGeometry(1, 0.3, 12, 36).rotateX(Math.PI / 2).scale(1.3, 1, 1.85), tube);
-    ring.position.y = 0.25;
-    ring.castShadow = true;
-    const base = new THREE.Mesh(new THREE.CircleGeometry(1, 28).rotateX(-Math.PI / 2).scale(1.25, 1, 1.8), floor);
-    base.position.y = 0.2;
-    this.body.add(ring, base);
-    // Stitched seams and a couple of green patches where the raincoats overlap.
-    const seam = new THREE.BoxGeometry(0.05, 0.05, 0.28);
-    for (let i = 0; i < 18; i++) {
-      const a = (i / 18) * Math.PI * 2;
-      const m = new THREE.Mesh(seam, patch);
-      m.position.set(Math.sin(a) * 1.3, 0.56, Math.cos(a) * 1.85);
-      m.rotation.y = a;
-      this.body.add(m);
+    // An army-green inflatable triangle, like the real escape boat: three fat tubes joined at rounded corners, a floor, and a valve.
+    const tube = new THREE.MeshStandardMaterial({ color: 0x4b7a2e, roughness: 0.5, metalness: 0, emissive: 0x14260c });
+    const floor = new THREE.MeshStandardMaterial({ color: 0x36581f, roughness: 0.7, metalness: 0, emissive: 0x0c1807 });
+    const R = 0.32;
+    for (let i = 0; i < 3; i++) {
+      const [ax, az] = CORNERS[i];
+      const [bx, bz] = CORNERS[(i + 1) % 3];
+      const len = Math.hypot(bx - ax, bz - az);
+      const t = new THREE.Mesh(new THREE.CylinderGeometry(R, R, len, 14), tube);
+      t.position.set((ax + bx) / 2, 0.3, (az + bz) / 2);
+      t.rotation.set(Math.PI / 2, 0, 0);
+      t.rotation.order = 'YXZ';
+      t.rotation.y = Math.atan2(bx - ax, bz - az);
+      t.castShadow = true;
+      const corner = new THREE.Mesh(new THREE.SphereGeometry(R, 14, 10), tube);
+      corner.position.set(ax, 0.3, az);
+      this.body.add(t, corner);
     }
+    const shape = new THREE.Shape(CORNERS.map(([x, z]) => new THREE.Vector2(x, -z)));
+    const base = new THREE.Mesh(new THREE.ShapeGeometry(shape).rotateX(-Math.PI / 2).scale(0.82, 1, 0.82), floor);
+    base.position.y = 0.22;
+    this.body.add(base);
+    // A valve on one tube, and a rope lifeline round the outside.
+    const valve = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.2, 8), new THREE.MeshStandardMaterial({ color: 0xe8e4d0 }));
+    valve.position.set(-0.78, 0.65, 0.7);
+    this.body.add(valve);
     // A tarp (the raincoats' spare sleeves) to pull over everyone.
-    this.tarp = new THREE.Mesh(new THREE.SphereGeometry(1, 20, 8, 0, Math.PI * 2, 0, Math.PI / 2).scale(1.35, 0.7, 1.9), new THREE.MeshStandardMaterial({ color: 0x3f4c28, roughness: 0.9, metalness: 0 }));
-    this.tarp.position.y = 0.4;
+    this.tarp = new THREE.Mesh(new THREE.SphereGeometry(1, 20, 8, 0, Math.PI * 2, 0, Math.PI / 2).scale(1.2, 0.7, 1.75), new THREE.MeshStandardMaterial({ color: 0x3f4c28, roughness: 0.9, metalness: 0 }));
+    this.tarp.position.set(0, 0.4, -0.1);
     this.tarp.castShadow = true;
     this.tarp.visible = false;
     this.body.add(this.tarp);
@@ -116,6 +129,19 @@ export class Raft {
     });
   }
 
+  /** Squashes the tubes down as the air goes: a soft raft sits low and floppy. */
+  private sag(): void {
+    const k = this.inflation;
+    const soft = 0.4 + 0.6 * this.pressure;
+    this.body.scale.set(0.25 + 0.75 * k, (0.1 + 0.9 * k) * soft, 0.25 + 0.75 * k);
+  }
+
+  /** The air left in the raft (0 flat, 1 hard): less of it, less speed. */
+  setPressure(p: number): void {
+    this.pressure = clamp(p, 0, 1);
+    this.sag();
+  }
+
   /** Everyone's off: an empty raft. */
   clearCrew(): void {
     for (const c of [...this.crew, ...this.paddles]) this.body.remove(c);
@@ -136,7 +162,8 @@ export class Raft {
   /** Blowing up (0 flat, 1 full size): it swells out of a heap of raincoats. */
   inflate(t: number): void {
     const k = clamp(t, 0, 1);
-    this.body.scale.set(0.25 + 0.75 * k, 0.1 + 0.9 * k, 0.25 + 0.75 * k);
+    this.inflation = k;
+    this.sag();
     this.manned = k > 0.7;
   }
 
@@ -147,6 +174,7 @@ export class Raft {
     const flat = input.sneak;
     this.flat += ((flat ? 1 : 0) - this.flat) * Math.min(1, dt * 4);
     let target = forward > 0.1 ? (paddled ? CRUISE : CRUISE * 0.6) : forward < -0.1 ? REVERSE : DRIFT;
+    target *= 0.35 + 0.65 * this.pressure;
     if (flat) target = Math.min(target, FLAT_SPEED);
     const rate = target > this.speed ? SPEED_UP : SLOW_DOWN;
     this.speed += clamp(target - this.speed, -rate * dt, rate * dt);
