@@ -15,6 +15,7 @@ export class Lighthouse {
   private readonly beams = new THREE.Group();
   private readonly materials: THREE.MeshBasicMaterial[] = [];
   private readonly lantern: THREE.Mesh;
+  private lite = false;
 
   constructor(world: RAPIER.World, x: number, z: number) {
     this.group.position.set(x, 0, z);
@@ -53,12 +54,17 @@ export class Lighthouse {
     this.group.add(this.beams);
   }
 
+  /** Low graphics: no sweeping beams. */
+  setLite(lite: boolean): void {
+    this.lite = lite;
+  }
+
   /** `day` is how far the dawn has got (0 night, 1 morning). */
   update(dt: number, day: number): void {
     this.beams.rotation.y += dt * 0.35;
     const on = 1 - THREE.MathUtils.smoothstep(day, 0.25, 0.8);
     for (const m of this.materials) m.opacity = 0.045 * on;
-    this.beams.visible = on > 0.01;
+    this.beams.visible = on > 0.01 && !this.lite;
     (this.lantern.material as THREE.MeshBasicMaterial).color.set(on > 0.3 ? 0xfff0b0 : 0xb8b4a0);
   }
 }

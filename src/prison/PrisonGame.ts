@@ -230,7 +230,7 @@ export class PrisonGame {
   private readonly enemyTracer = new THREE.LineBasicMaterial({ color: 0xff9a5a, transparent: true });
 
   constructor(container: HTMLElement) {
-    this.renderer = new THREE.WebGLRenderer({ antialias: true });
+    this.renderer = new THREE.WebGLRenderer({ antialias: this.settings.graphicsQuality !== 'low' });
     const graphics = GRAPHICS_QUALITY[this.settings.graphicsQuality];
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, graphics.pixelRatio));
     this.renderer.setSize(window.innerWidth, window.innerHeight);
@@ -266,12 +266,10 @@ export class PrisonGame {
     this.sun.shadow.bias = -0.0008;
     this.scene.add(this.sun, this.sun.target);
     // A few real lights that hop between the floodlight poles nearest the player (the rest just glow).
-    if (graphics.shadowSize > 0) {
-      for (let i = 0; i < LAMP_LIGHTS; i++) {
-        const light = new THREE.PointLight(0xffe2a8, 0, 42, 2);
-        this.scene.add(light);
-        this.lampLights.push(light);
-      }
+    for (let i = 0; i < LAMP_LIGHTS; i++) {
+      const light = new THREE.PointLight(0xffe2a8, 0, 42, 2);
+      this.scene.add(light);
+      this.lampLights.push(light);
     }
 
     window.addEventListener('resize', () => this.onResize());
@@ -390,6 +388,23 @@ export class PrisonGame {
     this.sound.setVolumes(this.settings.sfxVolume, this.settings.musicVolume);
     this.followers?.setNameTags(this.settings.nameTags, this.settings.buddyNames);
     this.pausedRendered = false;
+    this.applyLite(this.settings.graphicsQuality === 'low');
+  }
+
+  /**
+   * Low graphics, on top of the lower resolution and no shadows: no real lights (the floodlights,
+   * helicopter and roof searchlights are just drawn), half the mist, closer fog, fewer sharks and no lighthouse beams, and the vision cones refresh less often.
+   */
+  private applyLite(lite: boolean): void {
+    if (!this.helis) return;
+    this.helis.setLite(lite);
+    this.searchlights.setLite(lite);
+    this.cones.setLite(lite);
+    this.sharks.setLite(lite);
+    this.lighthouse.setLite(lite);
+    this.sea.setLite(lite);
+    this.day.fogScale = lite ? 0.55 : 1;
+    for (const l of this.lampLights) l.visible = !lite;
   }
 
   private onResize(): void {

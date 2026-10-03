@@ -66,6 +66,8 @@ export class VisionCones {
   private readonly geometryIndex: number[] = [];
   private readonly alphas = new Float32Array(VERTS * 4);
   private frame = 0;
+  /** Low graphics: cones are refreshed a third as often. */
+  private every = 2;
 
   constructor(private readonly world: RAPIER.World, guards: Guards) {
     // Triangles: a fan from his feet to the inner ring, then a strip out to the outer ring.
@@ -118,6 +120,10 @@ export class VisionCones {
     this.cones.set(g, { mesh, position, material, marker, markerMaterial });
   }
 
+  setLite(lite: boolean): void {
+    this.every = lite ? 4 : 2;
+  }
+
   /** Redraws every nearby guard's cone and marker (call once a frame, after the guards have moved). */
   update(camera: THREE.Vector3, time: number): void {
     this.frame++;
@@ -137,7 +143,7 @@ export class VisionCones {
         cone.marker.scale.set(s, s, 1);
       }
       // The rays are the expensive part: each cone's refreshed every other frame.
-      if ((this.frame + g.leg) % 2 === 0) this.shape(g, cone);
+      if ((this.frame + g.leg) % this.every === 0) this.shape(g, cone);
     }
   }
 

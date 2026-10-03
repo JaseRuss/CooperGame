@@ -40,6 +40,8 @@ export class DayCycle {
   readonly sunOffset = new THREE.Vector3(30, 60, 20);
   /** The sea's colour at this time of day. */
   readonly waterColor = new THREE.Color(LOOKS[0].water);
+  /** Scales how far the fog lets you see (low graphics pulls it in, so less is drawn). */
+  fogScale = 1;
   /** How far into the dawn it is now. */
   value = 0;
   private readonly b = new THREE.Color();
@@ -70,8 +72,8 @@ export class DayCycle {
     mix(this.waterColor, from.water, to.water);
     this.hemi.intensity = THREE.MathUtils.lerp(from.hemi, to.hemi, f);
     this.sun.intensity = THREE.MathUtils.lerp(from.sunLight, to.sunLight, f);
-    this.fog.near = THREE.MathUtils.lerp(from.fogNear, to.fogNear, f);
-    this.fog.far = THREE.MathUtils.lerp(from.fogFar, to.fogFar, f);
+    this.fog.near = THREE.MathUtils.lerp(from.fogNear, to.fogNear, f) * this.fogScale;
+    this.fog.far = THREE.MathUtils.lerp(from.fogFar, to.fogFar, f) * this.fogScale;
     this.sunOffset.set(
       THREE.MathUtils.lerp(from.dir[0], to.dir[0], f),
       THREE.MathUtils.lerp(from.dir[1], to.dir[1], f),

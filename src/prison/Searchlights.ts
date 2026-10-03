@@ -36,6 +36,8 @@ export class Searchlights {
   readonly group = new THREE.Group();
   private readonly lights: Light[] = [];
   private active = true;
+  /** Low graphics: the beams are drawn, but there are no real lights (each one costs every pixel on screen). */
+  private lite = false;
   private readonly to = new THREE.Vector3();
 
   constructor(private readonly world: RAPIER.World, spots: SearchlightSpot[], private readonly roofY: number) {
@@ -67,6 +69,16 @@ export class Searchlights {
   setActive(on: boolean): void {
     this.active = on;
     this.group.visible = on;
+    this.applyLite();
+  }
+
+  setLite(lite: boolean): void {
+    this.lite = lite;
+    this.applyLite();
+  }
+
+  private applyLite(): void {
+    for (const l of this.lights) l.light.visible = !this.lite;
   }
 
   /**

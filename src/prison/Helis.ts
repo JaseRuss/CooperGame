@@ -77,6 +77,7 @@ export class SearchHelis {
   readonly group = new THREE.Group();
   private readonly helis: Heli[] = [];
   private active = false;
+  private lite = false;
   private hunting = false;
   private huntLeft = 0;
   private huntAge = 0;
@@ -115,12 +116,18 @@ export class SearchHelis {
     for (const h of this.helis) {
       h.exposure = 0;
       h.model.visible = on && h.beat !== null;
-      h.light.visible = on;
+      h.light.visible = on && !this.lite;
       h.beam.visible = on;
       h.pool.visible = on;
       h.light.intensity = 0;
       if (on) h.pos.copy(this.patrolPoint(h, 0, h.pos));
     }
+  }
+
+  /** Low graphics: no real spotlights (the beams and pools are still drawn). */
+  setLite(lite: boolean): void {
+    this.lite = lite;
+    if (lite) for (const h of this.helis) h.light.visible = false;
   }
 
   /** Back to searching (the raft's been sent back to a buoy). */
@@ -266,7 +273,7 @@ export class SearchHelis {
       const on = h.model.visible;
       h.beam.visible = on;
       h.pool.visible = on;
-      h.light.visible = on;
+      h.light.visible = on && !this.lite;
       h.light.intensity = on ? 150 : 0;
       if (!on) continue;
       const tint = this.hunting ? RED : WHITE.clone().lerp(AMBER, h.exposure);
