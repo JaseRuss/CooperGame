@@ -428,6 +428,10 @@ the far shore, and full morning by the time you reach the base.
   raised, time seen by guards or lit by searchlights, shots fired, guards put down, knock-downs
   and sinkings.
 
+On **Low** graphics (Options) the level also drops antialiasing, every real light (the
+floodlights and the searchlight beams are still drawn), half the sea mist, the lighthouse
+beams and the far sharks, pulls the fog in and refreshes the vision cones less often.
+
 Run about as a green army man (he hops, like all the toy soldiers) and aim over his shoulder.
 Move with the left stick or W A S D, aim with the right stick or mouse, fire with RT or a
 click, creep with RB / Shift, Y / C swaps to first person and Back / R goes back to the last

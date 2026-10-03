@@ -141,6 +141,11 @@ export class Sea {
     }
   }
 
+  /** Low graphics: half the mist sprites (the big overlapping sheets are the costly part). */
+  setLite(lite: boolean): void {
+    this.mistSprites.forEach((s, i) => (s.visible = !lite || i % 2 === 0));
+  }
+
   /** How hidden a point on the water is by the mist (0 in the clear, 1 in the middle of a bank). */
   mistAt(x: number, z: number): number {
     let best = 0;

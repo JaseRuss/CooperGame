@@ -112,6 +112,7 @@ interface Shark {
 export class Sharks {
   readonly group = new THREE.Group();
   private readonly sharks: Shark[] = [];
+  private range = ACTIVE_RANGE;
 
   /** `start` and `end` are the z of the jetty's end and of the far beach. */
   constructor(start: number, end: number) {
@@ -161,10 +162,15 @@ export class Sharks {
     }
   }
 
+  /** Low graphics: only sharks fairly close are drawn. */
+  setLite(lite: boolean): void {
+    this.range = lite ? 110 : ACTIVE_RANGE;
+  }
+
   /** `focus` is the player (or the raft); `raft` is where the raft is, or null when it's not on the water. */
   update(dt: number, time: number, focus: THREE.Vector3, raft: THREE.Vector3 | null): void {
     for (const s of this.sharks) {
-      const near = Math.hypot(s.anchor.x - focus.x, s.anchor.y - focus.z) < ACTIVE_RANGE;
+      const near = Math.hypot(s.anchor.x - focus.x, s.anchor.y - focus.z) < this.range;
       s.root.visible = near;
       if (!near) continue;
       // The raft's within smelling distance: slink over and circle it for a while, then lose interest.
