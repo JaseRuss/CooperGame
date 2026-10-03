@@ -656,7 +656,7 @@ export class HUD {
     this.minimapWrap.style.display = 'none';
     this.bigMapCanvas.style.display = 'none';
     this.tabs.map.textContent = 'CONTROLS';
-    this.mapLegends[0].innerHTML = '<span><i style="background:#4b7a2e"></i>Green army: you and the prisoners</span><span><i style="background:#c4a468"></i>Tan army: the guards</span>';
+    this.mapLegends[0].innerHTML = '<span><i style="background:#4b7a2e"></i>Green army: you and your buddies</span><span><i style="background:#c4a468"></i>Tan army: the guards</span>';
     this.mapLegends[1].innerHTML = controls;
   }
 

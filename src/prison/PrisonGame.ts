@@ -142,7 +142,7 @@ function clock(seconds: number): string {
  *
  * Break out of your cell, take the escape gear from the prison without being seen (guards have
  * vision cones, and a shot is heard from far off, but you can still fight a bit with the rifle
- * and the jam riot cannon), launch a raft and paddle five minutes across the sea, hiding in the
+ * and the jam riot cannon), launch a raft and paddle three minutes across the sea, hiding in the
  * mist from the search helicopters, then land as the dawn breaks and sneak home to Cooper's Base
  * past the patrols.
  */
@@ -219,7 +219,7 @@ export class PrisonGame {
   private jamCooldown = 0;
   /** How long he's been down. */
   private downTime = 0;
-  private readonly stats = { alarms: 0, helicopterAlarms: 0, capsized: 0, knockedDown: 0, startedAt: 0 };
+  private readonly stats = { alarms: 0, helicopterAlarms: 0, capsized: 0, knockedDown: 0, startedAt: 0, shots: 0, guardsHit: 0, seenTime: 0, litTime: 0 };
   private lastAlarmAt = -99;
   /** Dev only: where the last rifle shot went. */
   lastShot: { from: number[]; to: number[]; hit: boolean } | null = null;
@@ -430,7 +430,10 @@ export class PrisonGame {
     this.sound.play('crack', { volume: 0.28, rate: 2.3, minGap: 0.05 });
     this.cam.addShake(0.08);
     // A shot is heard from far off: nearby guards come to look.
-    if (this.stage === 'out' || this.stage === 'shore') this.guards.hear(muzzle, SHOT_NOISE, this.sector());
+    if (this.stage === 'out' || this.stage === 'shore') {
+      this.guards.hear(muzzle, SHOT_NOISE, this.sector());
+      this.stats.shots++;
+    }
     this.addTracer(muzzle, end, this.friendTracer);
     if (!hit) return;
     const vented = this.cells.hitVent(hit.collider);
@@ -517,7 +520,10 @@ export class PrisonGame {
     this.sound.play('thud', { at, volume: 0.6, rate: 1.3, minGap: 0.05 });
     if (guard.state === 'down' && byPlayer) this.hud.showCallout('GUARD DOWN!', '#ffd24a');
     // Shot at, a guard knows exactly where the shooter is.
-    if (byPlayer) this.guards.provoke(guard, this.player.position);
+    if (byPlayer) {
+      this.guards.provoke(guard, this.player.position);
+      if (guard.state === 'down') this.stats.guardsHit++;
+    }
   }
 
   /** The jam riot cannon: a spray of jam globs at the crosshair while LT / E is held (and there's jam in the tank). */
@@ -734,7 +740,7 @@ export class PrisonGame {
   private sailing(): void {
     this.raftPhase = 'sailing';
     this.helis.setActive(true);
-    this.hud.showBanner('PADDLE FOR THE FAR SHORE!', 'Five minutes of open sea. Stay out of the helicopters\' searchlights; the white mist banks hide you, and Shift pulls the tarp over you');
+    this.hud.showBanner('PADDLE FOR THE FAR SHORE!', 'Three minutes of open sea. Stay out of the helicopters\' searchlights; the white mist banks hide you, and Shift pulls the tarp over you');
     this.sound.music.stinger();
   }
 
@@ -802,6 +808,7 @@ export class PrisonGame {
     const progress = THREE.MathUtils.clamp((RAFT_START_Z - r.position.z) / (RAFT_START_Z - landingZ), 0, 1);
     const report = this.helis.update(dt, r.position, mist, r.flat, progress);
     this.heliReport = report;
+    if (report.lit) this.stats.litTime += dt;
     if (report.alarm) {
       this.stats.helicopterAlarms++;
       this.sound.music.alarm();
@@ -896,13 +903,28 @@ export class PrisonGame {
     const names = this.followers.buddiesFreed.map((b) => this.settings.buddyNames[b]);
     const crew = names.length ? `${[...names, 'you'].slice(0, -1).join(', ')} and you` : 'You';
     const alarms = this.stats.alarms + this.stats.helicopterAlarms;
+    const rating = this.stealthRating();
     this.hud.showEnding(
       true,
       'MISSION ACCOMPLISHED!',
       `${crew} slipped out of the tan army's prison, rafted across the sea and walked home to Cooper's Base in ${clock(this.time)}. ` +
-        (alarms === 0 ? 'Not a single alarm was raised: a perfect ghost run!' : `The alarm went up ${alarms} time${alarms === 1 ? '' : 's'}${this.stats.capsized ? ` and the raft went down ${this.stats.capsized} time${this.stats.capsized === 1 ? '' : 's'}` : ''}.`) +
-        ` Guards knocked out: ${this.guards.list.filter((g) => g.state === 'down' || g.state === 'jailed').length}.`,
+        `STEALTH RATING: ${rating.grade} · ${rating.title} (${rating.score} / 100). ` +
+        `Alarms raised: ${alarms} · seen by guards for ${Math.round(this.stats.seenTime)} s · in a searchlight for ${Math.round(this.stats.litTime)} s · shots fired: ${this.stats.shots} · guards put down: ${this.stats.guardsHit}` +
+        `${this.stats.capsized ? ` · raft sunk ${this.stats.capsized}×` : ''}${this.stats.knockedDown ? ` · knocked down ${this.stats.knockedDown}×` : ''}.`,
     );
+  }
+
+  /** How quietly it went: points off for alarms, being seen or lit, shooting, putting guards down, getting knocked down and sinking. */
+  private stealthRating(): { grade: string; title: string; score: number } {
+    const st = this.stats;
+    const score = Math.max(
+      0,
+      Math.round(
+        100 - st.alarms * 14 - st.helicopterAlarms * 10 - Math.min(24, st.seenTime * 1.5) - Math.min(15, st.litTime * 1) - Math.min(15, st.shots * 0.6) - st.guardsHit * 4 - st.knockedDown * 8 - st.capsized * 12,
+      ),
+    );
+    const [grade, title] = score >= 95 ? ['S', 'GHOST'] : score >= 80 ? ['A', 'SHADOW'] : score >= 60 ? ['B', 'PROWLER'] : score >= 40 ? ['C', 'NOISY'] : ['D', 'SMASH AND GRAB'];
+    return { grade, title, score };
   }
 
   /** The ending: the camera circles the party; A / Enter plays again. */
@@ -1005,6 +1027,7 @@ export class PrisonGame {
       };
       for (const shot of this.guards.update(dt, world)) this.resolveShot(shot, 'enemy');
       this.handleGuardEvents();
+      if (exposed && this.guards.anySeeing) this.stats.seenTime += dt;
     }
     for (const shot of this.followers.update(dt, this.squadWorld)) this.resolveShot(shot, 'friend');
     this.world.step();
@@ -1359,7 +1382,7 @@ export class PrisonGame {
     if (t >= INTRO_TIME || (skip && t > 0.3)) {
       this.intro = null;
       this.hud.setFade(0);
-      this.hud.showBanner('BONUS: PRISON BREAK', "They've locked you up and taken your tank! It's night, and the vent at the back of your cell is loose...");
+      this.hud.showBanner('BONUS: PRISON BREAK', "They've locked you up! It's night, and the vent at the back of your cell is loose...");
       return;
     }
     let i = 0;

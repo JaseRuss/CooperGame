@@ -367,8 +367,8 @@ modelled on Alcatraz: the cellhouse (with Broadway and Michigan Avenue), the din
 hospital, powerhouse and its tall chimney, the factory and the warden's house, concrete corner
 towers, a terraced recreation yard with a handball wall, and a lighthouse whose beams sweep the
 sea all night. The tan army has locked you
-up and taken your tank. Break out of your cell, steal the gear for a raft (as the 1962 Alcatraz
-escapers did, from raincoats), paddle the long way across the sea past the search helicopters,
+up. Break out of your cell, steal the gear for a raft (as the 1962 Alcatraz
+escapers did, from raincoats), paddle across the sea past the search helicopters,
 and creep home to Cooper's Base as the dawn breaks. It opens with a flyover of the prison (any
 button or key skips it). The whole level is night, with the sky brightening as the raft nears
 the far shore, and full morning by the time you reach the base.
@@ -405,7 +405,7 @@ the far shore, and full morning by the time you reach the base.
   keep their heads down until the alarm goes up; X tells them to hold where they are.
 - **The crossing.** The raft is a green inflatable triangle, like the real escape boat. Twice during the crossing (about a third and two thirds of the way) a seam splits and it starts losing air, going soft, low and slow: **mash A** (Space or click) to pump it back up before it goes flat, or it sinks. Launch the raft from the jetty (the squad climbs aboard) and paddle north:
   W paddles, S backs water, A and D steer, and the mouse swings the camera round the raft.
-  It's about **five minutes** to the far shore. Four tan **search helicopters** drift over the
+  It's about **three minutes** to the far shore. Four tan **search helicopters** drift over the
   sea sweeping small searchlights: three work slowly back and forth across the course in
   bands, and a fourth keeps wandering over you. They menace rather than hound: a beam takes
   a few seconds on you before they're sure, and once they are the nearest two circle and
@@ -423,8 +423,10 @@ the far shore, and full morning by the time you reach the base.
   hedges, a farm with a barn, mission 1's woods and a roadblock, with a dozen tan guards out
   searching: pacing the beach, working the lanes between the hedges, watching from the barn and
   holding the road. Hug the hedges, hay bales and trees, creep past the cones, and keep going.
-  Walk in through the base's gate and everyone celebrates; the end screen says whether you
-  were ever seen.
+  Walk in through the base's gate and everyone celebrates, and the end screen gives you a
+  **stealth rating** (S ghost, A shadow, B prowler, C noisy, D smash and grab) from the alarms
+  raised, time seen by guards or lit by searchlights, shots fired, guards put down, knock-downs
+  and sinkings.
 
 Run about as a green army man (he hops, like all the toy soldiers) and aim over his shoulder.
 Move with the left stick or W A S D, aim with the right stick or mouse, fire with RT or a
