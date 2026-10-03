@@ -112,6 +112,27 @@ function dress(geos: Map<THREE.Material, THREE.BufferGeometry>, parent: THREE.Ob
 }
 
 /**
+ * Just the toy gunship's looks, with no physics or AI: nose toward -Z, rotors to spin (the
+ * prison level's search helicopters fly these).
+ */
+export function createGunshipModel(color: number = ARMY_TAN): { root: THREE.Group; mainRotor: THREE.Group; tailRotor: THREE.Group } {
+  const shapes = gunshipShapes(color);
+  const root = new THREE.Group();
+  dress(shapes.body, root);
+  const mainRotor = new THREE.Group();
+  mainRotor.position.set(0, 2.85, 0);
+  dress(shapes.rotor, mainRotor);
+  const tailRotor = new THREE.Group();
+  tailRotor.position.set(0.45, 2.4, 8.2);
+  dress(shapes.tail, tailRotor);
+  const gun = new THREE.Group();
+  gun.position.set(0, -0.9, -4.3);
+  dress(shapes.gun, gun);
+  root.add(mainRotor, tailRotor, gun);
+  return { root, mainRotor, tailRotor };
+}
+
+/**
  * Airborne enemy that shares the tank health, faction, shell and target interfaces: a gunship, or
  * on the knights mission a dragon that breathes fireballs (the Game gives its shots that look).
  */

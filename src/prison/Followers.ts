@@ -542,6 +542,26 @@ export class Followers {
     return { buddies, others };
   }
 
+  /** Off the raft: everyone aboard steps out round `at` and falls in behind the player again. */
+  disembark(at: THREE.Vector3, yaw: number): void {
+    this.trail.length = 0;
+    this.trail.push(new THREE.Vector2(at.x, at.z));
+    let i = 0;
+    for (const p of this.squad) {
+      if (p.state !== 'boarded') continue;
+      const ahead = 1.8 + Math.floor(i / 2) * 1.1;
+      const side = (i % 2 ? 1 : -1) * 1.1;
+      p.teleport(at.x - Math.sin(yaw) * ahead + Math.cos(yaw) * side, at.z - Math.cos(yaw) * ahead - Math.sin(yaw) * side, at.y);
+      p.state = this.holding ? 'holding' : 'following';
+      p.root.visible = true;
+      p.collider.setEnabled(true);
+      p.cursor = 0;
+      p.cheer = 0.6;
+      p.pose(0);
+      i++;
+    }
+  }
+
   /** Moves, fights and works for one frame. Returns the shots fired at the guards. */
   update(dt: number, world: SquadWorld): Shot[] {
     const player = world.player;

@@ -194,8 +194,9 @@ export class Sound {
   /**
    * The player's engine: a low, clanking rumble for the tank, a higher buzz for the jeep and the
    * chopper's thudding rotor, rising with speed. Silent while `running` is false (paused, rocket cam).
+   * `loudness` scales the chopper's rotor (the prison level's search helicopters, heard from afar).
    */
-  updateEngine(speed: number, vehicle: Vehicle, running: boolean): void {
+  updateEngine(speed: number, vehicle: Vehicle, running: boolean, loudness = 1): void {
     if (this.ctx.state !== 'running') return;
     const e = (this.engine ??= this.buildEngine());
     const t = this.ctx.currentTime;
@@ -208,7 +209,7 @@ export class Sound {
       e.filter.frequency.setTargetAtTime(380 + pace * 260, t, 0.2);
       e.lfo.frequency.setTargetAtTime(11 + pace * 2, t, 0.3);
       e.clatter.gain.setTargetAtTime(0.85, t, 0.2);
-      e.gain.gain.setTargetAtTime(running ? 0.085 * (0.8 + pace * 0.3) : 0, t, running ? 0.3 : 0.05);
+      e.gain.gain.setTargetAtTime(running ? 0.085 * (0.8 + pace * 0.3) * loudness : 0, t, running ? 0.3 : 0.05);
       return;
     }
     const pace = clamp(speed / (jeep ? 36 : 22), 0, 1.3);

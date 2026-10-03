@@ -65,28 +65,20 @@ const VENT_HEIGHT = 2;
 const BAKERY = { minX: -29.4, maxX: -24.2, minZ: 26, maxZ: 39, height: 4 };
 const PIPE_SPOT = { x: -24.05, z: 24 };
 /**
- * The motor pool, fenced off in the south of the east wing: your tank and three trucks under a
- * carport. The fence's gate (on its north side, x LOT.gateX0 to gateX1) stays shut until the
- * rest of the prison's taken.
+ * The motor pool, fenced off in the south of the east wing: a carport over the workshop bay,
+ * where the guards keep the pump for their tyres (and the bellows pump is the one you need).
  */
 const LOT = { minX: 39, maxX: 71.4, minZ: 27.5, maxZ: 41.4, gateX0: 40, gateX1: 46.4 };
-/** The ground: the whole compound and the country to the north, out to Cooper's Base. */
-const GROUND = { minX: -150, maxX: 150, minZ: -580, maxZ: 70 };
-/** The road home from the main gate, and Cooper's Base at the end of it. */
-const ROAD: { x: number; z: number }[] = [
-  { x: 0, z: -26 },
-  { x: 0, z: -80 },
-  { x: -28, z: -150 },
-  { x: -32, z: -230 },
-  { x: 18, z: -320 },
-  { x: 10, z: -410 },
-  { x: 0, z: -438 }, // in through the gate of Cooper's Base (its sandbag wall is 65 m out)
-];
-const HOME = { x: 0, z: -500 };
+/** The ground: the compound and the beach north of it, down to the water's edge. */
+const GROUND = { minX: -150, maxX: 150, minZ: -54, maxZ: 70 };
+/** The jetty running out into the sea from the gate: where the raft is launched. */
+export const JETTY = { x0: -2.5, x1: 2.5, z0: GROUND.minZ + 1, z1: GROUND.minZ - 8, y: 0.22 };
 const BLOCK_B: BlockPlan = { minX: 38, maxX: 68, minZ: 8, maxZ: 22, corridor: 12, doorX: 53 };
 /** The barracks in the west wing (its door on the east side, facing the yard), and the punishment hut behind it. */
 const BARRACKS = { minX: -66, maxX: -42, minZ: -18, maxZ: -4, doorZ0: -12.5, doorZ1: -9.5, height: 3.4 };
 const HUT = { minX: -66, maxX: -61, frontZ: 8, backZ: 13 };
+/** The floodlight poles (x, z). */
+const LAMPS: [number, number][] = [[-28.4, -14], [28.4, -14], [-14, -23.4], [14, -23.4], [-28.4, 22], [28.4, 22], [50, -23.4], [-50, -23.4]];
 
 /** One cell: its sides, and the door in its barred front (which faces -Z). */
 export interface CellSpot {
@@ -129,14 +121,7 @@ export interface SearchlightSpot {
 }
 
 /** The parts of the prison to take, in the order they're met. */
-export type ZoneId = 'blockA' | 'yard' | 'blockB' | 'barracks' | 'motorpool';
-
-export interface Zone {
-  id: ZoneId;
-  name: string;
-  /** Where the player (and the squad) gets back up once this part's been taken. */
-  checkpoint: { x: number; z: number; yaw: number };
-}
+export type ZoneId = 'blockA' | 'yard' | 'blockB' | 'barracks' | 'motorpool' | 'shore';
 
 /** Where a tan guard stands (facing `yaw`), or the beat he walks up and down; `height` up a guard tower. */
 export interface GuardPost {
@@ -146,6 +131,18 @@ export interface GuardPost {
   zone: ZoneId;
   patrol?: { x: number; z: number }[];
   height?: number;
+  /** How far his vision cone reaches (17 m on the ground, 26 m up a tower, unless set). */
+  sight?: number;
+  /** A guard standing at his post slowly looks from side to side; set false to have him stare one way. */
+  sweep?: boolean;
+}
+
+/** The pieces of escape gear lying about the prison, Alcatraz-style (see Gear). */
+export type GearId = 'raincoats' | 'jackets' | 'pump' | 'paddles' | 'cement';
+export interface GearSpot {
+  id: GearId;
+  x: number;
+  z: number;
 }
 
 /** A lever box on a wall that opens every cell door in a block at once. */
@@ -168,19 +165,19 @@ export interface FacilityLayout {
   /** Every cell: Cell Block A west to east (the first is the player's), then Cell Block B, then the punishment hut. */
   cells: CellSpot[];
   levers: LeverSpot[];
-  /** The motor pool: where the tank's parked, the trucks' line out behind it, and the fence's gate. */
-  motorPool: { tank: { x: number; z: number; yaw: number }; truckLine: { x: number; z: number }[]; gate: { x0: number; x1: number; z: number } };
-  /** The main gate (shut until it's shot open), the road home and Cooper's Base. */
+  /** The sea gate, in the north wall (padlocked until it's shot open), and the jetty beyond it where the raft is launched. */
   mainGate: { x0: number; x1: number; z: number; height: number };
-  road: { x: number; z: number }[];
-  home: { x: number; z: number };
+  /** The end of the jetty: walk here with the gear to launch the raft, which floats just off it. */
+  launch: { x: number; z: number };
   ground: { minX: number; maxX: number; minZ: number; maxZ: number };
+  /** The five bits of escape gear, and the floodlights' lamps (for the few real lights that follow the player). */
+  gear: GearSpot[];
+  lamps: { x: number; y: number; z: number }[];
   /** The yard's guard towers, and the middle of the yard (they fall towards it). */
   towers: { x: number; z: number }[];
   yardMiddle: { x: number; z: number };
   /** The flagpole on the barracks roof: its foot and its top. */
   flag: { x: number; z: number; foot: number; top: number };
-  zones: Zone[];
   /** The opening, Alcatraz-style: out through the vent, along the pipe chase, up to the roof, past the searchlights, down the bakery pipe. */
   vents: VentSpot[];
   /** Where he gets back up once he's out through the vent: in the pipe chase. */
@@ -228,13 +225,11 @@ export class Facility {
 
     const cells: CellSpot[] = [...blockCells(BLOCK_A, 'blockA'), ...blockCells(BLOCK_B, 'blockB')];
     cells[0].noLock = true;
-    const blockB = cells.flatMap((c, i) => (c.block === 'blockB' ? [i] : []));
     cells.push({ minX: HUT.minX, maxX: HUT.maxX, frontZ: HUT.frontZ, backZ: HUT.backZ, doorX0: HUT.minX + DOOR_FROM, doorX1: HUT.minX + DOOR_TO, height: 3, block: 'barracks' });
+    // Two towers watching over the yard: one over the north-east corner, one over the west door and the bakery.
     const towers = [
-      { x: -26, z: -21 },
       { x: 26, z: -21 },
       { x: -26, z: 6 },
-      { x: 26, z: 6 },
     ];
     const towerTop = 4.6;
     this.layout = {
@@ -278,58 +273,46 @@ export class Facility {
       ],
       onRoof: (x, y, z) => y > CELLHOUSE.top && x > CELLHOUSE.minX - WALL && x < CELLHOUSE.maxX + WALL && z > CELLHOUSE.minZ - WALL && z < CELLHOUSE.maxZ + WALL,
       cells,
-      levers: [{ x: BLOCK_B.minX + 0.12, y: 1.4, z: (BLOCK_B.minZ + BLOCK_B.corridor) / 2, yaw: -Math.PI / 2, cells: blockB }],
+      levers: [], // (Cell Block B's empty now: no lever box)
       towers,
       yardMiddle: { x: 0, z: -8 },
-      motorPool: {
-        tank: { x: LOT.gateX0 + 2.6, z: LOT.minZ + 4, yaw: 0 },
-        // From the far end of the carport to the tank: the trucks start parked along it, nose to tail.
-        truckLine: [{ x: LOT.maxX - 1, z: 34 }, { x: LOT.gateX0 + 2.6, z: 34 }, { x: LOT.gateX0 + 2.6, z: LOT.minZ + 4 }],
-        gate: { x0: LOT.gateX0, x1: LOT.gateX1, z: LOT.minZ },
-      },
       mainGate: { x0: -3, x1: 3, z: COMPOUND.minZ - WALL / 2, height: COMPOUND_WALL },
-      road: ROAD,
-      home: HOME,
+      launch: { x: 0, z: JETTY.z1 + 1.4 },
       ground: GROUND,
+      lamps: LAMPS.map(([x, z]) => ({ x, y: 8.2, z })),
       flag: { x: (BARRACKS.minX + BARRACKS.maxX) / 2, z: (BARRACKS.minZ + BARRACKS.maxZ) / 2, foot: BARRACKS.height + 0.35, top: BARRACKS.height + 6 },
-      zones: [
-        { id: 'blockA', name: 'Cell Block A', checkpoint: { x: BLOCK_A.minX + 4, z: 12.4, yaw: -Math.PI / 2 } },
-        { id: 'yard', name: 'The yard', checkpoint: { x: 0, z: -6, yaw: Math.PI } },
-        { id: 'blockB', name: 'Cell Block B', checkpoint: { x: BLOCK_B.doorX, z: 2, yaw: Math.PI } },
-        { id: 'barracks', name: 'The barracks', checkpoint: { x: -36, z: -2, yaw: Math.PI / 2 } },
+      gear: [
+        // The raincoats are in the guards' lockers at the back of the barracks.
+        { id: 'raincoats', x: -63.2, z: -11 },
+        // The life jackets are stacked in Cell Block B's corridor, behind the guard on his beat.
+        { id: 'jackets', x: 64.5, z: 10 },
+        // The bellows pump (a squeezebox, as in 1962) is in the workshop bay under the carport.
+        { id: 'pump', x: 58, z: 34.5 },
+        // The paddles are in the punishment hut, behind a padlock.
+        { id: 'paddles', x: HUT.minX + 3.9, z: HUT.backZ - 1.8 },
+        // The tin of contact cement is on the yard, by the crates the guards crouch behind.
+        { id: 'cement', x: 8.5, z: -13 },
       ],
       guards: [
-        // Cell Block A: one on his beat up the front corridor, one by the door, one on the back corridor.
+        // Cell Block A: one on his beat up the front corridor, one on the back corridor.
         { zone: 'blockA', x: -6, z: 12, yaw: -Math.PI / 2, patrol: [{ x: -6, z: 12 }, { x: 16, z: 12 }] },
-        { zone: 'blockA', x: 2.5, z: 11, yaw: Math.PI / 2 },
         { zone: 'blockA', x: -16, z: 34.8, yaw: -Math.PI / 2, patrol: [{ x: -16, z: 34.8 }, { x: 16, z: 34.8 }] },
-        // Waiting at the bottom of the bakery pipe.
-        { zone: 'yard', x: -27, z: 13, yaw: Math.PI },
-        // The yard: behind crates facing the cell block, one walking the north wall, one up each tower.
+        // Outside the cellhouse's west wall, pacing up and down by the bakery pipe.
+        { zone: 'yard', x: -27.5, z: -2, yaw: Math.PI, patrol: [{ x: -27.5, z: -4 }, { x: -27.5, z: 9 }] },
+        // The yard: two behind crates facing the cell block, one walking the north wall, one up each tower.
         { zone: 'yard', x: -13, z: -10, yaw: Math.PI },
         { zone: 'yard', x: 6, z: -8.5, yaw: Math.PI },
-        { zone: 'yard', x: 15, z: -16, yaw: Math.PI * 0.85 },
-        { zone: 'yard', x: -22, z: 1.5, yaw: Math.PI * 1.2 },
-        { zone: 'yard', x: 21, z: -2, yaw: Math.PI * 0.8 },
-        { zone: 'yard', x: -20, z: -22, yaw: -Math.PI / 2, patrol: [{ x: -20, z: -22 }, { x: 20, z: -22 }] },
+        { zone: 'yard', x: -20, z: -23, yaw: -Math.PI / 2, patrol: [{ x: -20, z: -23 }, { x: 20, z: -23 }] },
         ...towers.map((t) => ({ zone: 'yard' as const, x: t.x, z: t.z, yaw: Math.atan2(t.x, t.z + 2), height: towerTop })),
-        // The east wing and Cell Block B: two outside facing the yard's doorway, one on the corridor, one by the lever.
-        { zone: 'blockB', x: 44, z: -2, yaw: Math.PI / 2 },
-        { zone: 'blockB', x: 58, z: -14, yaw: Math.PI * 0.6 },
-        // The motor pool: they only come into it once its gate's open.
-        { zone: 'motorpool', x: 44, z: 29.5, yaw: 0 },
-        { zone: 'motorpool', x: 60, z: 30, yaw: Math.PI / 2 },
-        { zone: 'motorpool', x: 52, z: 39.5, yaw: Math.PI / 2 },
-        { zone: 'motorpool', x: 68, z: 38, yaw: Math.PI / 2 },
-        { zone: 'blockB', x: 46, z: 10, yaw: -Math.PI / 2, patrol: [{ x: 46, z: 10 }, { x: 66, z: 10 }] },
-        { zone: 'blockB', x: 40.5, z: 9, yaw: -Math.PI / 2 },
-        // The west wing: two outside facing the yard's doorway, three in the barracks, one guarding the hut.
-        { zone: 'barracks', x: -38, z: -12, yaw: -Math.PI / 2 },
-        { zone: 'barracks', x: -40, z: 7, yaw: -Math.PI * 0.6 },
-        { zone: 'barracks', x: -46, z: -11, yaw: -Math.PI / 2 },
-        { zone: 'barracks', x: -55, z: -13, yaw: -Math.PI / 2 },
-        { zone: 'barracks', x: -60, z: -8, yaw: -Math.PI / 2, patrol: [{ x: -60, z: -8 }, { x: -48, z: -8 }] },
-        { zone: 'barracks', x: -63.5, z: 5, yaw: -Math.PI / 2 },
+        // The east wing: one on the corridor of Cell Block B, one walking the open ground in front of it.
+        { zone: 'blockB', x: 46, z: 10, yaw: -Math.PI / 2, patrol: [{ x: 46, z: 10 }, { x: 62, z: 10 }] },
+        { zone: 'blockB', x: 42, z: -12, yaw: -Math.PI / 2, patrol: [{ x: 42, z: -12 }, { x: 62, z: -12 }] },
+        // The motor pool: one walking the fence, one by the workshop bay.
+        { zone: 'motorpool', x: 44, z: 26, yaw: -Math.PI / 2, patrol: [{ x: 44, z: 26 }, { x: 68, z: 26 }] },
+        { zone: 'motorpool', x: 52, z: 39.8, yaw: Math.PI / 2 },
+        // The west wing: one in the barracks, one walking outside it.
+        { zone: 'barracks', x: -55, z: -12.5, yaw: -Math.PI / 2 },
+        { zone: 'barracks', x: -37, z: -16, yaw: Math.PI, patrol: [{ x: -37, z: -16 }, { x: -37, z: 14 }] },
       ],
       navPoints: this.navPoints(cells),
     };
@@ -453,8 +436,9 @@ export class Facility {
   }
 
   /**
-   * The ground: paving slabs over the compound, and below them (so they don't flicker) a huge
-   * grassy field out to Cooper's Base, with an invisible wall round its edge.
+   * The ground: paving slabs over the compound, and below them (so they don't flicker) grass
+   * round it and a sandy beach down to the sea on the north side, with an invisible wall round
+   * the edge.
    */
   private buildGround(): void {
     const c = document.createElement('canvas');
@@ -482,22 +466,56 @@ export class Facility {
     paving.receiveShadow = true;
     this.group.add(paving);
 
+    // Grass round the compound (down to the gatehouse), sand from there to the water, and a ramp of sand running down under it.
     const g = GROUND;
+    const edge = COMPOUND.minZ - WALL - 1.5;
     const gw = g.maxX - g.minX;
-    const gd = g.maxZ - g.minZ;
-    const grass = new THREE.Mesh(new THREE.PlaneGeometry(gw, gd).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0x4f6a36, roughness: 1 }));
-    grass.position.set((g.minX + g.maxX) / 2, -0.03, (g.minZ + g.maxZ) / 2);
+    const grass = new THREE.Mesh(new THREE.PlaneGeometry(gw, g.maxZ - edge).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0x4f6a36, roughness: 1 }));
+    grass.position.set((g.minX + g.maxX) / 2, -0.03, (edge + g.maxZ) / 2);
     grass.receiveShadow = true;
-    this.group.add(grass);
-    this.world.createCollider(RAPIER.ColliderDesc.cuboid(gw / 2, 0.5, gd / 2).setTranslation((g.minX + g.maxX) / 2, -0.5, (g.minZ + g.maxZ) / 2), this.body);
-    for (const [x0, z0, x1, z1] of [
-      [g.minX - 1, g.minZ - 1, g.maxX + 1, g.minZ],
-      [g.minX - 1, g.maxZ, g.maxX + 1, g.maxZ + 1],
-      [g.minX - 1, g.minZ, g.minX, g.maxZ],
-      [g.maxX, g.minZ, g.maxX + 1, g.maxZ],
-    ]) {
-      this.world.createCollider(RAPIER.ColliderDesc.cuboid((x1 - x0) / 2, 5, (z1 - z0) / 2).setTranslation((x0 + x1) / 2, 5, (z0 + z1) / 2), this.body);
+    const sandMaterial = new THREE.MeshStandardMaterial({ color: 0xc2b080, roughness: 1 });
+    const sand = new THREE.Mesh(new THREE.PlaneGeometry(gw, edge - g.minZ).rotateX(-Math.PI / 2), sandMaterial);
+    sand.position.set((g.minX + g.maxX) / 2, -0.03, (edge + g.minZ) / 2);
+    sand.receiveShadow = true;
+    const shelf = new THREE.Mesh(new THREE.PlaneGeometry(gw, 14).rotateX(-Math.PI / 2 - 0.07), sandMaterial);
+    shelf.position.set((g.minX + g.maxX) / 2, -0.55, g.minZ - 6.6);
+    this.group.add(grass, sand, shelf);
+    this.world.createCollider(RAPIER.ColliderDesc.cuboid(gw / 2, 0.5, (g.maxZ - g.minZ) / 2).setTranslation((g.minX + g.maxX) / 2, -0.5, (g.minZ + g.maxZ) / 2), this.body);
+    const wall = (x0: number, z0: number, x1: number, z1: number, h = 5) =>
+      this.world.createCollider(RAPIER.ColliderDesc.cuboid((x1 - x0) / 2, h, (z1 - z0) / 2).setTranslation((x0 + x1) / 2, h, (z0 + z1) / 2), this.body);
+    // The edge of the world: all round, except along the waterline, where only the jetty goes on.
+    wall(g.minX - 1, g.maxZ, g.maxX + 1, g.maxZ + 1);
+    wall(g.minX - 1, g.minZ, g.minX, g.maxZ);
+    wall(g.maxX, g.minZ, g.maxX + 1, g.maxZ);
+    wall(g.minX - 1, g.minZ - 1, JETTY.x0 - 0.15, g.minZ);
+    wall(JETTY.x1 + 0.15, g.minZ - 1, g.maxX + 1, g.minZ);
+    this.buildJetty();
+  }
+
+  /** The jetty: planks on piles with a rope rail down each side, running out from the beach into the sea. */
+  private buildJetty(): void {
+    const { x0, x1, z0, z1, y } = JETTY;
+    const len = z0 - z1;
+    const wood = plastic(0x6e5636);
+    const dark = plastic(0x4a3a24);
+    this.parts.add(this.box, wood, (x0 + x1) / 2, y - 0.1, (z0 + z1) / 2, 0, 0, 0, x1 - x0, 0.2, len);
+    for (let z = z0 - 0.5; z > z1; z -= 1) this.parts.add(this.box, dark, (x0 + x1) / 2, y + 0.005, z, 0, 0, 0, x1 - x0, 0.02, 0.06);
+    this.world.createCollider(RAPIER.ColliderDesc.cuboid((x1 - x0) / 2, 0.45, len / 2).setTranslation((x0 + x1) / 2, y - 0.45, (z0 + z1) / 2), this.body);
+    const pile = new THREE.CylinderGeometry(0.16, 0.2, 2.4, 8);
+    for (let z = z0 - 1; z > z1; z -= 4) {
+      for (const x of [x0 + 0.15, x1 - 0.15]) {
+        this.parts.add(pile, dark, x, y - 0.8, z);
+        this.parts.add(this.box, dark, x, y + 0.5, z, 0, 0, 0, 0.12, 1, 0.12);
+      }
     }
+    pile.dispose();
+    for (const x of [x0 + 0.15, x1 - 0.15]) this.parts.add(this.box, plastic(0xb8a888), x, y + 0.85, (z0 + z1) / 2, 0, 0, 0, 0.05, 0.05, len);
+    // Rails to keep him on it (invisible), and the end.
+    for (const x of [x0, x1]) this.world.createCollider(RAPIER.ColliderDesc.cuboid(0.1, 2, len / 2).setTranslation(x, 2, (z0 + z1) / 2), this.body);
+    this.world.createCollider(RAPIER.ColliderDesc.cuboid((x1 - x0) / 2, 2, 0.1).setTranslation((x0 + x1) / 2, 2, z1), this.body);
+    // A lamp on a post at the end, so there's something to walk to in the dark.
+    this.parts.add(this.box, plastic(STEEL), 0, y + 1.1, z1 + 0.4, 0, 0, 0, 0.1, 2.2, 0.1);
+    this.parts.add(new THREE.SphereGeometry(0.2, 10, 8), new THREE.MeshBasicMaterial({ color: LAMP }), 0, y + 2.3, z1 + 0.4);
   }
 
   /** The perimeter (a locked gate in the north side, out of the yard) and the walls between the yard and the wings. */
@@ -775,10 +793,18 @@ export class Facility {
     this.solid(b.minX + 1.4, 2.6, b.minZ - 0.12, b.maxX - 0.6, 3.2, b.minZ, 0xe6d27a, false);
     // The flue: up the cellhouse wall from the ground to above the roof's edge, with brackets.
     const p = PIPE_SPOT;
-    const pipe = new THREE.CylinderGeometry(0.2, 0.2, ROOF_TOP + 1.2, 12);
-    this.parts.add(pipe, plastic(0x55595e), p.x, (ROOF_TOP + 1.2) / 2, p.z);
+    const top = ROOF_TOP + 1.2;
+    const flue = plastic(0x55595e);
+    const pipe = new THREE.CylinderGeometry(0.2, 0.2, top, 12);
+    this.parts.add(pipe, flue, p.x, top / 2, p.z);
     pipe.dispose();
-    this.parts.add(new THREE.TorusGeometry(0.35, 0.2, 8, 12, Math.PI / 2), plastic(0x55595e), p.x, ROOF_TOP + 1.2, p.z, 0, Math.PI / 2, 0);
+    // The elbow: a quarter turn centred a bend radius in from the pipe, so it starts exactly on the pipe's top and ends heading in over the roof.
+    const bend = 0.35;
+    this.parts.add(new THREE.TorusGeometry(bend, 0.2, 8, 12, Math.PI / 2), flue, p.x + bend, top, p.z, 0, 0, Math.PI / 2);
+    const stub = new THREE.CylinderGeometry(0.2, 0.2, 0.9, 12).rotateZ(Math.PI / 2);
+    this.parts.add(stub, flue, p.x + bend + 0.45, top + bend, p.z);
+    stub.dispose();
+    this.parts.add(new THREE.CylinderGeometry(0.15, 0.15, 0.02, 12).rotateZ(Math.PI / 2), plastic(0x16181a), p.x + bend + 0.9, top + bend, p.z);
     for (let y = 1; y < ROOF_TOP; y += 1.6) this.parts.add(this.box, plastic(STEEL), p.x + 0.1, y, p.z, 0, 0, 0, 0.3, 0.1, 0.5);
     this.blocker(p.x - 0.2, 0, p.z - 0.2, p.x + 0.2, ROOF_TOP - 0.5, p.z + 0.2);
   }
@@ -885,7 +911,7 @@ export class Facility {
     const steel = plastic(STEEL);
     const lampGlow = new THREE.MeshBasicMaterial({ color: LAMP });
     // Floodlights on tall poles, two lamps each, turned in towards the yard.
-    for (const [x, z] of [[-28.4, -14], [28.4, -14], [-14, -23.4], [14, -23.4], [-28.4, 22], [28.4, 22], [50, -23.4], [-50, -23.4]]) {
+    for (const [x, z] of LAMPS) {
       const pole = new THREE.CylinderGeometry(0.1, 0.14, 8, 8);
       this.parts.add(pole, steel, x, 4, z);
       pole.dispose();

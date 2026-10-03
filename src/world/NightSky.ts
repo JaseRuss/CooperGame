@@ -179,6 +179,7 @@ export class NightSky {
   constructor(
     private readonly scene: THREE.Scene,
     private readonly targets: NightTargets,
+    moonDirection: THREE.Vector3 = MOON_DIRECTION,
   ) {
     // Stars on the upper half of a big sphere, dimmer towards the horizon.
     const positions: number[] = [];
@@ -199,7 +200,7 @@ export class NightSky {
 
     this.moonMaterial = new THREE.SpriteMaterial({ map: moonTexture(), fog: false, depthWrite: false, transparent: true });
     const moon = new THREE.Sprite(this.moonMaterial);
-    moon.position.copy(MOON_DIRECTION).multiplyScalar(SKY_RADIUS * 0.95);
+    moon.position.copy(moonDirection).multiplyScalar(SKY_RADIUS * 0.95);
     moon.scale.setScalar(260);
     this.sky.add(moon);
     scene.add(this.sky);

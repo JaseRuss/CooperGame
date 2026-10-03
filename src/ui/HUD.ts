@@ -55,10 +55,14 @@ export interface PrisonHUD {
   prompt: string | null;
   /** Seconds left before the player is back on their feet, while knocked down (0 when standing). */
   downFor: number;
-  /** Back in the tank at the end: the main gun instead of the rifle (the reload is `reloadFraction`). */
-  inTank?: boolean;
+  /** On the raft: paddles instead of a rifle, and the raft's hull in place of health. */
+  onRaft?: boolean;
   /** The jam riot cannon's tank, 0..1. */
   jam: number;
+  /** The stealth meter: how close the guards (or the search helicopters) are to being sure of you, with a word for how it stands. Null when it doesn't apply. */
+  stealth?: { level: number; label: string; color: string } | null;
+  /** Extra lines under the checklist (the raft's distance and hull, say). */
+  status?: string[];
 }
 
 /** A marker pointing the way to somewhere: on screen over it, or pinned to the edge toward it. */
@@ -1119,11 +1123,12 @@ export class HUD {
     if (prison) {
       this.jamName.textContent = 'JAM RIOT CANNON';
       this.jamHint.textContent = 'Sticks guards fast, then they slip over';
-      this.gunName.textContent = prison.inTank ? 'MAIN GUN' : 'RIFLE';
-      this.hullName.textContent = prison.inTank ? 'HULL' : 'HEALTH';
-      this.reloadText.textContent = prison.downFor > 0 ? 'KNOCKED DOWN' : prison.inTank && !loaded ? 'RELOADING' : prison.inTank ? 'LOADED' : 'READY';
-      this.reloadText.style.color = prison.downFor > 0 ? '#ff8a7a' : prison.inTank && !loaded ? '#eef3f8' : '#ffd24a';
-      this.modeText.textContent = `${state.cameraMode === 'first' ? '1st' : '3rd'} person · ${prison.inTank ? 'Your tank' : 'On foot'}`;
+      this.gunName.textContent = prison.onRaft ? 'PADDLES' : 'RIFLE';
+      this.hullName.textContent = prison.onRaft ? 'RAFT' : 'HEALTH';
+      this.reloadText.textContent = prison.downFor > 0 ? 'KNOCKED DOWN' : prison.onRaft ? 'PADDLING' : 'READY';
+      this.reloadText.style.color = prison.downFor > 0 ? '#ff8a7a' : '#ffd24a';
+      this.modeText.textContent = prison.onRaft ? 'Raft · At sea' : `${state.cameraMode === 'first' ? '1st' : '3rd'} person · On foot`;
+      this.jamSlot.style.display = prison.onRaft ? 'none' : '';
     }
 
     const aaLocked = state.aaLockScreen !== null;
@@ -1176,8 +1181,8 @@ export class HUD {
       this.keys,
       (prison
         ? state.usingGamepad
-          ? `${k('LS', 'move')}${k('RS', 'aim')}${k('RT', 'fire')}${k('LT', 'jam')}${k('X', 'squad')}${k('Y', 'camera')}${k('Start', 'pause · options')}${k('Back', 'checkpoint')}`
-          : `${k('WASD', 'move')}${k('Mouse', 'aim')}${k('Click', 'fire')}${k('E', 'jam')}${k('X', 'squad')}${k('C', 'camera')}${k('M', 'pause · options')}${k('R', 'checkpoint')}` +
+          ? `${k('LS', 'move')}${k('RS', 'aim')}${k('RB', 'creep')}${k('RT', 'fire')}${k('LT', 'jam')}${k('X', 'squad')}${k('Y', 'camera')}${k('Start', 'pause · options')}${k('Back', 'checkpoint')}`
+          : `${k('WASD', 'move')}${k('Mouse', 'aim')}${k('Shift', 'creep')}${k('Click', 'fire')}${k('E', 'jam')}${k('X', 'squad')}${k('C', 'camera')}${k('M', 'pause · options')}${k('R', 'checkpoint')}` +
             (state.mouseCaptureHint ? '<br><span style="color:#ffd24a">Click the game to capture the mouse for aiming</span>' : '')
         : state.usingGamepad
         ? `${k('LS', drive)}${k('RS', 'aim')}${k('RT', fire)}${bike ? '' : k('LT', 'jam')}${k('LB', rocket)}${bike ? '' : k('RB', 'AA')}<br>${bike ? '' : k('X', 'mega jam')}${k('Y', 'camera')}${k('Start', 'pause · options')}${k('Back', 'home')}`
@@ -1207,7 +1212,12 @@ export class HUD {
       this.setHTML(
         this.baseCounter,
         `<div class="stencil title">${prison.title}</div>` +
-          prison.objectives.map((o) => `<div style="font-size:12px; ${o.done ? 'color:#9be27a' : ''}">${o.done ? '☑' : '☐'} ${o.label}</div>`).join(''),
+          prison.objectives.map((o) => `<div style="font-size:12px; ${o.done ? 'color:#9be27a' : ''}">${o.done ? '☑' : '☐'} ${o.label}</div>`).join('') +
+          (prison.status ?? []).map((line) => `<div style="font-size:12px; color:#c9d3dc">${line}</div>`).join('') +
+          (prison.stealth
+            ? `<div style="margin-top:6px; font-size:11px; letter-spacing:0.1em; color:${prison.stealth.color}">${prison.stealth.label}</div>` +
+              `<div style="height:7px; background:rgba(255,255,255,0.16); border-radius:4px; overflow:hidden"><div style="height:100%; width:${Math.round(prison.stealth.level * 100)}%; background:${prison.stealth.color}"></div></div>`
+            : ''),
       );
       this.checklist.style.display = 'none';
     } else if (state.zombies) {
