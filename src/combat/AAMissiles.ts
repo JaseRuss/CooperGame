@@ -73,6 +73,14 @@ export class AAMissiles {
   private launcher: Launcher | null = null;
   private salvoTrack: AirTrack | null = null;
 
+  clear(): void {
+    for (const missile of this.missiles) this.scene.remove(missile.mesh);
+    this.missiles.length = 0;
+    this.pending = 0;
+    this.launcher = null;
+    this.salvoTrack = null;
+  }
+
   constructor(private readonly scene: THREE.Scene) {}
 
   /** True while a salvo is still leaving the pod. */

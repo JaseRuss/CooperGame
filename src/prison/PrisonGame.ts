@@ -149,7 +149,8 @@ function clock(seconds: number): string {
 export class PrisonGame {
   private readonly renderer: THREE.WebGLRenderer;
   private readonly scene = new THREE.Scene();
-  private readonly camera: THREE.PerspectiveCamera;
+  private camera: THREE.PerspectiveCamera;
+  private readonly camera2: THREE.PerspectiveCamera;
   private readonly input: InputManager;
   private readonly hud: HUD;
   private readonly sound = new Sound(MISSION);
@@ -164,9 +165,18 @@ export class PrisonGame {
   private world!: RAPIER.World;
   private impacts!: ImpactEffects;
   private jam!: JamCannon;
+  private jam2!: JamCannon;
   private facility!: Facility;
   private player!: PlayerSoldier;
+  private player2: PlayerSoldier | null = null;
   private cam!: ShoulderCam;
+  private cam2!: ShoulderCam;
+  private readonly hud2: HUD;
+  private readonly splitDivider: HTMLDivElement;
+  private dividerOrientation: 'vertical' | 'horizontal' | null = null;
+  private jamTank2 = 1;
+  private jamCooldown2 = 0;
+  private downTime2 = 0;
   private cells!: Cells;
   private followers!: Followers;
   private guards!: Guards;
@@ -212,6 +222,7 @@ export class PrisonGame {
   private intro: number | null = 0;
   /** Mid-climb: the way he goes (waypoints), how far along (0..1), how long it takes, which way he faces, and what happens at the end. */
   private climbing: { path: THREE.Vector3[]; t: number; duration: number; yaw: number; spot: ClimbSpot; up: boolean } | null = null;
+  private climbOwner: 1 | 2 = 1;
   /** How close the searchlights are to spotting him (0..1). */
   private spotted = 0;
   /** The jam riot cannon's tank (0..1) and the time to its next glob. */
@@ -235,12 +246,20 @@ export class PrisonGame {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, graphics.pixelRatio));
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.shadowMap.enabled = graphics.shadowSize > 0;
+    this.renderer.shadowMap.autoUpdate = false;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     container.appendChild(this.renderer.domElement);
 
     this.camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 1800);
+    this.camera2 = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 1800);
     this.input = new InputManager(this.renderer.domElement);
     this.hud = new HUD(container);
+    this.hud2 = new HUD(container, true);
+    this.hud.setMirror(this.hud2);
+    this.hud2.setActive(false);
+    this.splitDivider = document.createElement('div');
+    this.splitDivider.style.cssText = 'display:none;position:absolute;z-index:2;background:#d6dfd880;pointer-events:none';
+    container.appendChild(this.splitDivider);
     this.hud.setSoundHook((kind) => this.sound.play(kind === 'move' ? 'uiMove' : kind === 'change' ? 'uiChange' : kind === 'back' ? 'uiBack' : kind === 'open' ? 'uiOpen' : 'uiConfirm', { volume: 0.5, minGap: 0 }));
 
     this.loadingLabel = document.createElement('div');
@@ -282,12 +301,14 @@ export class PrisonGame {
     this.impacts = new ImpactEffects(this.scene);
     // The prison's ground is flat (y = 0), and the jam goes past the squad.
     this.jam = new JamCannon(this.scene, () => 0, FRIEND_SHOTS);
+    this.jam2 = new JamCannon(this.scene, () => 0, FRIEND_SHOTS);
     this.facility = new Facility(this.world);
     this.scene.add(this.facility.group);
     const layout = this.facility.layout;
     this.player = new PlayerSoldier(this.world, layout.start.x, layout.start.z, layout.start.yaw);
     this.scene.add(this.player.root);
     this.cam = new ShoulderCam(this.camera, this.world);
+    this.syncPlayer2();
     this.cells = new Cells(this.world, layout.cells, layout.levers, layout.vents);
     this.scene.add(this.cells.group);
     this.followers = new Followers(this.world, prisonerSpots(layout), this.settings.buddyNames);
@@ -378,6 +399,7 @@ export class PrisonGame {
     const ratio = Math.min(window.devicePixelRatio, graphics.pixelRatio);
     if (this.renderer.getPixelRatio() !== ratio) this.renderer.setPixelRatio(ratio);
     this.renderer.shadowMap.enabled = graphics.shadowSize > 0;
+    this.renderer.shadowMap.autoUpdate = false;
     const size = graphics.shadowSize || 1024;
     if (this.sun.shadow.mapSize.x !== size) {
       this.sun.shadow.map?.dispose();
@@ -387,8 +409,74 @@ export class PrisonGame {
     this.input.setAimScale(AIM_SPEED_SCALE[this.settings.aimSpeed]);
     this.sound.setVolumes(this.settings.sfxVolume, this.settings.musicVolume);
     this.followers?.setNameTags(this.settings.nameTags, this.settings.buddyNames);
+    if (this.player) this.syncPlayer2();
     this.pausedRendered = false;
     this.applyLite(this.settings.graphicsQuality === 'low');
+  }
+
+  private syncPlayer2(): void {
+    const enabled = this.settings.player2Controller !== -2;
+    if (enabled && !this.player2 && this.player) {
+      const start = this.stage === 'raft' ? this.raft.position : this.player.position;
+      this.player2 = new PlayerSoldier(this.world, start.x + 1.6, start.z, this.player.yaw);
+      this.scene.add(this.player2.root);
+      this.cam2 = new ShoulderCam(this.camera2, this.world);
+      if (this.stage === 'raft') {
+        this.player2.setVisible(false);
+        this.player2.collider.setEnabled(false);
+      }
+      this.hud2.setActive(true);
+    } else if (!enabled && this.player2) {
+      this.scene.remove(this.player2.root);
+      this.player2.dispose();
+      this.player2 = null;
+      this.hud2.setActive(false);
+    }
+    this.splitDivider.style.display = this.player2 ? 'block' : 'none';
+    this.hud2.setViewport(this.player2 ? this.playerViewport(2) : null);
+  }
+
+  private playerViewport(player: 1 | 2): { left: number; top: number; width: number; height: number } {
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    if (!this.player2) return { left: 0, top: 0, width: w, height: h };
+    if (this.settings.splitOrientation === 'vertical') {
+      const half = Math.floor(w / 2);
+      return player === 1 ? { left: 0, top: 0, width: half, height: h } : { left: half, top: 0, width: w - half, height: h };
+    }
+    const half = Math.floor(h / 2);
+    return player === 1 ? { left: 0, top: half, width: w, height: h - half } : { left: 0, top: 0, width: w, height: half };
+  }
+
+  private withPlayer2<T>(run: () => T): T {
+    if (!this.player2) return run();
+    const player = this.player;
+    const camera = this.camera;
+    const cam = this.cam;
+    const jam = this.jam;
+    const jamTank = this.jamTank;
+    const jamCooldown = this.jamCooldown;
+    const downTime = this.downTime;
+    this.player = this.player2;
+    this.camera = this.camera2;
+    this.cam = this.cam2;
+    this.jam = this.jam2;
+    this.jamTank = this.jamTank2;
+    this.jamCooldown = this.jamCooldown2;
+    this.downTime = this.downTime2;
+    try { return run(); }
+    finally {
+      this.jamTank2 = this.jamTank;
+      this.jamCooldown2 = this.jamCooldown;
+      this.downTime2 = this.downTime;
+      this.player = player;
+      this.camera = camera;
+      this.cam = cam;
+      this.jam = jam;
+      this.jamTank = jamTank;
+      this.jamCooldown = jamCooldown;
+      this.downTime = downTime;
+    }
   }
 
   /**
@@ -408,10 +496,58 @@ export class PrisonGame {
   }
 
   private onResize(): void {
-    this.camera.aspect = window.innerWidth / window.innerHeight;
-    this.camera.updateProjectionMatrix();
     this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this.hud.setViewport(this.playerViewport(1));
+    this.hud2.setViewport(this.player2 ? this.playerViewport(2) : null);
     this.pausedRendered = false;
+  }
+
+  private updateSecondHUD(input: InputState | null): void {
+    if (!this.player2 || !input) return;
+    const viewport = this.playerViewport(2);
+    this.withPlayer2(() => this.hud2.update({
+      ...this.hudState(input),
+      aimScreen: this.hud.paused || this.ending !== null || this.stage === 'raft' || this.intro !== null
+        ? null : { x: viewport.width / 2, y: viewport.height / 2 },
+    }));
+  }
+
+  private renderViews(): void {
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    this.hud.setViewport(this.playerViewport(1));
+    this.hud2.setViewport(this.player2 ? this.playerViewport(2) : null);
+    if (this.dividerOrientation !== this.settings.splitOrientation) {
+      this.dividerOrientation = this.settings.splitOrientation;
+      this.splitDivider.style.left = this.settings.splitOrientation === 'vertical' ? '50%' : '0';
+      this.splitDivider.style.top = this.settings.splitOrientation === 'vertical' ? '0' : '50%';
+      this.splitDivider.style.width = this.settings.splitOrientation === 'vertical' ? '1px' : '100%';
+      this.splitDivider.style.height = this.settings.splitOrientation === 'vertical' ? '100%' : '1px';
+    }
+    this.renderer.setScissorTest(this.player2 !== null);
+    this.renderer.shadowMap.needsUpdate = true;
+    if (!this.player2) {
+      this.camera.aspect = w / h;
+      this.camera.updateProjectionMatrix();
+      this.renderer.setViewport(0, 0, w, h);
+      this.renderer.render(this.scene, this.camera);
+      return;
+    }
+    if (this.settings.splitOrientation === 'vertical') {
+      const half = Math.floor(w / 2);
+      this.camera.aspect = half / h;
+      this.camera2.aspect = (w - half) / h;
+      this.camera.updateProjectionMatrix(); this.camera2.updateProjectionMatrix();
+      this.renderer.setViewport(0, 0, half, h); this.renderer.setScissor(0, 0, half, h); this.renderer.render(this.scene, this.camera);
+      this.renderer.setViewport(half, 0, w - half, h); this.renderer.setScissor(half, 0, w - half, h); this.renderer.render(this.scene, this.camera2);
+    } else {
+      const half = Math.floor(h / 2);
+      this.camera.aspect = w / (h - half);
+      this.camera2.aspect = w / half;
+      this.camera.updateProjectionMatrix(); this.camera2.updateProjectionMatrix();
+      this.renderer.setViewport(0, half, w, h - half); this.renderer.setScissor(0, half, w, h - half); this.renderer.render(this.scene, this.camera);
+      this.renderer.setViewport(0, 0, w, half); this.renderer.setScissor(0, 0, w, half); this.renderer.render(this.scene, this.camera2);
+    }
   }
 
   /** A clear line from `a` to `b`: no walls or bars (people don't block the view). */
@@ -527,6 +663,17 @@ export class PrisonGame {
       }
       return;
     }
+    if (this.player2 && hit.collider.handle === this.player2.collider.handle) {
+      const wasUp = !this.player2.isDown;
+      this.player2.takeDamage(GUARD_DAMAGE);
+      this.cam2.addShake(0.25);
+      this.sound.play('thud', { volume: 0.5, rate: 1.6, minGap: 0.1 });
+      if (wasUp && this.player2.isDown) {
+        this.downTime2 = 0;
+        this.stats.knockedDown++;
+      }
+      return;
+    }
     const friend = this.followers.hit(hit.collider);
     if (friend?.down) this.hud.showCallout(`${friend.name ? friend.name.toUpperCase() : 'A PRISONER'} IS DOWN! MEDIC!`, '#ff8a7a');
   }
@@ -603,6 +750,7 @@ export class PrisonGame {
   private toCheckpoint(): void {
     const c = this.checkpoint;
     this.player.teleport(c.x, c.z, c.yaw, c.y ?? 0);
+    this.player2?.teleport(c.x + 1.5, c.z, c.yaw, c.y ?? 0);
     this.followers.gather(this.player.position, this.squadWorld);
     // Everyone stands down and goes back to his beat.
     this.guards.standDown(this.sector());
@@ -632,11 +780,16 @@ export class PrisonGame {
       : [new THREE.Vector3(f.x, f.y, f.z), new THREE.Vector3(f.x - 1.1, f.y + 0.3, f.z), new THREE.Vector3(f.x - 1.1, 0.4, f.z), new THREE.Vector3(t.x, t.y, t.z)];
     // Facing the pipes (east, +X) going up; facing the wall (east) going down too.
     this.climbing = { path, t: 0, duration: up ? CLIMB_UP_TIME : CLIMB_DOWN_TIME, yaw: -Math.PI / 2, spot, up };
+    this.climbOwner = this.player === this.player2 ? 2 : 1;
     this.sound.play('clang', { volume: 0.4, rate: 1.4 });
   }
 
   /** One frame of a climb; at the end he's off it and the squad climbs after him. */
   private updateClimb(dt: number): void {
+    if (this.climbOwner === 2 && this.player2 && this.player !== this.player2) {
+      this.withPlayer2(() => this.updateClimb(dt));
+      return;
+    }
     const c = this.climbing;
     if (!c) return;
     c.t = Math.min(1, c.t + dt / c.duration);
@@ -647,7 +800,8 @@ export class PrisonGame {
     const at = c.path[i].clone().lerp(c.path[i + 1], f - i);
     this.player.climbAt(at, c.yaw);
     // Going up through the roof ventilator: a quick blackout as he squeezes through.
-    if (c.up) this.hud.setFade(c.t > 0.7 ? Math.min(1, (c.t - 0.7) * 6) : 0, '#000000');
+    const climbHud = this.player === this.player2 ? this.hud2 : this.hud;
+    if (c.up) climbHud.setFade(c.t > 0.7 ? Math.min(1, (c.t - 0.7) * 6) : 0, '#000000');
     if (Math.floor(c.t * 8) !== Math.floor((c.t - dt / c.duration) * 8)) this.sound.play('thud', { volume: 0.2, rate: 2, minGap: 0.1 });
     if (c.t < 1) return;
     this.climbing = null;
@@ -656,13 +810,15 @@ export class PrisonGame {
     this.followers.climbAfter(new THREE.Vector3(to.x, to.y, to.z), to.yaw, this.squadWorld);
     this.checkpoint = { ...to };
     if (c.up) {
-      this.hud.setFade(0);
-      this.stage = 'roof';
+      climbHud.setFade(0);
+      if (this.stage === 'pipechase') this.stage = 'roof';
       this.searchlights.setActive(true);
       this.hud.showBanner('ON THE ROOF!', 'Keep out of the searchlights and get to the bakery pipe at the far end');
     } else {
-      this.stage = 'out';
-      this.searchlights.setActive(false);
+      if (this.stage === 'roof') this.stage = 'out';
+      const anyoneOnRoof = this.facility.layout.onRoof(this.player.position.x, this.player.position.y, this.player.position.z)
+        || (!!this.player2 && this.facility.layout.onRoof(this.player2.position.x, this.player2.position.y, this.player2.position.z));
+      this.searchlights.setActive(anyoneOnRoof);
       this.sound.music.stinger();
       this.hud.showBanner('DOWN THE BAKERY PIPE!', "That's how they got out of Alcatraz. Now find the gear for a raft: follow the golden beams, and keep out of the guards' vision cones");
     }
@@ -671,7 +827,10 @@ export class PrisonGame {
   /** On the roof: caught in a searchlight, he's back at the ventilator. */
   private updateSearchlights(dt: number): void {
     const p = this.player.position;
-    this.spotted = this.searchlights.update(dt, p, this.stage === 'roof' && this.facility.layout.onRoof(p.x, p.y, p.z));
+    const p2 = this.player2?.position;
+    this.spotted = this.searchlights.update(dt, p, !(this.climbing && this.climbOwner === 1) && this.facility.layout.onRoof(p.x, p.y, p.z), p2 ? [{
+      position: p2, onRoof: !(this.climbing && this.climbOwner === 2) && this.facility.layout.onRoof(p2.x, p2.y, p2.z),
+    }] : []);
     if (this.spotted < 1) return;
     this.sound.music.alarm();
     this.hud.showBanner('SPOTTED!', 'Back to the ventilator. Keep to the shadows behind the vents and the skylights');
@@ -747,6 +906,11 @@ export class PrisonGame {
     this.player.setVisible(false);
     this.player.root.visible = false;
     this.player.collider.setEnabled(false);
+    if (this.player2) {
+      this.player2.setVisible(false);
+      this.player2.root.visible = false;
+      this.player2.collider.setEnabled(false);
+    }
     for (const l of this.lampLights) l.intensity = 0;
     this.hud.showBanner('BLOWING UP THE RAFT', 'Squeeze the bellows, stitch the raincoats, seal the seams…');
   }
@@ -896,6 +1060,12 @@ export class PrisonGame {
     this.player.collider.setEnabled(true);
     this.player.teleport(x, SHORE.landing.z, 0);
     this.followers.disembark(this.player.position, 0);
+    if (this.player2) {
+      this.player2.collider.setEnabled(true);
+      this.player2.root.visible = true;
+      this.player2.setVisible(true);
+      this.player2.teleport(x + 1.6, SHORE.landing.z, 0);
+    }
     this.guards.setSector('shore');
     this.helis.setActive(false);
     this.sound.updateEngine(0, 'chopper', false);
@@ -984,19 +1154,25 @@ export class PrisonGame {
     this.lampTimer -= dt;
     if (this.lampLights.length && this.lampTimer <= 0) {
       this.lampTimer = 0.4;
-      const lamps = [...this.facility.layout.lamps].sort((a, b) => Math.hypot(a.x - focus.x, a.z - focus.z) - Math.hypot(b.x - focus.x, b.z - focus.z));
+      const player2 = this.player2?.position;
+      const distance = (lamp: (typeof this.facility.layout.lamps)[number]) => Math.min(
+        Math.hypot(lamp.x - focus.x, lamp.z - focus.z),
+        player2 ? Math.hypot(lamp.x - player2.x, lamp.z - player2.z) : Infinity,
+      );
+      const lamps = [...this.facility.layout.lamps].sort((a, b) => distance(a) - distance(b));
       this.lampLights.forEach((l, i) => {
         const lamp = lamps[i];
+        if (!lamp) { l.intensity = 0; return; }
         l.position.set(lamp.x, lamp.y - 0.4, lamp.z);
-        l.intensity = inCompound && Math.hypot(lamp.x - focus.x, lamp.z - focus.z) < 60 ? 130 : 0;
+        l.intensity = inCompound && distance(lamp) < 60 ? 130 : 0;
       });
     }
   }
 
   /** One frame on foot (the cell, the pipes, the roof, the prison grounds and the far shore). */
-  private stepFoot(input: InputState, dt: number): void {
+  private stepFoot(input: InputState, dt: number, input2: InputState | null = null): void {
     if (input.cameraTogglePressed) this.cam.toggle();
-    if (input.megaJamPressed && this.followers.count > 0) {
+    if ((input.megaJamPressed || input2?.megaJamPressed) && this.followers.count > 0) {
       const holding = this.followers.toggleHold();
       this.hud.showCallout(holding ? 'SQUAD: HOLD HERE' : 'SQUAD: FOLLOW ME', holding ? '#ffd24a' : '#9be27a');
       this.sound.play('uiChange', { volume: 0.5 });
@@ -1004,9 +1180,8 @@ export class PrisonGame {
     if (this.player.isDown) this.downTime += dt;
     const layout = this.facility.layout;
     const p = this.player.position;
-    if (this.climbing) {
-      this.updateClimb(dt);
-    } else {
+    if (this.climbing) this.updateClimb(dt);
+    if (!(this.climbing && this.climbOwner === 1)) {
       const wasDown = this.player.isDown;
       if (this.player.step(input, dt)) this.fireRifle();
       // Back on his feet at the last checkpoint (with the squad) when asked, or when he's been down his time.
@@ -1014,27 +1189,54 @@ export class PrisonGame {
       this.updateJam(input, dt);
       // Up the pipes at the end of the pipe chase; down the bakery pipe from the roof.
       const near = (s: ClimbSpot) => Math.hypot(p.x - s.from.x, p.z - s.from.z) < CLIMB_REACH && Math.abs(p.y - s.from.y) < 1.5;
-      if (this.stage === 'pipechase' && near(layout.ladder)) this.startClimb(layout.ladder, true);
-      else if (this.stage === 'roof' && near(layout.bakeryPipe)) this.startClimb(layout.bakeryPipe, false);
+      if ((this.stage === 'pipechase' || this.stage === 'roof') && near(layout.ladder)) this.startClimb(layout.ladder, true);
+      else if ((this.stage === 'roof' || this.stage === 'out') && near(layout.bakeryPipe)) this.startClimb(layout.bakeryPipe, false);
       else if (this.stage === 'out' && !this.player.isDown && this.gear.complete && Math.hypot(p.x - layout.launch.x, p.z - layout.launch.z) < LAUNCH_REACH) this.startRaft();
     }
-    if (this.stage === 'roof' && !this.climbing) this.updateSearchlights(dt);
+    if (this.player2 && input2) {
+      this.withPlayer2(() => {
+        if (input2.cameraTogglePressed) this.cam.toggle();
+        if (this.player.isDown) this.downTime += dt;
+        const wasDown = this.player.isDown;
+        if (!(this.climbing && this.climbOwner === 2) && this.player.step(input2, dt)) this.fireRifle();
+        if (input2.resetPressed || (wasDown && !this.player.isDown && this.player.health === 0)) {
+          this.player.teleport(this.checkpoint.x, this.checkpoint.z + 1.5, this.checkpoint.yaw, this.checkpoint.y ?? 0);
+          this.downTime = 0;
+        }
+        this.updateJam(input2, dt);
+        const layout = this.facility.layout;
+        const p = this.player.position;
+        const near = (s: ClimbSpot) => Math.hypot(p.x - s.from.x, p.z - s.from.z) < CLIMB_REACH && Math.abs(p.y - s.from.y) < 1.5;
+        if (!this.climbing && (this.stage === 'pipechase' || this.stage === 'roof') && near(layout.ladder)) this.startClimb(layout.ladder, true);
+        else if (!this.climbing && (this.stage === 'roof' || this.stage === 'out') && near(layout.bakeryPipe)) this.startClimb(layout.bakeryPipe, false);
+        else if (!this.climbing && this.stage === 'out' && !this.player.isDown && this.gear.complete && Math.hypot(p.x - layout.launch.x, p.z - layout.launch.z) < LAUNCH_REACH) this.startRaft();
+      });
+    }
+    const anyoneOnRoof = layout.onRoof(this.player.position.x, this.player.position.y, this.player.position.z)
+      || (!!this.player2 && layout.onRoof(this.player2.position.x, this.player2.position.y, this.player2.position.z));
+    if (anyoneOnRoof) this.updateSearchlights(dt);
     else this.searchlights.update(dt, p, false);
 
     // The gear (in the prison grounds).
     if (this.stage === 'out') {
-      const got = this.gear.update(this.time, this.player.isDown ? null : p);
-      if (got) this.onGearTaken(got);
+      const got = this.gear.update(this.time, this.player.isDown ? null : p, this.player2 && !this.player2.isDown ? this.player2.position : null);
+      for (const item of got) this.onGearTaken(item);
     }
 
     // The guards: nobody on the roof is seen from the ground (it's a sneaking bit), and nobody mid-climb.
     if (this.stage !== 'raft') {
       const onRoof = layout.onRoof(p.x, p.y, p.z);
-      const exposed = !this.player.isDown && !this.climbing && !onRoof;
-      const targets = [...(exposed ? [p] : []), ...this.followers.targets().filter((t) => !layout.onRoof(t.x, t.y, t.z))];
+      const exposed = !this.player.isDown && !(this.climbing && this.climbOwner === 1) && !onRoof;
+      const p2 = this.player2?.position;
+      const p2Exposed = !!p2 && !this.player2?.isDown && !(this.climbing && this.climbOwner === 2) && !layout.onRoof(p2.x, p2.y, p2.z);
+      const targets = [...(exposed ? [p] : []), ...(p2Exposed && p2 ? [p2] : []), ...this.followers.targets().filter((t) => !layout.onRoof(t.x, t.y, t.z))];
       const world: GuardWorld = {
         player: exposed ? p : null,
         sneaking: this.player.sneaking,
+        players: [
+          ...(exposed ? [{ position: p, sneaking: this.player.sneaking }] : []),
+          ...(p2Exposed && p2 ? [{ position: p2, sneaking: this.player2?.sneaking ?? false }] : []),
+        ],
         targets,
         sees: (a, b) => this.sees(a, b),
         nav: this.stage === 'shore' ? null : this.nav,
@@ -1042,7 +1244,7 @@ export class PrisonGame {
       };
       for (const shot of this.guards.update(dt, world)) this.resolveShot(shot, 'enemy');
       this.handleGuardEvents();
-      if (exposed && this.guards.anySeeing) this.stats.seenTime += dt;
+      if (this.guards.anySeeing) this.stats.seenTime += dt;
     }
     for (const shot of this.followers.update(dt, this.squadWorld)) this.resolveShot(shot, 'friend');
     this.world.step();
@@ -1061,13 +1263,15 @@ export class PrisonGame {
     // The far shore: checkpoints on the way, and home.
     if (this.stage === 'shore') {
       const next = SHORE_CHECKPOINTS[this.shoreCheckpoint + 1];
-      if (next && p.z < next.z + 8) {
+      const p2AtNext = !!this.player2 && this.player2.position.z < (next?.z ?? Infinity) + 8;
+      if (next && (p.z < next.z + 8 || p2AtNext)) {
         this.shoreCheckpoint++;
         this.checkpoint = { ...next };
         this.hud.showCallout('CHECKPOINT', '#9be27a');
       }
       const home = SHORE.home;
-      if (Math.hypot(p.x - home.x, p.z - home.z) < HOME_REACH) this.startEnding();
+      const p2Home = !this.player2 || Math.hypot(this.player2.position.x - home.x, this.player2.position.z - home.z) < HOME_REACH;
+      if (Math.hypot(p.x - home.x, p.z - home.z) < HOME_REACH && p2Home) this.startEnding();
     }
 
     this.cam.update(this.player, dt);
@@ -1096,24 +1300,41 @@ export class PrisonGame {
   }
 
   /** One frame of the game (everything but drawing it). */
-  private step(input: InputState, dt: number): void {
-    if (input.mapTogglePressed) this.hud.toggleBigMap();
+  private step(input: InputState, dt: number, input2: InputState | null = null): void {
+    if (input.mapTogglePressed || input2?.mapTogglePressed) this.hud.toggleBigMap();
     this.time += dt;
     let focus: THREE.Vector3;
     if (this.stage === 'raft') {
-      this.stepRaft(input, dt);
+      const raftInput = input2 ? {
+        ...input,
+        throttle: THREE.MathUtils.clamp(input.throttle + input2.throttle, -1, 1),
+        steer: THREE.MathUtils.clamp(input.steer + input2.steer, -1, 1),
+        moveX: THREE.MathUtils.clamp(input.moveX + input2.moveX, -1, 1),
+        moveY: THREE.MathUtils.clamp(input.moveY + input2.moveY, -1, 1),
+        firing: input.firing || input2.firing,
+        sneak: input.sneak || input2.sneak,
+        aimYawDelta: input.aimYawDelta + input2.aimYawDelta,
+        aimPitchDelta: input.aimPitchDelta + input2.aimPitchDelta,
+      } : input;
+      this.stepRaft(raftInput, dt);
       this.world.step();
       this.impacts.update(dt);
       this.updateTracers(dt);
       focus = this.raft.position;
     } else if (this.ending !== null) {
-      this.updateEnding(input, dt);
+      this.updateEnding(input2 ? { ...input, menu: { ...input.menu, confirm: input.menu.confirm || input2.menu.confirm } } : input, dt);
       focus = this.player.position;
     } else {
-      this.stepFoot(input, dt);
+      this.stepFoot(input, dt, input2);
       focus = this.player.position;
     }
-    this.cones.update(this.camera.position, this.time);
+    if (this.player2) {
+      if (this.stage === 'raft' || this.ending !== null || this.intro !== null) {
+        this.camera2.position.copy(this.camera.position);
+        this.camera2.quaternion.copy(this.camera.quaternion);
+      } else this.cam2.update(this.player2, dt);
+    }
+    this.cones.update(this.camera.position, this.time, this.player2 ? this.camera2.position : undefined);
     this.sharks.update(dt, this.time, focus, this.stage === 'raft' ? this.raft.position : null);
     this.updateAtmosphere(dt, focus);
     this.lighthouse.update(dt, this.day.value);
@@ -1318,6 +1539,7 @@ export class PrisonGame {
   }
 
   private hudState(input: InputState): HUDState {
+    const viewport = this.playerViewport(this.player === this.player2 ? 2 : 1);
     return {
       zombies: null,
       health: this.stage === 'raft' ? this.hull : this.player.health,
@@ -1329,7 +1551,7 @@ export class PrisonGame {
       usingGamepad: input.usingGamepad,
       insideBase: null,
       map: NO_MAP,
-      aimScreen: this.hud.paused || this.ending !== null || this.stage === 'raft' || this.intro !== null ? null : { x: window.innerWidth / 2, y: window.innerHeight / 2 },
+      aimScreen: this.hud.paused || this.ending !== null || this.stage === 'raft' || this.intro !== null ? null : { x: viewport.width / 2, y: viewport.height / 2 },
       aimRange: null,
       aimTarget: 'none',
       rocketCharge: 0,
@@ -1365,25 +1587,59 @@ export class PrisonGame {
     if (!this.ready) return;
     const dt = Math.min(this.clock.getDelta(), 0.05);
     this.input.textEntry = this.hud.editingText;
-    const input = this.input.update(dt);
+    this.input.beginFrame();
+    const p2Index = this.player2 ? this.settings.player2Controller : -3;
+    const p2KeyboardFirst = this.player2 !== null && p2Index === -1;
+    const pads = Array.from(navigator.getGamepads?.() ?? []);
+    const p1Index = this.settings.player1Controller !== -2
+      ? this.settings.player1Controller
+      : this.player2
+        ? pads.find((pad) => pad && pad.index !== p2Index)?.index ?? -1
+        : -2;
+    const lockedMousePlayer: 1 | 2 = this.player2 && p2Index === -1 ? 2 : 1;
+    const p2Raw = this.player2 && p2KeyboardFirst
+      ? this.input.update(dt, p2Index, 2, this.settings.splitOrientation, false, pads, lockedMousePlayer)
+      : null;
+    const input = this.input.update(dt, p1Index, 1, this.settings.splitOrientation, this.player2 !== null && p2Index === -1, pads, lockedMousePlayer);
+    const p2Input = p2Raw ?? (this.player2 ? this.input.update(dt, p2Index, 2, this.settings.splitOrientation, false, pads, lockedMousePlayer) : null);
 
     if (this.hud.paused) {
       this.sound.updateEngine(0, 'chopper', false);
-      this.hud.handleMenu(input.menu);
-      if (input.mapTogglePressed && this.hud.paused) this.hud.toggleBigMap();
+      const menu = p2Input ? {
+        up: input.menu.up || p2Input.menu.up, down: input.menu.down || p2Input.menu.down,
+        left: input.menu.left || p2Input.menu.left, right: input.menu.right || p2Input.menu.right,
+        confirm: input.menu.confirm || p2Input.menu.confirm, back: input.menu.back || p2Input.menu.back,
+        options: input.menu.options || p2Input.menu.options,
+      } : input.menu;
+      this.hud.handleMenu(menu);
+      if ((input.mapTogglePressed || p2Input?.mapTogglePressed) && this.hud.paused) this.hud.toggleBigMap();
       this.hud.update(this.hudState(input));
+      this.updateSecondHUD(p2Input);
       if (!this.pausedRendered) {
-        this.renderer.render(this.scene, this.camera);
+        this.renderViews();
         this.pausedRendered = true;
       }
       return;
     }
     this.pausedRendered = false;
-    if (this.intro !== null) this.updateIntro(input, dt);
-    else this.step(input, dt);
+    if (this.intro !== null) this.updateIntro(p2Input ? {
+      ...input,
+      firing: input.firing || p2Input.firing,
+      jamFiring: input.jamFiring || p2Input.jamFiring,
+      moveX: input.moveX || p2Input.moveX,
+      moveY: input.moveY || p2Input.moveY,
+      throttle: input.throttle || p2Input.throttle,
+      menu: { ...input.menu, confirm: input.menu.confirm || p2Input.menu.confirm, back: input.menu.back || p2Input.menu.back },
+    } : input, dt);
+    else this.step(input, dt, p2Input);
+    if (this.player2 && this.intro !== null) {
+      this.camera2.position.copy(this.camera.position);
+      this.camera2.quaternion.copy(this.camera.quaternion);
+    }
     this.sound.setListener(this.camera);
     this.hud.update(this.hudState(input));
-    this.renderer.render(this.scene, this.camera);
+    this.updateSecondHUD(p2Input);
+    this.renderViews();
     this.hud.recordFrame();
   };
 
@@ -1416,7 +1672,7 @@ export class PrisonGame {
     this.guards.update(dt, { player: null, sneaking: false, targets: [], sees: () => false, nav: null, sector: 'compound' });
     this.flag.update(dt, this.time);
     this.world.step();
-    this.cones.update(this.camera.position, this.time);
+    this.cones.update(this.camera.position, this.time, this.player2 ? this.camera2.position : undefined);
     this.updateAtmosphere(dt, this.player.position);
   }
 }

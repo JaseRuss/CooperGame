@@ -289,6 +289,17 @@ interface RocketSequence {
   orbit: number;
 }
 
+interface PlayerRuntime {
+  damageBoost: number; aa: AAMissiles; jam: JamCannon; aaWarning: number; aaLoaded: number; aaRearm: number;
+  rocketCharge: number; megaJamCharge: number; rocketSeq: RocketSequence | null;
+  wakeTimer: number; inStation: Station | null; rideTime: number; rideTimeTotal: number; bikeDustTimer: number;
+  missileCharge: number; rocketJumpCharge: number; bikeVolleyPending: boolean; missiles: HomingRocket[];
+  rideRockets: HomingRocket[]; headlight: THREE.SpotLight | null; fortressWarning: number;
+  pendingSwap: { to: Vehicle; delay: number } | null;
+}
+
+type PlayerRuntimeSnapshot = PlayerRuntime;
+
 interface EnemySlot {
   spawn: EnemySpawnPoint;
   tank: EnemyTank | HelicopterEnemy | null;
@@ -358,11 +369,13 @@ function gateAngles(base: { x: number; z: number }, highways: Polyline[]): numbe
 export class Game {
   private readonly renderer: THREE.WebGLRenderer;
   private readonly scene = new THREE.Scene();
-  private readonly camera: THREE.PerspectiveCamera;
+  private camera: THREE.PerspectiveCamera;
   private readonly clock = new THREE.Clock();
   private readonly input: InputManager;
   private readonly hitRegistry = new HitRegistry();
-  private readonly cameraRig: CameraRig;
+  private cameraRig: CameraRig;
+  private readonly camera2: THREE.PerspectiveCamera;
+  private readonly cameraRig2: CameraRig;
   private readonly hud: HUD;
   private readonly sound = new Sound(MISSION);
   /** Where the player was last frame, for the engine note's speed. */
@@ -380,11 +393,13 @@ export class Game {
   private projectiles!: ProjectileManager;
   private impacts!: ImpactEffects;
   private jam!: JamCannon;
+  private jam2!: JamCannon;
   private moat!: Moat;
   private crates!: RepairCrates;
   /** Seconds left of double damage from a power crate. */
   private damageBoost = 0;
   private aa!: AAMissiles;
+  private aa2!: AAMissiles;
   private antiAir!: AntiAir;
   private aaWarning = 0;
   /** Knocked-out tanks going out with a gag: flying turrets, turtles, surrenders, fireworks. */
@@ -393,9 +408,16 @@ export class Game {
   private aaLoaded = AA_CAPACITY;
   private aaRearm = 0;
   private aimGuide!: AimGuide;
+  private aimGuide2!: AimGuide;
   private landmarks!: LandmarkSet;
   private troops!: TroopManager;
   private player!: PlayerTank;
+  private player2: PlayerTank | null = null;
+  private player2Runtime: PlayerRuntimeSnapshot | null = null;
+  private pendingTeamRocketCharge = 0;
+  private readonly player2Hud: HUD;
+  private readonly splitDivider: HTMLDivElement;
+  private dividerOrientation: 'vertical' | 'horizontal' | null = null;
   private familyBases: FamilyBase[] = [];
   private highways: Polyline[] = [];
   private enemyBases: EnemyBase[] = [];
@@ -423,6 +445,7 @@ export class Game {
   private buddyCharge = 1;
   private megaJamCharge = 1;
   private rocketSeq: RocketSequence | null = null;
+  private rocketSequenceOwner: 1 | 2 = 1;
   /** Delayed secondary explosions (missiles cooking off after a critical hit). */
   private aftershocks: { at: THREE.Vector3; delay: number; size: number }[] = [];
   private victoryTimer = 0;
@@ -432,6 +455,11 @@ export class Game {
   private pausedRendered = false;
   /** Maps refresh at 10 Hz during play and once when paused; aiming still updates every frame. */
   private cachedMapView: MapView | null = null;
+  private cachedPlayer2MapView: MapView | null = null;
+  private cachedPlayer2MapSource: MapView | null = null;
+  private player2AimTrajectory: Trajectory | null = null;
+  private player2AimNextUpdate = 0;
+  private player2AimOrientation: 'vertical' | 'horizontal' | null = null;
   private nextMapUpdate = 0;
   private mapWasPaused = false;
   private assets!: AssetLibrary;
@@ -495,14 +523,29 @@ export class Game {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, graphics.pixelRatio));
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.shadowMap.enabled = graphics.shadowSize > 0;
+    this.renderer.shadowMap.autoUpdate = false;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     container.appendChild(this.renderer.domElement);
 
     // Skip scenery beyond the opaque fog. Night skies also contain distant, unfogged flares.
     this.camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, DARK ? 4000 : (JUNGLE ? JUNGLE_FOG_FAR : DAY_FOG_FAR) + 60);
     this.cameraRig = new CameraRig(this.camera);
+    this.camera2 = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, DARK ? 4000 : (JUNGLE ? JUNGLE_FOG_FAR : DAY_FOG_FAR) + 60);
+    this.cameraRig2 = new CameraRig(this.camera2);
     this.input = new InputManager(this.renderer.domElement);
     this.hud = new HUD(container);
+    this.player2Hud = new HUD(container, true);
+    this.hud.setMirror(this.player2Hud);
+    this.player2Hud.setActive(false);
+    window.addEventListener('gamepaddisconnected', (event) => {
+      const pad = event as GamepadEvent;
+      if (this.settings.player1Controller === pad.gamepad.index || this.settings.player2Controller === pad.gamepad.index) {
+        this.hud.showCallout(`CONTROLLER ${pad.gamepad.index + 1} DISCONNECTED · RECONNECT OR CHANGE IT IN OPTIONS`, '#ff8a7a');
+      }
+    });
+    this.splitDivider = document.createElement('div');
+    this.splitDivider.style.cssText = 'display:none;position:absolute;z-index:2;background:#d6dfd880;pointer-events:none';
+    container.appendChild(this.splitDivider);
     this.hud.setSoundHook((kind) => this.sound.play(kind === 'move' ? 'uiMove' : kind === 'change' ? 'uiChange' : kind === 'back' ? 'uiBack' : kind === 'open' ? 'uiOpen' : 'uiConfirm', { volume: 0.5, minGap: 0 }));
 
     this.loadingLabel = document.createElement('div');
@@ -557,9 +600,11 @@ export class Game {
     this.projectiles = new ProjectileManager(this.scene, this.world, this.hitRegistry);
     this.impacts = new ImpactEffects(this.scene);
     this.jam = new JamCannon(this.scene);
+    this.jam2 = new JamCannon(this.scene);
     this.crates = new RepairCrates(this.scene);
     this.paratroopers = new Paratroopers(this.scene);
     this.aa = new AAMissiles(this.scene);
+    this.aa2 = new AAMissiles(this.scene);
     this.antiAir = new AntiAir(
       this.scene,
       {
@@ -579,6 +624,7 @@ export class Game {
     );
     this.wrecks = new Wrecks(this.scene);
     this.aimGuide = new AimGuide(this.scene);
+    this.aimGuide2 = new AimGuide(this.scene);
 
     const terrain = buildTerrain();
     this.scene.add(terrain.mesh);
@@ -753,10 +799,15 @@ export class Game {
 
   /** Night driving: a headlight beam from the front of the hull, lighting the ground ahead. */
   private fitHeadlights(): void {
-    const lamp = new THREE.SpotLight(0xfff0c8, 45, 120, 0.6, 0.7, 1);
-    this.player.root.add(lamp, lamp.target);
-    this.headlight = lamp;
+    this.headlight = this.createHeadlight(this.player);
     this.aimHeadlight();
+    if (this.player2 && this.player2Runtime) this.player2Runtime.headlight = this.createHeadlight(this.player2);
+  }
+
+  private createHeadlight(player: PlayerTank): THREE.SpotLight {
+    const lamp = new THREE.SpotLight(0xfff0c8, 45, 120, 0.6, 0.7, 1);
+    player.root.add(lamp, lamp.target);
+    return lamp;
   }
 
   /** The headlight lights the road ahead, or from the chopper's nose the ground well below. */
@@ -786,6 +837,7 @@ export class Game {
       scene: this.scene,
       world: this.world,
       player: this.player,
+      players: () => this.player2 ? [this.player, this.player2] : [this.player],
       fortress: this.fortress,
       obstacles: {
         blocked: (x, z) =>
@@ -825,6 +877,10 @@ export class Game {
       this.player.setVehicle('tank');
       this.rideTime = 0;
       this.aimHeadlight();
+    }
+    if (this.player2) {
+      this.player2.setDeckMount(true);
+      if (this.player2.vehicle !== 'tank') this.player2.setVehicle('tank');
     }
     for (const buddy of this.buddies) {
       this.impacts.changePuff(buddy.position.clone());
@@ -944,6 +1000,7 @@ export class Game {
   private applySettings(): void {
     this.applyGraphicsSettings();
     this.player.driveStyle = this.settings.driveStyle;
+    this.syncPlayer2();
     this.input.setAimScale(AIM_SPEED_SCALE[this.settings.aimSpeed]);
     this.sound.setVolumes(this.settings.sfxVolume, this.settings.musicVolume);
     for (const b of this.buddies) {
@@ -952,11 +1009,149 @@ export class Game {
     }
   }
 
+  private syncPlayer2(): void {
+    const enabled = this.settings.player2Controller !== -2;
+    this.hud.setCoopLayout(enabled);
+    if (enabled && !this.player2) {
+      const offset = new THREE.Vector3(5, 0, 0).applyAxisAngle(new THREE.Vector3(0, 1, 0), this.player.yaw);
+      this.player2 = new PlayerTank(this.world, this.player.position.x + offset.x, this.player.position.z + offset.z, this.player.yaw);
+      this.player2.driveStyle = this.settings.driveStyle;
+      this.scene.add(this.player2.root);
+      this.hitRegistry.register(this.player2.physicsCollider, { kind: 'tank', tank: this.player2 });
+      this.player2Runtime = {
+        ...this.snapshotPlayerRuntime(),
+        aa: this.aa2,
+        jam: this.jam2,
+        rocketSeq: null,
+        missiles: [],
+        rideRockets: [],
+        headlight: this.headlight ? this.createHeadlight(this.player2) : null,
+      };
+      this.player2Hud.setActive(true);
+      this.player2Hud.setViewport(this.playerViewport(2));
+      this.splitDivider.style.display = 'block';
+    } else if (!enabled && this.player2) {
+      this.player2Runtime?.aa.clear();
+      this.player2Runtime?.jam.clear();
+      for (const rocket of [...(this.player2Runtime?.missiles ?? []), ...(this.player2Runtime?.rideRockets ?? [])]) this.scene.remove(rocket.mesh);
+      if (this.player2Runtime?.rocketSeq) this.scene.remove(this.player2Runtime.rocketSeq.rocket.mesh);
+      this.scene.remove(this.player2.root);
+      this.hitRegistry.unregister(this.player2.physicsCollider);
+      this.player2.dispose();
+      this.player2 = null;
+      this.player2Runtime = null;
+      this.player2Hud.setActive(false);
+      this.player2Hud.setViewport(null);
+      this.splitDivider.style.display = 'none';
+    }
+    if (this.player2) {
+      this.player2.driveStyle = this.settings.driveStyle;
+      this.player2Hud.setViewport(this.playerViewport(2));
+    }
+  }
+
+  private playerViewport(player: 1 | 2): { left: number; top: number; width: number; height: number } {
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    if (!this.player2) return { left: 0, top: 0, width: w, height: h };
+    if (this.settings.splitOrientation === 'vertical') {
+      const half = Math.floor(w / 2);
+      return player === 1 ? { left: 0, top: 0, width: half, height: h } : { left: half, top: 0, width: w - half, height: h };
+    }
+    const half = Math.floor(h / 2);
+    return player === 1 ? { left: 0, top: half, width: w, height: h - half } : { left: 0, top: 0, width: w, height: half };
+  }
+
+  private updateSecondHUD(input: InputState | null, cinematic: boolean): void {
+    if (!this.player2 || !input) return;
+    const viewport = this.playerViewport(2);
+    this.withPlayerContext(this.player2, this.camera2, this.cameraRig2, () => {
+      const aim = this.hud.paused || cinematic
+        ? { screen: { x: viewport.width / 2, y: viewport.height / 2 }, range: null, target: 'none' as AimTarget }
+        : this.updateSecondAim();
+      let lockScreen: { x: number; y: number } | null = null;
+      let aaLockScreen: { x: number; y: number } | null = null;
+      if (!this.hud.paused && !cinematic) {
+        if (this.player2!.vehicle !== 'motorbike' && (this.player2!.vehicle !== 'tank' ? this.missileCharge >= 1 : this.rocketCharge >= 1) && !this.rocketsDamaged) {
+          const lock = this.findLockTarget();
+          if (lock) lockScreen = this.toScreen(lock.position.clone().add(new THREE.Vector3(0, 1.5, 0)));
+        }
+        if (this.player2!.vehicle !== 'motorbike' && this.aaLoaded > 0) {
+          const target = this.findAirTarget();
+          if (target) aaLockScreen = this.toScreen(target.position.clone().add(new THREE.Vector3(0, 1.5, 0)));
+        }
+      }
+      this.player2Hud.update(this.hudState(input, cinematic, aim, lockScreen, aaLockScreen, this.player2!, this.cameraRig2));
+    });
+  }
+
+  /** Temporarily route existing player-specific HUD and ability helpers through another player. */
+  private withPlayerContext<T>(player: PlayerTank, camera: THREE.PerspectiveCamera, rig: CameraRig, run: () => T): T {
+    const previousPlayer = this.player;
+    const previousCamera = this.camera;
+    const previousRig = this.cameraRig;
+    const previousAimGuide = this.aimGuide;
+    const previousRuntime = this.snapshotPlayerRuntime();
+    const isSecondPlayer = player === this.player2;
+    if (isSecondPlayer && this.player2Runtime) this.applyPlayerRuntime(this.player2Runtime);
+    if (isSecondPlayer) this.aimGuide = this.aimGuide2;
+    this.player = player;
+    this.camera = camera;
+    this.cameraRig = rig;
+    try {
+      return run();
+    } finally {
+      if (isSecondPlayer) this.player2Runtime = this.snapshotPlayerRuntime();
+      const teamCharge = this.pendingTeamRocketCharge;
+      this.pendingTeamRocketCharge = 0;
+      this.applyPlayerRuntime(previousRuntime);
+      if (isSecondPlayer && teamCharge > 0) this.rocketCharge = Math.min(1, this.rocketCharge + teamCharge);
+      this.aimGuide = previousAimGuide;
+      this.player = previousPlayer;
+      this.camera = previousCamera;
+      this.cameraRig = previousRig;
+    }
+  }
+
+  private snapshotPlayerRuntime(): PlayerRuntimeSnapshot {
+    return {
+      damageBoost: this.damageBoost, aa: this.aa, jam: this.jam, aaWarning: this.aaWarning, aaLoaded: this.aaLoaded, aaRearm: this.aaRearm,
+      rocketCharge: this.rocketCharge, megaJamCharge: this.megaJamCharge, rocketSeq: this.rocketSeq,
+      wakeTimer: this.wakeTimer, inStation: this.inStation, rideTime: this.rideTime, rideTimeTotal: this.rideTimeTotal,
+      bikeDustTimer: this.bikeDustTimer, missileCharge: this.missileCharge, rocketJumpCharge: this.rocketJumpCharge,
+      bikeVolleyPending: this.bikeVolleyPending, missiles: this.missiles, rideRockets: this.rideRockets,
+      headlight: this.headlight, fortressWarning: this.fortressWarning, pendingSwap: this.pendingSwap,
+    };
+  }
+
+  private applyPlayerRuntime(state: PlayerRuntimeSnapshot): void {
+    this.damageBoost = state.damageBoost; this.aa = state.aa; this.jam = state.jam; this.aaWarning = state.aaWarning;
+    this.aaLoaded = state.aaLoaded; this.aaRearm = state.aaRearm; this.rocketCharge = state.rocketCharge;
+    this.megaJamCharge = state.megaJamCharge; this.rocketSeq = state.rocketSeq;
+    this.wakeTimer = state.wakeTimer; this.inStation = state.inStation; this.rideTime = state.rideTime;
+    this.rideTimeTotal = state.rideTimeTotal; this.bikeDustTimer = state.bikeDustTimer;
+    this.missileCharge = state.missileCharge; this.rocketJumpCharge = state.rocketJumpCharge;
+    this.bikeVolleyPending = state.bikeVolleyPending; this.missiles = state.missiles; this.rideRockets = state.rideRockets;
+    this.headlight = state.headlight; this.fortressWarning = state.fortressWarning; this.pendingSwap = state.pendingSwap;
+  }
+
+  private hasRocketSequence(): boolean {
+    return this.rocketSeq !== null || (this.player2Runtime?.rocketSeq ?? null) !== null;
+  }
+
+  private updateOwnedRocketSequence(dt: number): boolean {
+    if (this.rocketSequenceOwner === 2 && this.player2) {
+      return this.withPlayerContext(this.player2, this.camera2, this.cameraRig2, () => this.updateRocketSequence(dt));
+    }
+    return this.updateRocketSequence(dt);
+  }
+
   private applyGraphicsSettings(): void {
     const graphics = GRAPHICS_QUALITY[this.settings.graphicsQuality];
     const ratio = Math.min(window.devicePixelRatio, graphics.pixelRatio);
     if (this.renderer.getPixelRatio() !== ratio) this.renderer.setPixelRatio(ratio);
     this.renderer.shadowMap.enabled = graphics.shadowSize > 0;
+    this.renderer.shadowMap.autoUpdate = false;
     for (const scene of [this.scene, this.moonBase?.scene]) {
       scene?.traverse((object) => {
         if (!(object instanceof THREE.DirectionalLight)) return;
@@ -983,8 +1178,11 @@ export class Game {
 
   // ---------- combat ----------
 
-  private addRocketCharge(amount: number): void {
+  private addRocketCharge(amount: number, shareWithTeam = true): void {
     this.rocketCharge = Math.min(1, this.rocketCharge + amount);
+    if (!shareWithTeam) return;
+    if (this.player === this.player2) this.pendingTeamRocketCharge += amount;
+    else if (this.player2Runtime) this.player2Runtime.rocketCharge = Math.min(1, this.player2Runtime.rocketCharge + amount);
   }
 
   /** A blast knocks over the other side's soldiers (`attacker` null = everyone's). */
@@ -1255,6 +1453,7 @@ export class Game {
   private enemyTargets(): { position: THREE.Vector3 }[] {
     return [
       this.player,
+      ...(this.player2 ? [this.player2] : []),
       ...this.buddies,
       ...this.redTanks,
       ...this.troops.activeSoldiers('player'),
@@ -1376,6 +1575,7 @@ export class Game {
     }
     this.player.invulnerable = true;
     this.rocketSeq = { rocket, phase: 'flight', timer: 0, point: new THREE.Vector3(), orbit: 0 };
+    this.rocketSequenceOwner = this.player2 === this.player ? 2 : 1;
   }
 
   // ---------- drunken AA missiles ----------
@@ -2452,9 +2652,10 @@ export class Game {
       x /= k;
       y /= k;
     }
+    const viewport = this.playerViewport(this.player === this.player2 ? 2 : 1);
     return {
-      x: ((x + 1) / 2) * window.innerWidth,
-      y: ((1 - y) / 2) * window.innerHeight,
+      x: ((x + 1) / 2) * viewport.width,
+      y: ((1 - y) / 2) * viewport.height,
       onScreen,
       angle: Math.atan2(-y, x),
       label,
@@ -2475,9 +2676,19 @@ export class Game {
     );
   }
 
+  /** Player 2's ballistic guide only needs a fresh physics prediction at 30 Hz. */
+  private updateSecondAim(): ReturnType<Game['updateAim']> {
+    const now = performance.now();
+    if (!this.player2AimTrajectory || this.player2AimOrientation !== this.settings.splitOrientation || now >= this.player2AimNextUpdate) {
+      this.player2AimTrajectory = this.aimTrajectory();
+      this.player2AimOrientation = this.settings.splitOrientation;
+      this.player2AimNextUpdate = now + 1000 / 30;
+    }
+    return this.updateAim(this.player2AimTrajectory);
+  }
+
   /** Where the player's next shot would fly and land, and what it would hit. */
-  private updateAim(): { screen: { x: number; y: number } | null; range: number | null; target: AimTarget } {
-    const traj = this.aimTrajectory();
+  private updateAim(traj: Trajectory = this.aimTrajectory()): { screen: { x: number; y: number } | null; range: number | null; target: AimTarget } {
     const pts = traj.points;
     const travel = pts.length > 1 ? pts[pts.length - 1].clone().sub(pts[pts.length - 2]) : this.player.muzzleWorldDirection;
     const target = this.classifyTarget(traj.hitCollider, traj.impact, travel, this.player.isJeep);
@@ -2488,7 +2699,8 @@ export class Game {
   private toScreen(world: THREE.Vector3): { x: number; y: number } | null {
     const ndc = world.clone().project(this.camera);
     if (ndc.z > 1 || Math.abs(ndc.x) > 1.2 || Math.abs(ndc.y) > 1.2) return null;
-    return { x: ((ndc.x + 1) / 2) * window.innerWidth, y: ((1 - ndc.y) / 2) * window.innerHeight };
+    const viewport = this.playerViewport(this.player === this.player2 ? 2 : 1);
+    return { x: ((ndc.x + 1) / 2) * viewport.width, y: ((1 - ndc.y) / 2) * viewport.height };
   }
 
   /** `jam`: a jam round, whose only weak point is a pillbox gun slit (it gums the gun up for good). */
@@ -2527,10 +2739,10 @@ export class Game {
     return markers;
   }
 
-  private mapView(): MapView {
+  private mapView(player: PlayerTank = this.player): MapView {
     const now = performance.now();
     const paused = this.hud.paused;
-    if (this.cachedMapView && paused === this.mapWasPaused && (paused || now < this.nextMapUpdate)) return this.cachedMapView;
+    if (this.cachedMapView && paused === this.mapWasPaused && (paused || now < this.nextMapUpdate)) return this.personalizeMapView(this.cachedMapView, player);
     this.mapWasPaused = paused;
     this.nextMapUpdate = now + 100;
     const base = this.nearestEnemyBase(true);
@@ -2545,6 +2757,7 @@ export class Game {
       playerX: this.player.position.x,
       playerZ: this.player.position.z,
       playerYaw: this.player.yaw,
+      partner: this.player2 ? { x: this.player2.position.x, z: this.player2.position.z, name: 'P2' } : null,
       friendlyBases: FRIENDLY_BASES,
       enemyBases: this.enemyBases.map((b) => ({ x: b.center.x, z: b.center.z, name: b.name, title: b.title, destroyed: b.isDestroyed })),
       buddies: this.buddies.map((b) => ({ x: b.position.x, z: b.position.z, name: b.name })),
@@ -2563,7 +2776,23 @@ export class Game {
       })(),
       tanker: this.tanker && this.tanker.phase === 'hunt' ? this.tanker.mapMarkers() : null,
     };
-    return this.cachedMapView;
+    return this.personalizeMapView(this.cachedMapView, player);
+  }
+
+  private personalizeMapView(view: MapView, player: PlayerTank): MapView {
+    if (player === this.player) return view;
+    if (this.cachedPlayer2MapSource === view && this.cachedPlayer2MapView) return this.cachedPlayer2MapView;
+    const home = nearestFriendlyBase(player.position.x, player.position.z);
+    this.cachedPlayer2MapSource = view;
+    this.cachedPlayer2MapView = {
+      ...view,
+      playerX: player.position.x,
+      playerZ: player.position.z,
+      playerYaw: player.yaw,
+      partner: { x: view.playerX, z: view.playerZ, name: 'P1' },
+      home: { x: home.x, z: home.z, name: home.name },
+    };
+    return this.cachedPlayer2MapView;
   }
 
   private hudState(
@@ -2572,11 +2801,13 @@ export class Game {
     aim: ReturnType<Game['updateAim']>,
     lockScreen: { x: number; y: number } | null,
     aaLockScreen: { x: number; y: number } | null = null,
+    targetPlayer: PlayerTank = this.player,
+    targetRig: CameraRig = this.cameraRig,
   ): HUDState {
     const near = this.nearestEnemyBase(false);
-    const inside = this.atHome(this.player.position);
+    const inside = this.atHome(targetPlayer.position);
     const f = this.fortress;
-    const fortressDist = Math.hypot(f.center.x - this.player.position.x, f.center.z - this.player.position.z);
+    const fortressDist = Math.hypot(f.center.x - targetPlayer.position.x, f.center.z - targetPlayer.position.z);
     const checklist = ZOMBIES
       ? null
       : fortressDist < FORTRESS_CHECKLIST_RANGE && (!near || fortressDist < near.distance)
@@ -2594,7 +2825,7 @@ export class Game {
               objectives: near.base.objectives.map((o) => ({ label: o.label, done: o.isDestroyed() })),
             }
           : null;
-    const vehicle = this.player.vehicle;
+    const vehicle = targetPlayer.vehicle;
     return {
       zombies: this.waves
         ? {
@@ -2610,13 +2841,13 @@ export class Game {
             rocketIn: Math.max(0, ESCAPE_AT - this.survived),
             escapeLeft: this.escapeLeft,
             rocketDistance: this.launchPad
-              ? Math.hypot(this.player.position.x - this.launchPad.position.x, this.player.position.z - this.launchPad.position.z)
+              ? Math.hypot(targetPlayer.position.x - this.launchPad.position.x, targetPlayer.position.z - this.launchPad.position.z)
               : 0,
           }
         : null,
-      health: this.player.health,
-      maxHealth: this.player.maxHealth,
-      reloadFraction: vehicle !== 'tank' ? 0 : this.player.fireCooldown / this.player.fireInterval,
+      health: targetPlayer.health,
+      maxHealth: targetPlayer.maxHealth,
+      reloadFraction: vehicle !== 'tank' ? 0 : targetPlayer.fireCooldown / targetPlayer.fireInterval,
       damageBoost: this.damageBoost,
       ride:
         vehicle !== 'tank'
@@ -2625,13 +2856,13 @@ export class Game {
               timeLeft: this.rideTime,
               total: this.rideTimeTotal,
               missileCharge: vehicle === 'motorbike' ? this.rocketJumpCharge : this.missileCharge,
-              landing: this.player.landing,
+              landing: targetPlayer.landing,
             }
           : null,
-      cameraMode: this.cameraRig.mode,
+      cameraMode: targetRig.mode,
       usingGamepad: input.usingGamepad,
-      insideBase: inside ? (isInsideBase(this.player.position) ? nearestFriendlyBase(this.player.position.x, this.player.position.z).name : this.fortress.title) : null,
-      map: this.mapView(),
+      insideBase: inside ? (isInsideBase(targetPlayer.position) ? nearestFriendlyBase(targetPlayer.position.x, targetPlayer.position.z).name : this.fortress.title) : null,
+      map: this.mapView(targetPlayer),
       aimScreen: aim.screen,
       aimRange: aim.range,
       aimTarget: aim.target,
@@ -2666,6 +2897,8 @@ export class Game {
   private onResize(): void {
     this.camera.aspect = window.innerWidth / window.innerHeight;
     this.camera.updateProjectionMatrix();
+    this.camera2.aspect = this.settings.splitOrientation === 'vertical' ? window.innerWidth / 2 / window.innerHeight : window.innerWidth / (window.innerHeight / 2);
+    this.camera2.updateProjectionMatrix();
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.applyGraphicsSettings();
   }
@@ -2679,16 +2912,41 @@ export class Game {
     const dt = Math.min(this.clock.getDelta(), 0.05);
     // Typing a buddy name on the options screen: letters are text, not menu or map keys.
     this.input.textEntry = this.hud.editingText;
-    const rawInput = this.input.update(dt);
+    this.input.beginFrame();
+    const pads = Array.from(navigator.getGamepads?.() ?? []);
+    const secondUsesKeyboard = this.player2 !== null && this.settings.player2Controller === -1;
+    const p2Index = this.player2 === null ? -3 : this.settings.player2Controller;
+    const p1Index = this.settings.player1Controller !== -2
+      ? this.settings.player1Controller
+      : this.player2
+        ? pads.find((pad) => pad && pad.index !== p2Index)?.index ?? -1
+        : -2;
+    const lockedMousePlayer: 1 | 2 = this.player2 && p2Index === -1 ? 2 : 1;
+    const p2First = secondUsesKeyboard;
+    const secondInput = p2First
+      ? this.input.update(dt, p2Index, 2, this.settings.splitOrientation, false, pads, lockedMousePlayer)
+      : null;
+    const rawInput = this.input.update(dt, p1Index, 1, this.settings.splitOrientation, this.player2 !== null && p2Index === -1, pads, lockedMousePlayer);
+    const player2Input = p2First ? secondInput : this.player2 ? this.input.update(dt, p2Index, 2, this.settings.splitOrientation, false, pads, lockedMousePlayer) : null;
 
     // Full map doubles as the pause screen: nothing moves while it's open.
     if (this.hud.paused) {
-      this.hud.handleMenu(rawInput.menu);
-      if (rawInput.mapTogglePressed && this.hud.paused) this.hud.toggleBigMap();
+      this.hud.handleMenu({
+        ...rawInput.menu,
+        up: rawInput.menu.up || (player2Input?.menu.up ?? false),
+        down: rawInput.menu.down || (player2Input?.menu.down ?? false),
+        left: rawInput.menu.left || (player2Input?.menu.left ?? false),
+        right: rawInput.menu.right || (player2Input?.menu.right ?? false),
+        confirm: rawInput.menu.confirm || (player2Input?.menu.confirm ?? false),
+        back: rawInput.menu.back || (player2Input?.menu.back ?? false),
+        options: rawInput.menu.options || (player2Input?.menu.options ?? false),
+      });
+      if ((rawInput.mapTogglePressed || player2Input?.mapTogglePressed) && this.hud.paused) this.hud.toggleBigMap();
       this.sound.updateEngine(0, this.player.vehicle, false);
       this.hud.update(this.hudState(rawInput, false, { screen: null, range: null, target: 'none' }, null));
+      this.updateSecondHUD(player2Input, false);
       if (!this.pausedRendered) {
-        this.renderer.render(this.ending?.phase === 'moon' && this.moonBase ? this.moonBase.scene : this.scene, this.camera);
+        this.renderViews(this.ending?.phase === 'moon' && this.moonBase ? this.moonBase.scene : this.scene);
         this.pausedRendered = true;
       }
       return;
@@ -2697,19 +2955,24 @@ export class Game {
 
     // The zombie mission's happy ending: the world's left behind for the party on the Moon.
     if (this.ending?.phase === 'moon' && this.moonBase) {
-      if (rawInput.mapTogglePressed) this.hud.toggleBigMap();
+      if (rawInput.mapTogglePressed || player2Input?.mapTogglePressed) this.hud.toggleBigMap();
       this.updateMoon(dt);
-      this.updateLastStand(dt, rawInput.menu.confirm);
+      this.updateLastStand(dt, rawInput.menu.confirm || (player2Input?.menu.confirm ?? false));
       this.sound.updateEngine(0, this.player.vehicle, false);
       this.sound.setListener(this.camera);
+      if (this.player2) {
+        this.camera2.position.copy(this.camera.position);
+        this.camera2.quaternion.copy(this.camera.quaternion);
+      }
       this.hud.update(this.hudState(rawInput, true, { screen: null, range: null, target: 'none' }, null));
-      this.renderer.render(this.moonBase.scene, this.camera);
+      this.updateSecondHUD(player2Input, true);
+      this.renderViews(this.moonBase.scene);
       this.hud.recordFrame();
       return;
     }
 
     // The tank sits still (and can't be hurt) while the rocket cam or the zombie mission's ending plays.
-    const inSequence = this.rocketSeq !== null || this.ending !== null || (this.tanker?.cinematic ?? false);
+    const inSequence = this.hasRocketSequence() || this.ending !== null || (this.tanker?.cinematic ?? false);
     // On the bomb tanker the rig does the driving: the player only aims and fires.
     const riding = this.tanker?.riding ?? false;
     this.player.setDeckMount(riding);
@@ -2718,6 +2981,89 @@ export class Game {
       : riding
         ? { ...rawInput, throttle: 0, steer: 0, moveX: 0, moveY: 0, resetPressed: false }
         : rawInput;
+
+    if (this.player2 && player2Input) {
+      const p2 = this.player2;
+      this.withPlayerContext(p2, this.camera2, this.cameraRig2, () => {
+        p2.setDeckMount(riding);
+        if (player2Input.mapTogglePressed) this.hud.toggleBigMap();
+        if (player2Input.cameraTogglePressed) this.cameraRig.toggle();
+        if (player2Input.resetPressed) {
+          const base = this.familyBases.find((b) => b.info === nearestFriendlyBase(p2.position.x, p2.position.z));
+          if (this.fortHome) p2.teleport(this.fortHome.x + 5, this.fortHome.z, this.fortHome.yaw);
+          else if (base) p2.teleport(base.info.x + 5, base.info.z, base.spawnYaw);
+        }
+        if (!inSequence) {
+          if (player2Input.rocketPressed && p2.vehicle === 'motorbike') this.tryRocketJump();
+          else if (player2Input.rocketPressed) {
+            if (this.rocketsDamaged) this.hud.showCallout(`${p2.vehicle === 'tank' ? 'ROCKET' : 'MISSILES'} DAMAGED! REPAIR AT A HOME BASE`, '#ff6a5a');
+            else if (p2.vehicle !== 'tank') this.tryMissiles();
+            else if (this.rocketCharge >= 1 && !this.hasRocketSequence()) this.launchRocket();
+          }
+          if (player2Input.aaPressed) this.tryFireAA();
+          if (player2Input.megaJamPressed && p2.vehicle !== 'motorbike') this.tryMegaJam();
+        }
+        const p2Control = inSequence
+          ? { ...player2Input, throttle: 0, steer: 0, moveX: 0, moveY: 0, aimYawDelta: 0, aimPitchDelta: 0, firing: false, jamFiring: false }
+          : riding
+            ? { ...player2Input, throttle: 0, steer: 0, moveX: 0, moveY: 0, resetPressed: false }
+            : player2Input;
+        const p2step = p2.step(p2Control, dt);
+        if (p2step) this.fire(p2, p2step);
+        if (!inSequence && player2Input.firing && p2.vehicle !== 'tank') {
+          const round = p2.tryRapidFire();
+          if (round && p2.vehicle === 'motorbike') {
+            this.impacts.muzzleFlash(round.origin, round.direction, 0.3);
+            this.sound.play('crack', { at: round.origin, volume: 0.23, rate: 2.4, minGap: 0.05 });
+            this.fireBullet(round, p2.physicsCollider, 'player');
+          } else if (round && p2.isChopper) this.fireChinGun(round);
+          else if (round) {
+            this.jam.shoot(round.origin, round.direction, JEEP_JAM_SPEED);
+            this.sound.play('jamShot', { volume: 0.35, rate: 0.85, minGap: 0.07 });
+          }
+        }
+        if (!inSequence && player2Input.jamFiring && p2.vehicle !== 'motorbike') {
+          const glob = p2.tryJam();
+          if (glob) this.jam.fire(glob.origin, glob.direction, JAM_SPEED * glob.speedScale * (p2.vehicle === 'tank' ? TANK_JAM_SPEED_SCALE : 1), true);
+        }
+        this.jam.update(dt, this.world, p2.physicsCollider, (point, hit, velocity, big) => {
+          if (hit) this.jamBunkerSlit(hit, point, velocity);
+          this.sound.play('splat', { at: point, volume: 0.9, minGap: 0.1 });
+          const radius = big ? HOSE_JAM_RADIUS : JAM_RADIUS;
+          this.jamEnemies(point, radius);
+          this.moat.jam(point);
+          const fumbled = this.troops.jamGuns(point, radius, 'player', GUN_JAM_TIME);
+          let jammedTank: string | null = null;
+          for (const tank of [...this.buddies, ...this.redTanks]) {
+            if (tank.position.distanceTo(point) < radius + 2 && tank.jamGun(GUN_JAM_TIME)) {
+              jammedTank = tank instanceof BuddyTank ? `${tank.name.toUpperCase()}'S` : "A FRIENDLY TANK'S";
+            }
+          }
+          if (jammedTank) this.hud.showCallout(`OOPS! ${jammedTank} GUN IS JAMMED`, '#ff8aa8');
+          else if (fumbled > 0) this.hud.showCallout(fumbled > 1 ? `OOPS! ${fumbled} FRIENDLY GUNS JAMMED` : 'OOPS! FRIENDLY GUN JAMMED', '#ff8aa8');
+        }, (point) => this.jamEnemies(point, JAM_DRIP_RADIUS));
+        if (!inSequence) {
+          this.megaJamCharge = Math.min(1, this.megaJamCharge + dt / MEGA_JAM_RECHARGE);
+          this.addRocketCharge(dt / (this.tanker?.riding ? ROCKET_RIDE_RECHARGE_TIME : ROCKET_RECHARGE_TIME), false);
+        }
+        p2.setRocketReady(this.rocketCharge >= 1 && !this.rocketSeq && !this.rocketsDamaged);
+        if (this.aaLoaded < AA_CAPACITY && !this.aa.firing && this.atHome(p2.position)) {
+          this.aaRearm += dt;
+          while (this.aaRearm >= AA_REARM_TIME && this.aaLoaded < AA_CAPACITY) {
+            this.aaRearm -= AA_REARM_TIME;
+            this.aaLoaded++;
+          }
+        } else this.aaRearm = 0;
+        this.aa.update(dt, this.world, p2.physicsCollider, (from) => this.retargetAA(from), (point) => this.impacts.wispPuff(point), (origin) => {
+          this.aaLoaded = Math.max(0, this.aaLoaded - 1);
+          this.impacts.trailPuff(origin);
+          this.sound.play('launch', { volume: 0.3, rate: 1.7, fadeAfter: 0.35, minGap: 0.05 });
+        }, (point) => this.aaBurst(point));
+        p2.setAALoaded(Math.min(AA_SALVO, this.aaLoaded));
+        this.updateRocketJump();
+        this.updateRide(dt);
+      });
+    }
 
     if (!inSequence) {
       if (input.cameraTogglePressed) this.cameraRig.toggle();
@@ -2734,14 +3080,14 @@ export class Game {
           this.hud.showCallout(`${this.player.vehicle === 'tank' ? 'ROCKET' : 'MISSILES'} DAMAGED! REPAIR AT A HOME BASE`, '#ff6a5a');
           this.sound.play('uiBack', { volume: 0.5, minGap: 0.3 });
         } else if (this.player.vehicle !== 'tank') this.tryMissiles();
-        else if (this.rocketCharge >= 1) this.launchRocket();
+        else if (this.rocketCharge >= 1 && !this.hasRocketSequence()) this.launchRocket();
       }
       if (input.aaPressed) this.tryFireAA();
       if (input.megaJamPressed && this.player.vehicle !== 'motorbike') this.tryMegaJam();
       this.megaJamCharge = Math.min(1, this.megaJamCharge + dt / MEGA_JAM_RECHARGE);
       // A buddy rolls in by themselves as soon as the meter's full.
       if (this.buddyCharge >= 1 && this.buddies.length < MAX_BUDDIES && !this.tanker?.active) this.spawnBuddy();
-      this.addRocketCharge(dt / (riding ? ROCKET_RIDE_RECHARGE_TIME : ROCKET_RECHARGE_TIME));
+      this.addRocketCharge(dt / (riding ? ROCKET_RIDE_RECHARGE_TIME : ROCKET_RECHARGE_TIME), false);
       this.buddyCharge = Math.min(1, this.buddyCharge + dt / BUDDY_RECHARGE_TIME);
     } else if (this.ending && input.mapTogglePressed) {
       this.hud.toggleBigMap(); // the level select, from the end screen
@@ -2778,6 +3124,7 @@ export class Game {
       if (slot.tank && !(slot.tank instanceof HelicopterEnemy)) slot.tank.shielded = this.sealedInFortress(slot.tank.position);
     }
 
+    for (const station of this.stations) station.update(dt);
     this.tanker?.update(dt);
     const before = this.player.position.clone();
     const playerShot = this.player.step(input, dt);
@@ -2978,20 +3325,37 @@ export class Game {
       this.siegeWarning = 6;
     }
     if (insideBase && !besieged) this.player.heal(BASE_HEAL_RATE * dt);
-    const crates = this.crates.update(dt, this.player);
-    if (crates.repair > 0) {
-      this.player.heal(REPAIR_AMOUNT * crates.repair);
-      this.hud.showCallout(`+${REPAIR_AMOUNT * crates.repair} REPAIR!`, '#8fe07a');
-      this.sound.play('uiConfirm', { volume: 0.8 });
+    if (this.player2) {
+      const p2Home = nearestFriendlyBase(this.player2.position.x, this.player2.position.z);
+      if (this.atHome(this.player2.position) && !(this.warfront?.isBesieged(p2Home) ?? false)) this.player2.heal(BASE_HEAL_RATE * dt);
     }
-    if (crates.power > 0) {
-      this.damageBoost = Math.min(DOUBLE_DAMAGE_MAX, this.damageBoost + DOUBLE_DAMAGE_TIME * crates.power);
-      this.hud.showCallout(`DOUBLE DAMAGE! ${Math.ceil(this.damageBoost)}s`, '#ff9a3d');
-      this.sound.play('uiConfirm', { volume: 0.9, rate: 1.3 });
-      this.cameraRig.addShake(0.2);
-    } else if (this.damageBoost > 0) {
+    const collectors = this.crates.update(dt, this.player2 ? [this.player, this.player2] : [this.player]);
+    const applyCrateEffects = (collector: PlayerTank, repair: number, power: number): void => {
+      if (repair > 0) {
+        collector.heal(REPAIR_AMOUNT * repair);
+        this.hud.showCallout(`+${REPAIR_AMOUNT * repair} REPAIR!`, '#8fe07a');
+        this.sound.play('uiConfirm', { volume: 0.8 });
+      }
+      if (power > 0) {
+        this.damageBoost = Math.min(DOUBLE_DAMAGE_MAX, this.damageBoost + DOUBLE_DAMAGE_TIME * power);
+        this.hud.showCallout(`DOUBLE DAMAGE! ${Math.ceil(this.damageBoost)}s`, '#ff9a3d');
+        this.sound.play('uiConfirm', { volume: 0.9, rate: 1.3 });
+        this.cameraRig.addShake(0.2);
+      }
+    };
+    for (const { player, repair, power } of collectors) {
+      if (player === this.player) applyCrateEffects(this.player, repair, power);
+      else if (this.player2) this.withPlayerContext(this.player2, this.camera2, this.cameraRig2, () => applyCrateEffects(this.player2!, repair, power));
+    }
+    if (this.damageBoost > 0 && !collectors.some((c) => c.player === this.player && c.power > 0)) {
       this.damageBoost = Math.max(0, this.damageBoost - dt);
       if (this.damageBoost === 0) this.hud.showCallout('DOUBLE DAMAGE WORE OFF', '#eef3f8');
+    }
+    if (this.player2 && this.player2Runtime?.damageBoost && !collectors.some((c) => c.player === this.player2 && c.power > 0)) {
+      this.withPlayerContext(this.player2, this.camera2, this.cameraRig2, () => {
+        this.damageBoost = Math.max(0, this.damageBoost - dt);
+        if (this.damageBoost === 0) this.hud.showCallout('DOUBLE DAMAGE WORE OFF', '#eef3f8');
+      });
     }
     const repairingAt = insideBase && !besieged && this.player.health < this.player.maxHealth ? home : null;
     for (const fb of this.familyBases) fb.camp.update(dt, fb.info === repairingAt, this.camera.position, this.player.position);
@@ -3008,18 +3372,25 @@ export class Game {
       this.impacts.splash(bow, 0.3);
     }
 
-    const cinematic = this.updateEnding(dt) || this.updateRocketSequence(dt) || this.updateTankerCamera(dt);
+    const cinematic = this.updateEnding(dt) || this.updateOwnedRocketSequence(dt) || this.updateTankerCamera(dt);
     let aim: ReturnType<Game['updateAim']> = { screen: null, range: null, target: 'none' };
     let lockScreen: { x: number; y: number } | null = null;
     let aaLockScreen: { x: number; y: number } | null = null;
     if (cinematic) {
       this.player.setTurretHidden(false);
       this.aimGuide.setVisible(false);
+      if (this.player2 && !(this.hasRocketSequence() && this.rocketSequenceOwner === 2)) this.cameraRig2.update(this.player2, dt);
     } else {
       this.cameraRig.setAerial(this.player.isChopper);
       this.cameraRig.setJumpView(this.player.inRocketJump);
       this.cameraRig.setRideView(this.tanker?.riding ?? false);
       this.cameraRig.update(this.player, dt);
+      if (this.player2) {
+        this.cameraRig2.setAerial(this.player2.isChopper);
+        this.cameraRig2.setJumpView(this.player2.inRocketJump);
+        this.cameraRig2.setRideView(this.tanker?.riding ?? false);
+        this.cameraRig2.update(this.player2, dt);
+      }
       aim = this.updateAim();
       if (this.player.vehicle !== 'motorbike' && (this.player.vehicle !== 'tank' ? this.missileCharge >= 1 : this.rocketCharge >= 1) && !this.rocketsDamaged) {
         const lock = this.findLockTarget();
@@ -3030,9 +3401,16 @@ export class Game {
         if (heli) aaLockScreen = this.toScreen(heli.position);
       }
     }
+    if ((cinematic || this.ending) && !this.hasRocketSequence()) {
+      const source = this.rocketSequenceOwner === 2 && this.hasRocketSequence() ? this.camera2 : this.camera;
+      const other = source === this.camera ? this.camera2 : this.camera;
+      other.position.copy(source.position);
+      other.quaternion.copy(source.quaternion);
+    }
 
     // The shadow-casting light: the sun by day, the moon by night.
     this.updateDusk(dt);
+    if (this.player2) this.withPlayerContext(this.player2, this.camera2, this.cameraRig2, () => this.aimHeadlight());
     this.sun.position.copy(this.player.position).add(this.sunOffset);
     this.nightSky?.update(dt, this.camera, this.player.position);
     this.sun.target.position.copy(this.player.position);
@@ -3044,8 +3422,84 @@ export class Game {
     this.sound.updateEngine(speed < 80 ? speed : 0, this.player.vehicle, !cinematic);
     this.sound.setListener(this.camera);
 
-    this.hud.update(this.hudState(input, cinematic, aim, lockScreen, aaLockScreen));
-    this.renderer.render(this.scene, this.camera);
+    const player2OwnsRocketCam = this.hasRocketSequence() && this.rocketSequenceOwner === 2;
+    const player1Cinematic = cinematic && (this.ending !== null || !player2OwnsRocketCam);
+    const player2Cinematic = cinematic && (this.ending !== null || !this.hasRocketSequence() || player2OwnsRocketCam);
+    this.hud.update(this.hudState(input, player1Cinematic, aim, lockScreen, aaLockScreen));
+    this.updateSecondHUD(player2Input, player2Cinematic);
+    this.renderViews(this.scene);
     this.hud.recordFrame();
   };
+
+  private renderViews(scene: THREE.Scene): void {
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    this.renderer.setScissorTest(this.player2 !== null);
+    this.renderer.shadowMap.needsUpdate = true;
+    this.hud.setViewport(this.playerViewport(1));
+    this.player2Hud.setViewport(this.player2 ? this.playerViewport(2) : null);
+    const showGuides = !this.hud.paused && !this.ending && !this.hasRocketSequence() && !(this.tanker?.cinematic ?? false);
+    if (this.dividerOrientation !== this.settings.splitOrientation) {
+      this.dividerOrientation = this.settings.splitOrientation;
+      this.splitDivider.style.left = this.settings.splitOrientation === 'vertical' ? '50%' : '0';
+      this.splitDivider.style.top = this.settings.splitOrientation === 'vertical' ? '0' : '50%';
+      this.splitDivider.style.width = this.settings.splitOrientation === 'vertical' ? '1px' : '100%';
+      this.splitDivider.style.height = this.settings.splitOrientation === 'vertical' ? '100%' : '1px';
+    }
+    if (!this.player2) {
+      this.camera.aspect = w / h;
+      this.camera.updateProjectionMatrix();
+      this.renderer.setViewport(0, 0, w, h);
+      this.aimGuide.setVisible(showGuides);
+      this.aimGuide2.setVisible(false);
+      this.player.setTurretHidden(this.cameraRig.mode === 'first');
+      this.renderer.render(scene, this.camera);
+      return;
+    }
+    if (this.settings.splitOrientation === 'vertical') {
+      const half = Math.floor(w / 2);
+      this.camera.aspect = half / h;
+      this.camera2.aspect = (w - half) / h;
+      this.renderer.setViewport(0, 0, half, h);
+      this.renderer.setScissor(0, 0, half, h);
+      this.camera.updateProjectionMatrix();
+      this.aimGuide.setVisible(showGuides);
+      this.aimGuide2.setVisible(false);
+      this.player.setTurretHidden(this.cameraRig.mode === 'first');
+      this.player2?.setTurretHidden(false);
+      this.renderer.render(scene, this.camera);
+      this.renderer.setViewport(half, 0, w - half, h);
+      this.renderer.setScissor(half, 0, w - half, h);
+      this.camera2.updateProjectionMatrix();
+      this.aimGuide.setVisible(false);
+      this.aimGuide2.setVisible(showGuides);
+      this.player.setTurretHidden(false);
+      this.player2?.setTurretHidden(this.cameraRig2.mode === 'first');
+      this.renderer.render(scene, this.camera2);
+    } else {
+      const half = Math.floor(h / 2);
+      this.camera.aspect = w / (h - half);
+      this.camera2.aspect = w / half;
+      this.camera.updateProjectionMatrix();
+      this.renderer.setViewport(0, half, w, h - half);
+      this.renderer.setScissor(0, half, w, h - half);
+      this.aimGuide.setVisible(showGuides);
+      this.aimGuide2.setVisible(false);
+      this.player.setTurretHidden(this.cameraRig.mode === 'first');
+      this.player2?.setTurretHidden(false);
+      this.renderer.render(scene, this.camera);
+      this.camera2.updateProjectionMatrix();
+      this.renderer.setViewport(0, 0, w, half);
+      this.renderer.setScissor(0, 0, w, half);
+      this.aimGuide.setVisible(false);
+      this.aimGuide2.setVisible(showGuides);
+      this.player.setTurretHidden(false);
+      this.player2?.setTurretHidden(this.cameraRig2.mode === 'first');
+      this.renderer.render(scene, this.camera2);
+    }
+    this.aimGuide.setVisible(showGuides);
+    this.aimGuide2.setVisible(false);
+    this.player.setTurretHidden(this.cameraRig.mode === 'first');
+    this.player2?.setTurretHidden(this.cameraRig2.mode === 'first');
+  }
 }

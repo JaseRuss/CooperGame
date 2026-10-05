@@ -23,6 +23,8 @@ export interface TankerHost {
   scene: THREE.Scene;
   world: RAPIER.World;
   player: PlayerTank;
+  /** All local players sharing the mission; the host player remains the towing/aiming lead. */
+  players(): PlayerTank[];
   fortress: Fortress;
   obstacles: RouteObstacles;
   /** Puts a raider's jeep into the scene and the hit registry. */
@@ -280,7 +282,7 @@ export class TankerRun {
     this.updateDemolition(dt);
     this.runDelayed(dt);
     if (this.phase === 'hunt') {
-      const got = this.parts.update(dt, player);
+      const got = this.parts.update(dt, this.host.players());
       for (const i of got) {
         this.carried.push(i);
         const missing = TANKER_PARTS.length - this.installed.filter(Boolean).length - this.carried.length;
@@ -292,7 +294,7 @@ export class TankerRun {
         );
       }
       const rig = this.rig.root.position;
-      if (this.carried.length > 0 && Math.hypot(player.position.x - rig.x, player.position.z - rig.z) < DELIVER_RADIUS) this.fit();
+      if (this.carried.length > 0 && this.host.players().some((p) => Math.hypot(p.position.x - rig.x, p.position.z - rig.z) < DELIVER_RADIUS)) this.fit();
       this.cargo.update(dt, player, this.carried);
       return;
     }
@@ -320,6 +322,11 @@ export class TankerRun {
     }
     this.host.player.rideAt(at, this.rigYaw);
     this.host.player.heal(1000);
+    this.host.players().slice(1).forEach((player, i) => {
+      const passenger = this.rig.root.localToWorld(RIG_DECK.clone().add(new THREE.Vector3(i === 0 ? 1.2 : -1.2, 0, 0)));
+      player.rideAt(passenger, this.rigYaw);
+      player.heal(1000);
+    });
   }
 
   // ---------- fitting the parts ----------

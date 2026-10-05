@@ -179,6 +179,9 @@ const STYLE = `
 .hud .shadow { text-shadow:0 1px 3px #000; }
 
 .hud .card { position:absolute; left:18px; bottom:18px; width:300px; padding:12px 14px 12px; }
+.hud.coop .card { transform:scale(0.88); transform-origin:bottom left; }
+.hud.coop-secondary .card { left:auto; right:18px; transform-origin:bottom right; }
+.hud.coop .keys { display:none; }
 .hud .card-head { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:6px; }
 .hud .callsign { font-size:18px; color:#e8d9a4; }
 .hud .subtle { font-size:11px; opacity:0.7; letter-spacing:0.5px; }
@@ -213,6 +216,13 @@ const STYLE = `
 .hud .minimap { position:absolute; right:18px; top:16px; width:${MINIMAP_SIZE + 12}px; height:${MINIMAP_SIZE + 12}px; border-radius:50%; padding:6px;
   background:conic-gradient(from 0deg, #8f845d, #c9b983, #8f845d, #c9b983, #8f845d); box-shadow:0 3px 12px rgba(0,0,0,0.5); }
 .hud .minimap canvas { display:block; border-radius:50%; }
+.hud.coop .minimap { width:172px; height:172px; padding:5px; }
+.hud.coop .minimap canvas { width:160px; height:160px; }
+.hud.coop-primary .minimap { left:18px; right:auto; }
+.hud.coop-primary .bases { position:fixed; left:50%; }
+.hud.coop-secondary .bases { display:none !important; }
+.hud.coop-primary .checklist { position:fixed; left:50%; right:auto; top:190px; transform:translateX(-50%); width:220px; }
+.hud.coop-secondary .checklist { display:none !important; }
 .hud .fps { position:absolute; right:0; top:-8px; padding:3px 6px; border-radius:4px; background:rgba(10,16,10,0.85);
   font-size:11px; font-weight:700; font-variant-numeric:tabular-nums; white-space:nowrap; }
 .hud .north { position:absolute; left:50%; top:-3px; transform:translateX(-50%); font-size:12px; color:#1c2414; background:#e8d9a4;
@@ -253,6 +263,8 @@ const STYLE = `
 
 .hud .overlay { position:absolute; inset:0; display:none; align-items:center; justify-content:center; flex-direction:column; gap:10px; pointer-events:auto;
   background:radial-gradient(ellipse at center, rgba(20,30,14,0.72), rgba(0,0,0,0.82)); backdrop-filter:blur(3px); }
+.hud.secondary .overlay { display:none !important; }
+.hud.secondary .overlay { display:none !important; }
 .hud .overlay h1 { margin:0; font-size:34px; letter-spacing:8px; color:#e8d9a4; text-shadow:0 3px 10px #000; font-weight:400; }
 .hud .tabs { display:flex; gap:6px; }
 .hud .tab { padding:6px 22px; border-radius:6px 6px 0 0; font-size:15px; cursor:pointer; background:rgba(0,0,0,0.35); color:rgba(238,243,248,0.6);
@@ -369,9 +381,10 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, className: string, pa
   parent?.appendChild(e);
   return e;
 }
-
 /** Plain-DOM + canvas HUD overlay, including the pause screen (map and options). */
 export class HUD {
+  private readonly root: HTMLDivElement;
+  private readonly secondary: boolean;
   private readonly segs: HTMLDivElement[] = [];
   private readonly healthText: HTMLSpanElement;
   private readonly reloadFill: HTMLDivElement;
@@ -446,23 +459,30 @@ export class HUD {
   private nameEdit: { crew: number; chars: string[]; cursor: number } | null = null;
   private settings: Settings | null = null;
   private onSettingsChange: ((s: Settings) => void) | null = null;
+  private mirror: HUD | null = null;
+  private viewportWidth = window.innerWidth;
+  private viewportHeight = window.innerHeight;
+  private viewportLeft = 0;
+  private viewportTop = 0;
   private hitMarkerAge = HIT_MARKER_TIME;
   private bannerAge = BANNER_TIME;
   private lastUpdate = performance.now();
   private fpsSampleStart: number | null = null;
   private fpsFrames = 0;
 
-  constructor(container: HTMLElement) {
+  constructor(container: HTMLElement, secondary = false) {
+    this.secondary = secondary;
     const style = document.createElement('style');
     style.textContent = STYLE;
     document.head.appendChild(style);
-    const root = el('div', 'hud', container);
+    const root = el('div', secondary ? 'hud secondary' : 'hud', container);
+    this.root = root;
     this.fullscreenTarget = container;
 
     // --- tank status card (bottom-left) ---
     const card = el('div', 'panel card', root);
     const head = el('div', 'card-head', card);
-    el('div', 'stencil callsign', head, 'COOPER');
+    el('div', 'stencil callsign', head, secondary ? "Co-op'er" : 'Cooper');
     this.modeText = el('span', 'subtle', head);
 
     const hullLabel = el('div', 'row-label', card);
@@ -648,11 +668,49 @@ export class HUD {
     this.showPage('map');
   }
 
+  /** Restricts this HUD to one local co-op viewport. Coordinates inside it remain viewport-local. */
+  setViewport(viewport: { left: number; top: number; width: number; height: number } | null): void {
+    if (!viewport) {
+      if (this.viewportLeft === 0 && this.viewportTop === 0 && this.viewportWidth === window.innerWidth && this.viewportHeight === window.innerHeight) return;
+      this.viewportLeft = 0;
+      this.viewportTop = 0;
+      this.viewportWidth = window.innerWidth;
+      this.viewportHeight = window.innerHeight;
+      Object.assign(this.root.style, { left: '0', top: '0', width: '100%', height: '100%', right: '0', bottom: '0' });
+      return;
+    }
+    if (this.viewportLeft === viewport.left && this.viewportTop === viewport.top && this.viewportWidth === viewport.width && this.viewportHeight === viewport.height) return;
+    this.viewportLeft = viewport.left;
+    this.viewportTop = viewport.top;
+    this.viewportWidth = viewport.width;
+    this.viewportHeight = viewport.height;
+    Object.assign(this.root.style, {
+      left: `${viewport.left}px`, top: `${viewport.top}px`, width: `${viewport.width}px`, height: `${viewport.height}px`,
+      right: 'auto', bottom: 'auto',
+    });
+  }
+
+  setActive(active: boolean): void {
+    this.root.style.display = active ? 'block' : 'none';
+  }
+
+  setMirror(mirror: HUD | null): void {
+    this.mirror = mirror;
+  }
+
+  setCoopLayout(enabled: boolean): void {
+    this.mirror?.setCoopLayout(enabled);
+    this.root.classList.toggle('coop', enabled);
+    this.root.classList.toggle('coop-primary', enabled && !this.secondary);
+    this.root.classList.toggle('coop-secondary', enabled && this.secondary);
+  }
+
   /**
    * The bonus prison level: the player's on foot, so there's no map, rocket, AA, jam cannon or
    * buddy meter. The pause screen's map page shows the controls instead.
    */
   setOnFoot(controls: string): void {
+    this.mirror?.setOnFoot(controls);
     this.minimapWrap.style.display = 'none';
     this.bigMapCanvas.style.display = 'none';
     this.tabs.map.textContent = 'CONTROLS';
@@ -661,6 +719,7 @@ export class HUD {
   }
 
   setWorldMap(map: WorldMap): void {
+    this.mirror?.setWorldMap(map);
     this.worldMap = map;
   }
 
@@ -731,12 +790,18 @@ export class HUD {
   toggleBigMap(): void {
     this.nameEdit = null;
     this.pausedOpen = !this.pausedOpen;
+    this.mirror?.setPausePresentation(this.pausedOpen);
     this.resetFps();
     this.sfx(this.pausedOpen ? 'open' : 'back');
     this.overlay.style.display = this.pausedOpen ? 'flex' : 'none';
     this.showPage('map');
     // Free the mouse so the options can be clicked.
     if (this.pausedOpen && document.pointerLockElement) document.exitPointerLock();
+  }
+
+  private setPausePresentation(paused: boolean): void {
+    this.pausedOpen = paused;
+    if (paused) this.showPage('map');
   }
 
   /**
@@ -881,7 +946,16 @@ export class HUD {
     if (!this.settings) return;
     const row = OPTION_ROWS[index];
     const current = row.values.findIndex((v) => v.value === this.settings?.[row.key]);
-    const next = row.values[(current + dir + row.values.length) % row.values.length];
+    let next = row.values[(current + dir + row.values.length) % row.values.length];
+    for (let attempts = 0; attempts < row.values.length; attempts++) {
+      const duplicateKeyboard = (row.key === 'player1Controller' && next.value === -1 && this.settings.player2Controller === -1)
+        || (row.key === 'player2Controller' && next.value === -1 && this.settings.player1Controller === -1);
+      const duplicatePad = (row.key === 'player1Controller' && typeof next.value === 'number' && next.value >= 0 && next.value === this.settings.player2Controller)
+        || (row.key === 'player2Controller' && typeof next.value === 'number' && next.value >= 0 && next.value === this.settings.player1Controller);
+      if (!duplicateKeyboard && !duplicatePad) break;
+      const at = row.values.indexOf(next);
+      next = row.values[(at + dir + row.values.length) % row.values.length];
+    }
     this.settings = { ...this.settings, [row.key]: next.value };
     this.onSettingsChange?.(this.settings);
     this.sfx('change'); // after the change, so a new volume is heard straight away
@@ -1006,12 +1080,14 @@ export class HUD {
 
   /** A short line in the middle of the screen that floats up and fades (like the armour hit markers). */
   showCallout(text: string, color: string): void {
+    this.mirror?.showCallout(text, color);
     this.hitMarker.textContent = text;
     this.hitMarker.style.color = color;
     this.hitMarkerAge = 0;
   }
 
   showBanner(title: string, subtitle: string): void {
+    this.mirror?.showBanner(title, subtitle);
     this.banner.replaceChildren();
     el('div', 'stencil big', this.banner, title);
     el('div', 'small shadow', this.banner, subtitle);
@@ -1019,6 +1095,7 @@ export class HUD {
   }
 
   showVictory(message: string, footer: string): void {
+    this.mirror?.showVictory(message, footer);
     this.victoryText.textContent = message;
     this.victoryFooter.textContent = footer;
     this.victory.style.display = 'flex';
@@ -1037,6 +1114,7 @@ export class HUD {
    * `happy` is the Moon base; otherwise the zombies got you.
    */
   showEnding(happy: boolean, title: string, message: string): void {
+    this.mirror?.showEnding(happy, title, message);
     this.victoryBig.textContent = title;
     this.victory.classList.add('ending');
     this.victory.classList.toggle('defeat', !happy);
@@ -1045,15 +1123,18 @@ export class HUD {
 
   /** Covers the screen in `color` (0 = clear, 1 = solid), for fading between cutscene shots. */
   setFade(opacity: number, color = '#ffffff'): void {
+    this.mirror?.setFade(opacity, color);
     this.fade.style.opacity = `${opacity}`;
     this.fade.style.background = color;
   }
 
   setVictoryFooter(text: string): void {
+    this.mirror?.setVictoryFooter(text);
     this.victoryFooter.textContent = text;
   }
 
   hideVictory(): void {
+    this.mirror?.hideVictory();
     this.victory.style.display = 'none';
   }
 
@@ -1182,11 +1263,16 @@ export class HUD {
       (prison
         ? state.usingGamepad
           ? `${k('LS', 'move')}${k('RS', 'aim')}${k('RB', 'creep')}${k('RT', 'fire')}${k('LT', 'jam')}${k('X', 'squad')}${k('Y', 'camera')}${k('Start', 'pause · options')}${k('Back', 'checkpoint')}`
-          : `${k('WASD', 'move')}${k('Mouse', 'aim')}${k('Shift', 'creep')}${k('Click', 'fire')}${k('E', 'jam')}${k('X', 'squad')}${k('C', 'camera')}${k('M', 'pause · options')}${k('R', 'checkpoint')}` +
+          : this.secondary
+            ? `${k('Arrows', 'move')}${k('Mouse', 'aim')}${k('Shift', 'creep')}${k('Num 0', 'fire')}${k('Num 1', 'jam')}${k('Num 7', 'squad')}${k('Num 9', 'camera')}${k('Num ↵', 'pause · options')}${k('Num .', 'checkpoint')}`
+            : `${k('WASD', 'move')}${k('Mouse', 'aim')}${k('Shift', 'creep')}${k('Click', 'fire')}${k('E', 'jam')}${k('X', 'squad')}${k('C', 'camera')}${k('M', 'pause · options')}${k('R', 'checkpoint')}` +
             (state.mouseCaptureHint ? '<br><span style="color:#ffd24a">Click the game to capture the mouse for aiming</span>' : '')
         : state.usingGamepad
         ? `${k('LS', drive)}${k('RS', 'aim')}${k('RT', fire)}${bike ? '' : k('LT', 'jam')}${k('LB', rocket)}${bike ? '' : k('RB', 'AA')}<br>${bike ? '' : k('X', 'mega jam')}${k('Y', 'camera')}${k('Start', 'pause · options')}${k('Back', 'home')}`
-        : `${k('WASD', drive)}${k('Mouse', 'aim')}${k('Click', fire)}${bike ? '' : k('E', 'jam')}${k('F', rocket)}${bike ? '' : k('Q', 'AA')}<br>${bike ? '' : k('X', 'mega jam')}${k('C', 'camera')}${k('M', 'pause · options')}${k('R', 'home')}` +
+        : this.secondary
+          ? `${k('Arrows', drive)}${k('Mouse', 'aim')}${k('Num 0', fire)}${bike ? '' : k('Num 1', 'jam')}${k('Num 3', rocket)}${bike ? '' : k('Num 5', 'AA')}<br>${bike ? '' : k('Num 7', 'mega jam')}${k('Num 9', 'camera')}${k('Num ↵', 'pause · options')}${k('Num .', 'home')}` +
+            (state.mouseCaptureHint ? '<br><span style="color:#ffd24a">Move the cursor into this view to aim</span>' : '')
+          : `${k('WASD', drive)}${k('Mouse', 'aim')}${k('Click', fire)}${bike ? '' : k('E', 'jam')}${k('F', rocket)}${bike ? '' : k('Q', 'AA')}<br>${bike ? '' : k('X', 'mega jam')}${k('C', 'camera')}${k('M', 'pause · options')}${k('R', 'home')}` +
             (state.mouseCaptureHint ? '<br><span style="color:#ffd24a">Click the game to capture the mouse for aiming</span>' : '')) +
         // A gamepad press doesn't count for the browser's "user has interacted" rule, so say so.
         (state.soundLocked ? '<br><span style="color:#8fe0ff">Sound is off until you click or press a key</span>' : ''),
@@ -1258,7 +1344,7 @@ export class HUD {
 
     // Beside the reticle (or mid-screen when the reticle is off-screen, aiming high).
     if (state.aaLockScreen && !state.cinematic && !this.pausedOpen) {
-      const at = state.aimScreen ?? { x: window.innerWidth / 2, y: window.innerHeight / 2 };
+      const at = state.aimScreen ?? { x: this.viewportWidth / 2, y: this.viewportHeight / 2 };
       this.heliTag.style.display = 'flex';
       this.heliTag.style.transform = `translate(${at.x}px, ${at.y}px)`;
       this.heliTagText.textContent = `${KNIGHTS ? 'DRAGON' : 'HELI'} LOCKED · ${state.usingGamepad ? 'RB' : 'Q'}`;

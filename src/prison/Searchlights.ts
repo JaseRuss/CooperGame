@@ -85,7 +85,7 @@ export class Searchlights {
    * Sweeps the beams. `player` is where the player's feet are; returns how close he is to being
    * spotted (0 safe, 1 spotted: the alarm goes).
    */
-  update(dt: number, player: THREE.Vector3, onRoof: boolean): number {
+  update(dt: number, player: THREE.Vector3, onRoof: boolean, additional: { position: THREE.Vector3; onRoof: boolean }[] = []): number {
     if (!this.active) return 0;
     let worst = 0;
     for (const l of this.lights) {
@@ -100,7 +100,11 @@ export class Searchlights {
       l.housing.lookAt(l.aim);
       l.light.target.position.copy(l.aim);
 
-      const inPool = onRoof && Math.hypot(player.x - l.aim.x, player.z - l.aim.z) < RADIUS && this.seen(l.lamp, player);
+      let inPool = onRoof && Math.hypot(player.x - l.aim.x, player.z - l.aim.z) < RADIUS && this.seen(l.lamp, player);
+      for (const target of additional) {
+        if (inPool) break;
+        inPool = target.onRoof && Math.hypot(target.position.x - l.aim.x, target.position.z - l.aim.z) < RADIUS && this.seen(l.lamp, target.position);
+      }
       const was = l.pool.userData.seen ?? 0;
       const seen = inPool ? Math.min(1, was + dt / GRACE) : Math.max(0, was - dt * 2);
       l.pool.userData.seen = seen;

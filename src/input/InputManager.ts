@@ -41,6 +41,19 @@ export interface MenuInput {
   options: boolean;
 }
 
+interface EdgeLatches {
+  cameraKey: boolean;
+  cameraPad: boolean;
+  resetKey: boolean;
+  resetPad: boolean;
+  mapKey: boolean;
+  mapPad: boolean;
+  rocket: boolean;
+  aa: boolean;
+  megaJam: boolean;
+  menu: Map<keyof MenuInput, boolean>;
+}
+
 const MENU_STICK = 0.6;
 
 const DEADZONE = 0.15;
@@ -55,11 +68,9 @@ export class InputManager {
   private keys = new Set<string>();
   private mouseDX = 0;
   private mouseDY = 0;
+  private frameMouseDX = 0;
+  private frameMouseDY = 0;
   private mouseDown = false;
-  private cameraKeyLatch = false;
-  private gamepadCameraLatch = false;
-  private resetKeyLatch = false;
-  private gamepadResetLatch = false;
   private pointerLocked = false;
   /** Set once the browser refuses pointer lock (some embedded browsers do); the mouse then aims unlocked. */
   private pointerLockRefused = false;
@@ -72,12 +83,10 @@ export class InputManager {
   private mouseSensitivity = InputManager.MOUSE_SENSITIVITY;
   private gamepadYawSpeed = InputManager.GAMEPAD_YAW_SPEED;
   private gamepadPitchSpeed = InputManager.GAMEPAD_PITCH_SPEED;
-  private readonly menuLatch = new Map<keyof MenuInput, boolean>();
-  private mapKeyLatch = false;
-  private gamepadMapLatch = false;
-  private rocketLatch = false;
-  private aaLatch = false;
-  private megaJamLatch = false;
+  private readonly edgeLatches: Record<1 | 2, EdgeLatches> = {
+    1: { cameraKey: false, cameraPad: false, resetKey: false, resetPad: false, mapKey: false, mapPad: false, rocket: false, aa: false, megaJam: false, menu: new Map() },
+    2: { cameraKey: false, cameraPad: false, resetKey: false, resetPad: false, mapKey: false, mapPad: false, rocket: false, aa: false, megaJam: false, menu: new Map() },
+  };
   private rightMouseDown = false;
   /** Set while the options screen is taking typed text (a buddy's name). */
   textEntry = false;
@@ -135,70 +144,106 @@ export class InputManager {
     this.gamepadPitchSpeed = InputManager.GAMEPAD_PITCH_SPEED * scale;
   }
 
+  /** Snapshot motion once so separate player polls cannot consume or retain another player's delta. */
+  beginFrame(): void {
+    this.frameMouseDX = this.mouseDX;
+    this.frameMouseDY = this.mouseDY;
+    this.mouseDX = 0;
+    this.mouseDY = 0;
+  }
+
   /** Turns this frame's held menu buttons into one-shot presses. */
-  private menuEdges(held: MenuInput): MenuInput {
+  private menuEdges(held: MenuInput, latch: Map<keyof MenuInput, boolean>): MenuInput {
     const out = { ...held };
     for (const key of Object.keys(held) as (keyof MenuInput)[]) {
-      out[key] = held[key] && !this.menuLatch.get(key);
-      this.menuLatch.set(key, held[key]);
+      out[key] = held[key] && !latch.get(key);
+      latch.set(key, held[key]);
     }
     return out;
   }
 
   /** Poll device state and produce a single frame's InputState. Call once per frame. */
-  update(dt: number): InputState {
+  update(
+    dt: number,
+    gamepadIndex: number = -2,
+    keyboardPlayer: 1 | 2 = 1,
+    split: 'vertical' | 'horizontal' = 'vertical',
+    otherKeyboardAssigned = false,
+    gamepads?: readonly (Gamepad | null)[],
+    lockedMousePlayer: 1 | 2 = keyboardPlayer,
+  ): InputState {
+    const latches = this.edgeLatches[keyboardPlayer];
+    const keyboardEnabled = gamepadIndex < 0 && gamepadIndex !== -3;
+    const hasKey = (code: string): boolean => keyboardEnabled && this.keys.has(code);
+    const mouseOwner = this.pointerLocked
+      ? lockedMousePlayer
+      : this.cursor && (split === 'vertical' ? (this.cursor.x >= 0.5 ? 2 : 1) : (this.cursor.y >= 0.5 ? 2 : 1));
+    const mouseEnabled = keyboardEnabled && (keyboardPlayer === 1 ? mouseOwner !== 2 : mouseOwner === 2);
     let throttle = 0;
     let steer = 0;
     let moveX = 0;
     let moveY = 0;
     let aimYawDelta = 0;
     let aimPitchDelta = 0;
-    let firing = this.mouseDown || this.keys.has('Space');
-    let jamFiring = this.keys.has('KeyE');
+    let firing = (mouseEnabled && this.mouseDown) || hasKey(keyboardPlayer === 1 ? 'Space' : 'Numpad0');
+    let jamFiring = hasKey(keyboardPlayer === 1 ? 'KeyE' : 'Numpad1');
     let usingGamepad = false;
     let cameraTogglePressed = false;
 
-    if (this.keys.has('KeyW') || this.keys.has('ArrowUp')) throttle += 1;
-    if (this.keys.has('KeyS') || this.keys.has('ArrowDown')) throttle -= 1;
-    if (this.keys.has('KeyD') || this.keys.has('ArrowRight')) steer += 1;
-    if (this.keys.has('KeyA') || this.keys.has('ArrowLeft')) steer -= 1;
+    if (keyboardPlayer === 1 ? hasKey('KeyW') || (!otherKeyboardAssigned && hasKey('ArrowUp')) : hasKey('ArrowUp')) throttle += 1;
+    if (keyboardPlayer === 1 ? hasKey('KeyS') || (!otherKeyboardAssigned && hasKey('ArrowDown')) : hasKey('ArrowDown')) throttle -= 1;
+    if (keyboardPlayer === 1 ? hasKey('KeyD') || (!otherKeyboardAssigned && hasKey('ArrowRight')) : hasKey('ArrowRight')) steer += 1;
+    if (keyboardPlayer === 1 ? hasKey('KeyA') || (!otherKeyboardAssigned && hasKey('ArrowLeft')) : hasKey('ArrowLeft')) steer -= 1;
 
-    const cameraKeyHeld = this.keys.has('KeyC');
-    if (cameraKeyHeld && !this.cameraKeyLatch) cameraTogglePressed = true;
-    this.cameraKeyLatch = cameraKeyHeld;
+    const cameraKeyHeld = hasKey(keyboardPlayer === 1 ? 'KeyC' : 'Numpad9');
+    if (cameraKeyHeld && !latches.cameraKey) cameraTogglePressed = true;
+    latches.cameraKey = cameraKeyHeld;
 
     let resetPressed = false;
-    const resetKeyHeld = this.keys.has('KeyR');
-    if (resetKeyHeld && !this.resetKeyLatch) resetPressed = true;
-    this.resetKeyLatch = resetKeyHeld;
+    const resetKeyHeld = hasKey(keyboardPlayer === 1 ? 'KeyR' : 'NumpadDecimal');
+    if (resetKeyHeld && !latches.resetKey) resetPressed = true;
+    latches.resetKey = resetKeyHeld;
 
     let mapTogglePressed = false;
-    const mapKeyHeld = this.keys.has('KeyM') && !this.textEntry;
-    if (mapKeyHeld && !this.mapKeyLatch) mapTogglePressed = true;
-    this.mapKeyLatch = mapKeyHeld;
+    const mapKeyHeld = hasKey(keyboardPlayer === 1 ? 'KeyM' : 'NumpadEnter') && !this.textEntry;
+    if (mapKeyHeld && !latches.mapKey) mapTogglePressed = true;
+    latches.mapKey = mapKeyHeld;
 
-    aimYawDelta += this.mouseDX * this.mouseSensitivity;
-    aimPitchDelta += this.mouseDY * this.mouseSensitivity;
+    if (mouseEnabled) {
+      aimYawDelta += this.frameMouseDX * this.mouseSensitivity;
+      aimPitchDelta += this.frameMouseDY * this.mouseSensitivity;
+    }
+    // Keep both players aim-capable if Automatic falls back to the keyboard while the other
+    // player also uses it. These keys do not overlap either player's drive controls.
+    const keyAimSpeed = this.gamepadYawSpeed * 0.8 * dt;
+    if (keyboardPlayer === 1) {
+      if (hasKey('KeyJ')) aimYawDelta -= keyAimSpeed;
+      if (hasKey('KeyL')) aimYawDelta += keyAimSpeed;
+      if (hasKey('KeyI')) aimPitchDelta -= keyAimSpeed;
+      if (hasKey('KeyK')) aimPitchDelta += keyAimSpeed;
+    } else {
+      if (hasKey('Numpad4')) aimYawDelta -= keyAimSpeed;
+      if (hasKey('Numpad6')) aimYawDelta += keyAimSpeed;
+      if (hasKey('Numpad8')) aimPitchDelta -= keyAimSpeed;
+      if (hasKey('Numpad2')) aimPitchDelta += keyAimSpeed;
+    }
     // Unlocked mouse: park the cursor near the left or right edge to keep turning.
-    if (!this.pointerLocked && this.cursor) {
+    if (mouseEnabled && !this.pointerLocked && this.cursor) {
       const edge = 0.07;
       const push = this.cursor.x < edge ? -(edge - this.cursor.x) / edge : this.cursor.x > 1 - edge ? (this.cursor.x - (1 - edge)) / edge : 0;
       aimYawDelta += push * this.gamepadYawSpeed * 0.8 * dt;
     }
-    this.mouseDX = 0;
-    this.mouseDY = 0;
-
     // Button holds are OR-ed across every connected pad *before* edge detection. Windows often
     // lists extra devices (headsets, duplicate XInput entries); checking each pad against a
     // shared latch let an idle one re-arm it every frame, so a held button toggled repeatedly.
     let camButtonHeld = false;
     let resetButtonHeld = false;
     let mapButtonHeld = false;
-    let rocketHeld = this.keys.has('KeyF') || this.rightMouseDown;
-    let aaHeld = this.keys.has('KeyQ');
-    let megaJamHeld = this.keys.has('KeyX');
-    let sneak = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight') || this.keys.has('ControlLeft') || this.keys.has('ControlRight');
-    const k = (...codes: string[]) => codes.some((c) => this.keys.has(c));
+    let rocketHeld = hasKey(keyboardPlayer === 1 ? 'KeyF' : 'Numpad3') || (mouseEnabled && this.rightMouseDown);
+    let aaHeld = hasKey(keyboardPlayer === 1 ? 'KeyQ' : 'Numpad5');
+    let megaJamHeld = hasKey(keyboardPlayer === 1 ? 'KeyX' : 'Numpad7');
+    let sneak = hasKey('ShiftLeft') || hasKey('ShiftRight') || hasKey('ControlLeft') || hasKey('ControlRight');
+    const k = (...codes: string[]) => codes.some(hasKey);
     // While a name is being typed, letters, Space and Backspace are text, not menu moves.
     const typing = this.textEntry;
     const menuHeld: MenuInput = {
@@ -206,14 +251,17 @@ export class InputManager {
       down: typing ? k('ArrowDown') : k('ArrowDown', 'KeyS'),
       left: typing ? k('ArrowLeft') : k('ArrowLeft', 'KeyA'),
       right: typing ? k('ArrowRight') : k('ArrowRight', 'KeyD'),
-      confirm: typing ? k('Enter') : k('Enter', 'Space'),
-      back: typing ? k('Escape') : k('Escape', 'Backspace'),
-      options: typing ? false : k('KeyO'),
+      confirm: typing ? k('Enter') : keyboardPlayer === 1 ? k('Enter', 'Space') : k('Numpad0'),
+      back: typing ? k('Escape') : keyboardPlayer === 1 ? k('Escape', 'Backspace') : k('NumpadSubtract'),
+      options: typing ? false : keyboardPlayer === 1 ? k('KeyO') : k('NumpadAdd'),
     };
 
-    const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+    const pads = gamepads ?? (navigator.getGamepads ? navigator.getGamepads() : []);
     for (const pad of pads) {
       if (!pad) continue;
+      if (gamepadIndex === -3) continue;
+      if (gamepadIndex >= 0 && pad.index !== gamepadIndex) continue;
+      if (gamepadIndex === -1) continue;
       const rx = applyDeadzone(pad.axes[2] ?? 0);
       const ry = applyDeadzone(pad.axes[3] ?? 0);
 
@@ -263,19 +311,19 @@ export class InputManager {
       menuHeld.options ||= btn(2);
     }
 
-    const rocketPressed = rocketHeld && !this.rocketLatch;
-    this.rocketLatch = rocketHeld;
-    const aaPressed = aaHeld && !this.aaLatch;
-    this.aaLatch = aaHeld;
-    const megaJamPressed = megaJamHeld && !this.megaJamLatch;
-    this.megaJamLatch = megaJamHeld;
+    const rocketPressed = rocketHeld && !latches.rocket;
+    latches.rocket = rocketHeld;
+    const aaPressed = aaHeld && !latches.aa;
+    latches.aa = aaHeld;
+    const megaJamPressed = megaJamHeld && !latches.megaJam;
+    latches.megaJam = megaJamHeld;
 
-    if (camButtonHeld && !this.gamepadCameraLatch) cameraTogglePressed = true;
-    this.gamepadCameraLatch = camButtonHeld;
-    if (resetButtonHeld && !this.gamepadResetLatch) resetPressed = true;
-    this.gamepadResetLatch = resetButtonHeld;
-    if (mapButtonHeld && !this.gamepadMapLatch) mapTogglePressed = true;
-    this.gamepadMapLatch = mapButtonHeld;
+    if (camButtonHeld && !latches.cameraPad) cameraTogglePressed = true;
+    latches.cameraPad = camButtonHeld;
+    if (resetButtonHeld && !latches.resetPad) resetPressed = true;
+    latches.resetPad = resetButtonHeld;
+    if (mapButtonHeld && !latches.mapPad) mapTogglePressed = true;
+    latches.mapPad = mapButtonHeld;
 
     throttle = Math.max(-1, Math.min(1, throttle));
     steer = Math.max(-1, Math.min(1, steer));
@@ -304,7 +352,7 @@ export class InputManager {
       usingGamepad,
       pointerLocked: this.pointerLocked,
       pointerLockAvailable: !this.pointerLockRefused,
-      menu: this.menuEdges(menuHeld),
+      menu: this.menuEdges(menuHeld, latches.menu),
     };
   }
 }
