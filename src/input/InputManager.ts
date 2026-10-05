@@ -68,6 +68,8 @@ export class InputManager {
   private keys = new Set<string>();
   private mouseDX = 0;
   private mouseDY = 0;
+  private frameMouseDX = 0;
+  private frameMouseDY = 0;
   private mouseDown = false;
   private pointerLocked = false;
   /** Set once the browser refuses pointer lock (some embedded browsers do); the mouse then aims unlocked. */
@@ -142,6 +144,14 @@ export class InputManager {
     this.gamepadPitchSpeed = InputManager.GAMEPAD_PITCH_SPEED * scale;
   }
 
+  /** Snapshot motion once so separate player polls cannot consume or retain another player's delta. */
+  beginFrame(): void {
+    this.frameMouseDX = this.mouseDX;
+    this.frameMouseDY = this.mouseDY;
+    this.mouseDX = 0;
+    this.mouseDY = 0;
+  }
+
   /** Turns this frame's held menu buttons into one-shot presses. */
   private menuEdges(held: MenuInput, latch: Map<keyof MenuInput, boolean>): MenuInput {
     const out = { ...held };
@@ -153,12 +163,20 @@ export class InputManager {
   }
 
   /** Poll device state and produce a single frame's InputState. Call once per frame. */
-  update(dt: number, gamepadIndex: number = -2, keyboardPlayer: 1 | 2 = 1, split: 'vertical' | 'horizontal' = 'vertical', otherKeyboardAssigned = false): InputState {
+  update(
+    dt: number,
+    gamepadIndex: number = -2,
+    keyboardPlayer: 1 | 2 = 1,
+    split: 'vertical' | 'horizontal' = 'vertical',
+    otherKeyboardAssigned = false,
+    gamepads?: readonly (Gamepad | null)[],
+    lockedMousePlayer: 1 | 2 = keyboardPlayer,
+  ): InputState {
     const latches = this.edgeLatches[keyboardPlayer];
     const keyboardEnabled = gamepadIndex < 0 && gamepadIndex !== -3;
     const hasKey = (code: string): boolean => keyboardEnabled && this.keys.has(code);
     const mouseOwner = this.pointerLocked
-      ? keyboardPlayer
+      ? lockedMousePlayer
       : this.cursor && (split === 'vertical' ? (this.cursor.x >= 0.5 ? 2 : 1) : (this.cursor.y >= 0.5 ? 2 : 1));
     const mouseEnabled = keyboardEnabled && (keyboardPlayer === 1 ? mouseOwner !== 2 : mouseOwner === 2);
     let throttle = 0;
@@ -192,8 +210,22 @@ export class InputManager {
     latches.mapKey = mapKeyHeld;
 
     if (mouseEnabled) {
-      aimYawDelta += this.mouseDX * this.mouseSensitivity;
-      aimPitchDelta += this.mouseDY * this.mouseSensitivity;
+      aimYawDelta += this.frameMouseDX * this.mouseSensitivity;
+      aimPitchDelta += this.frameMouseDY * this.mouseSensitivity;
+    }
+    // Keep both players aim-capable if Automatic falls back to the keyboard while the other
+    // player also uses it. These keys do not overlap either player's drive controls.
+    const keyAimSpeed = this.gamepadYawSpeed * 0.8 * dt;
+    if (keyboardPlayer === 1) {
+      if (hasKey('KeyJ')) aimYawDelta -= keyAimSpeed;
+      if (hasKey('KeyL')) aimYawDelta += keyAimSpeed;
+      if (hasKey('KeyI')) aimPitchDelta -= keyAimSpeed;
+      if (hasKey('KeyK')) aimPitchDelta += keyAimSpeed;
+    } else {
+      if (hasKey('Numpad4')) aimYawDelta -= keyAimSpeed;
+      if (hasKey('Numpad6')) aimYawDelta += keyAimSpeed;
+      if (hasKey('Numpad8')) aimPitchDelta -= keyAimSpeed;
+      if (hasKey('Numpad2')) aimPitchDelta += keyAimSpeed;
     }
     // Unlocked mouse: park the cursor near the left or right edge to keep turning.
     if (mouseEnabled && !this.pointerLocked && this.cursor) {
@@ -201,11 +233,6 @@ export class InputManager {
       const push = this.cursor.x < edge ? -(edge - this.cursor.x) / edge : this.cursor.x > 1 - edge ? (this.cursor.x - (1 - edge)) / edge : 0;
       aimYawDelta += push * this.gamepadYawSpeed * 0.8 * dt;
     }
-    if (mouseEnabled) {
-      this.mouseDX = 0;
-      this.mouseDY = 0;
-    }
-
     // Button holds are OR-ed across every connected pad *before* edge detection. Windows often
     // lists extra devices (headsets, duplicate XInput entries); checking each pad against a
     // shared latch let an idle one re-arm it every frame, so a held button toggled repeatedly.
@@ -229,7 +256,7 @@ export class InputManager {
       options: typing ? false : keyboardPlayer === 1 ? k('KeyO') : k('NumpadAdd'),
     };
 
-    const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+    const pads = gamepads ?? (navigator.getGamepads ? navigator.getGamepads() : []);
     for (const pad of pads) {
       if (!pad) continue;
       if (gamepadIndex === -3) continue;

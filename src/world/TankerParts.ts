@@ -133,7 +133,7 @@ export class TankerParts {
   }
 
   /** Spins and bobs the parts; returns the indices the player picked up this frame. */
-  update(dt: number, who: PartCollector | null): number[] {
+  update(dt: number, who: PartCollector | PartCollector[] | null): number[] {
     this.time += dt;
     ringMaterial.opacity = 0.45 + 0.25 * Math.sin(this.time * 4);
     const got: number[] = [];
@@ -143,9 +143,14 @@ export class TankerParts {
       p.fall = Math.max(0, p.fall - (8 + (DROP_HEIGHT - p.fall) * 2.5) * dt);
       p.body.position.y = HOVER * 0.4 + p.fall + (p.fall > 0 ? 0 : Math.sin(this.time * 2 + i) * 0.25);
       if (!who || p.fall > 0) return;
-      const across = Math.hypot(who.position.x - p.x, who.position.z - p.z);
-      const reach = who.isChopper && who.heightAboveGround > 2 ? across < CHOPPER_RADIUS : across < PICKUP_RADIUS && Math.abs(who.position.y - p.groundY) < 6;
-      if (!reach) return;
+      const collectors = Array.isArray(who) ? who : [who];
+      const reached = collectors.some((collector) => {
+        const across = Math.hypot(collector.position.x - p.x, collector.position.z - p.z);
+        return collector.isChopper && collector.heightAboveGround > 2
+          ? across < CHOPPER_RADIUS
+          : across < PICKUP_RADIUS && Math.abs(collector.position.y - p.groundY) < 6;
+      });
+      if (!reached) return;
       p.taken = true;
       this.scene.remove(p.root);
       got.push(i);

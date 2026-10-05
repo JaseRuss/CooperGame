@@ -177,10 +177,10 @@ export class RepairCrates {
   }
 
   /** Moves the crates along; returns how many of each kind the player picked up this frame. */
-  update(dt: number, player: CrateCollector): Record<CrateKind, number> {
+  update(dt: number, players: CrateCollector[]): { player: CrateCollector; repair: number; power: number }[] {
     this.time += dt;
     ringMaterial.opacity = powerRingMaterial.opacity = 0.45 + 0.25 * Math.sin(this.time * 4);
-    const collected = { repair: 0, power: 0 };
+    const collected = new Map<CrateCollector, { repair: number; power: number }>();
     for (let i = this.crates.length - 1; i >= 0; i--) {
       const c = this.crates[i];
       c.age += dt;
@@ -205,13 +205,23 @@ export class RepairCrates {
         this.remove(i);
         continue;
       }
-      const wanted = c.kind === 'power' || player.health < player.maxHealth;
-      if (c.landed && wanted && this.within(c, player)) {
-        collected[c.kind]++;
+      let collector: CrateCollector | undefined;
+      let nearest = Infinity;
+      if (c.landed) {
+        for (const player of players) {
+          if ((c.kind !== 'power' && player.health >= player.maxHealth) || !this.within(c, player)) continue;
+          const distance = player.position.distanceToSquared(c.root.position);
+          if (distance < nearest) { nearest = distance; collector = player; }
+        }
+      }
+      if (c.landed && collector) {
+        const count = collected.get(collector) ?? { repair: 0, power: 0 };
+        count[c.kind]++;
+        collected.set(collector, count);
         this.remove(i);
       }
     }
-    return collected;
+    return [...collected].map(([player, count]) => ({ player, ...count }));
   }
 
   private within(c: Crate, player: CrateCollector): boolean {

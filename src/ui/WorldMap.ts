@@ -43,6 +43,8 @@ export interface MapView {
   playerX: number;
   playerZ: number;
   playerYaw: number;
+  /** The other co-op player, shown on the minimap and pause map. */
+  partner?: { x: number; z: number; name: string } | null;
   friendlyBases: MapBase[];
   /** 	itle is the full label, e.g. "Blue Army Base Bravo". */
   enemyBases: (MapBase & { destroyed: boolean; title: string })[];
@@ -83,10 +85,13 @@ interface PointerStyle {
   avoid?: { x: number; z: number };
   /** Draw a little aeroplane instead of the arrowhead. */
   plane?: boolean;
+  /** Optional text before the distance, used to identify the partner pointer. */
+  prefix?: string;
 }
 const ENEMY_POINTER: PointerStyle = { fill: '#ff5a4a', edge: '#2a0a0a', text: '#ffd0c8', inset: 0 };
 const AIRBASE_POINTER: PointerStyle = { fill: '#ffa53a', edge: '#2a1605', text: '#ffe0b8', inset: 0, plane: true };
 const HOME_POINTER: PointerStyle = { fill: '#ffcc33', edge: '#2a2005', text: '#fff0b8', inset: 0 };
+const PARTNER_POINTER: PointerStyle = { fill: '#62d8ff', edge: '#062c3a', text: '#e2faff', inset: 1 };
 
 const LAYER_SIZE = 1024;
 const TERRAIN_SAMPLES = 192;
@@ -454,6 +459,23 @@ export class WorldMap {
     // Everything below is in screen pixels so it stays readable at any zoom.
     const toScreen = (x: number, z: number) => [width / 2 + (x - cx) * s, height / 2 + (z - cz) * s] as const;
 
+    if (view.partner) {
+      const [partnerX, partnerZ] = toScreen(view.partner.x, view.partner.z);
+      const edge = Math.min(width, height) / 2 - 12;
+      const dx = partnerX - width / 2;
+      const dz = partnerZ - height / 2;
+      const distance = Math.hypot(view.partner.x - view.playerX, view.partner.z - view.playerZ);
+      if (opts.rimPointer && Math.hypot(dx, dz) > edge) {
+        this.drawRimPointer(ctx, width, height, [partnerX, partnerZ], view, view.partner, {
+          ...PARTNER_POINTER,
+          prefix: `${view.partner.name} · `,
+          avoid: view.objective ?? undefined,
+        });
+      } else {
+        this.drawPartnerMarker(ctx, partnerX, partnerZ, view.partner.name, Math.round(distance));
+      }
+    }
+
     if (opts.labels) {
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.font = '700 12px "Segoe UI", system-ui, sans-serif';
@@ -661,9 +683,33 @@ export class WorldMap {
     ctx.lineWidth = 3;
     ctx.strokeStyle = 'rgba(0,0,0,0.8)';
     ctx.fillStyle = style.text;
-    const text = dist >= 1000 ? `${(dist / 1000).toFixed(1)}km` : `${dist}m`;
+    const text = `${style.prefix ?? ''}${dist >= 1000 ? `${(dist / 1000).toFixed(1)}km` : `${dist}m`}`;
     ctx.strokeText(text, lx, lz);
     ctx.fillText(text, lx, lz);
     ctx.textBaseline = 'alphabetic';
+  }
+
+  private drawPartnerMarker(ctx: CanvasRenderingContext2D, x: number, z: number, name: string, distance: number): void {
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.fillStyle = 'rgba(10, 38, 48, 0.92)';
+    ctx.strokeStyle = PARTNER_POINTER.fill;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(x, z, 10, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.font = '900 10px "Segoe UI", system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = 'rgba(0,0,0,0.8)';
+    ctx.fillStyle = PARTNER_POINTER.text;
+    ctx.strokeText(name, x, z);
+    ctx.fillText(name, x, z);
+    ctx.font = '800 10px "Segoe UI", system-ui, sans-serif';
+    ctx.textBaseline = 'alphabetic';
+    const label = distance >= 1000 ? `${(distance / 1000).toFixed(1)}km` : `${distance}m`;
+    ctx.strokeText(label, x, z + 22);
+    ctx.fillText(label, x, z + 22);
   }
 }

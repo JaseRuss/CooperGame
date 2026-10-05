@@ -76,6 +76,8 @@ export interface GuardWorld {
   /** Where the player's feet are, or null when he can't be seen (down, mid-climb). */
   player: THREE.Vector3 | null;
   sneaking: boolean;
+  /** Each visible player is checked independently for suspicion and stealth. */
+  players?: { position: THREE.Vector3; sneaking: boolean }[];
   /** Who an alarmed guard can shoot at: the player and the squad. */
   targets: THREE.Vector3[];
   /** A clear line between two points (walls and bars, not people). */
@@ -463,25 +465,29 @@ export class Guards {
   /** Looks for the player in his cone: suspicion climbs while he's in it, drains when he isn't. */
   private perceive(g: Guard, dt: number, w: GuardWorld, eye: THREE.Vector3): void {
     g.scanTimer -= dt;
-    const p = w.player;
     if (g.scanTimer <= 0) {
       g.scanTimer = SCAN_EVERY;
       g.seeing = false;
-      if (p) {
+      const players = w.players ?? (w.player ? [{ position: w.player, sneaking: w.sneaking }] : []);
+      let highestRate = 0;
+      for (const player of players) {
+        const p = player.position;
         const dx = p.x - g.pos.x;
         const dz = p.z - g.pos.z;
         const d = Math.hypot(dx, dz);
-        const reach = g.sight * (w.sneaking ? SNEAK_REACH : 1);
+        const reach = g.sight * (player.sneaking ? SNEAK_REACH : 1);
         const inCone = d < NEAR_SENSE || Math.abs(wrapAngle(Math.atan2(-dx, -dz) - g.yaw)) < g.halfFov;
         // Alarmed, he's looking straight at where you are: no cone, a bit further.
         const inReach = g.alert === 'alarmed' ? d < ALARM_SIGHT : d < reach && inCone;
-        if (inReach && Math.abs(p.y - g.pos.y) < 6) {
-          eye.copy(g.pos).setY(g.pos.y + EYE);
-          g.seeing = w.sees(eye, aim0.copy(p).setY(p.y + 1.2));
-        }
-        if (g.seeing) {
+        if (!inReach || Math.abs(p.y - g.pos.y) >= 6) continue;
+        eye.copy(g.pos).setY(g.pos.y + EYE);
+        if (!w.sees(eye, aim0.copy(p).setY(p.y + 1.2))) continue;
+        g.seeing = true;
+        const rate = (0.5 + 1.5 * (1 - Math.min(1, d / reach))) * (player.sneaking ? 0.75 : 1);
+        if (rate >= highestRate) {
+          highestRate = rate;
           g.lastKnown = (g.lastKnown ?? new THREE.Vector3()).copy(p);
-          g.suspicionRate = (0.5 + 1.5 * (1 - Math.min(1, d / reach))) * (w.sneaking ? 0.75 : 1);
+          g.suspicionRate = rate;
         }
       }
     }

@@ -190,6 +190,11 @@ export class JamCannon {
   private readonly dripSplats: DripSplat[] = [];
   private fired = 0;
 
+  clear(): void {
+    for (const item of [...this.blobs, ...this.droplets, ...this.drips, ...this.splats, ...this.dripSplats]) this.scene.remove(item.mesh);
+    this.blobs.length = this.droplets.length = this.drips.length = this.splats.length = this.dripSplats.length = 0;
+  }
+
   /**
    * `groundAt` is the height of the ground (the big map's terrain unless the level is flat), and
    * `rayGroups` a Rapier collision-group filter for what the jam can hit (anything, by default).

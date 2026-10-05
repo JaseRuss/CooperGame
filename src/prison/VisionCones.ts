@@ -125,10 +125,12 @@ export class VisionCones {
   }
 
   /** Redraws every nearby guard's cone and marker (call once a frame, after the guards have moved). */
-  update(camera: THREE.Vector3, time: number): void {
+  update(camera: THREE.Vector3, time: number, camera2?: THREE.Vector3): void {
     this.frame++;
     for (const [g, cone] of this.cones) {
-      const live = g.state === 'active' && g.root.visible && Math.hypot(g.pos.x - camera.x, g.pos.z - camera.z) < DRAW_RANGE;
+      const nearCamera = Math.hypot(g.pos.x - camera.x, g.pos.z - camera.z) < DRAW_RANGE
+        || (camera2 !== undefined && Math.hypot(g.pos.x - camera2.x, g.pos.z - camera2.z) < DRAW_RANGE);
+      const live = g.state === 'active' && g.root.visible && nearCamera;
       cone.mesh.visible = live;
       const alerted = live && (g.alert !== 'calm' || g.suspicion > 0.3);
       cone.marker.visible = alerted;

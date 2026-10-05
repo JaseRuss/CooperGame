@@ -138,17 +138,19 @@ export class Gear {
     return best ? new THREE.Vector3(best.spot.x, 1.2, best.spot.z) : null;
   }
 
-  /** Spins and bobs the gear; returns the piece the player's just walked over (if any). */
-  update(time: number, player: THREE.Vector3 | null): GearId | null {
-    let got: GearId | null = null;
+  /** Spins and bobs each piece once, while allowing either player to collect it. */
+  update(time: number, player: THREE.Vector3 | null, player2: THREE.Vector3 | null = null): GearId[] {
+    const got: GearId[] = [];
     for (const i of this.items) {
       if (i.taken) continue;
       i.model.rotation.y = time * 0.9;
       i.model.position.y = 0.12 + Math.sin(time * 2.2 + i.spot.x) * 0.08;
-      if (player && !got && Math.hypot(i.spot.x - player.x, i.spot.z - player.z) < PICKUP_RANGE && Math.abs(player.y) < 2) {
+      const playerNear = player !== null && Math.hypot(i.spot.x - player.x, i.spot.z - player.z) < PICKUP_RANGE && Math.abs(player.y) < 2;
+      const player2Near = player2 !== null && Math.hypot(i.spot.x - player2.x, i.spot.z - player2.z) < PICKUP_RANGE && Math.abs(player2.y) < 2;
+      if (playerNear || player2Near) {
         i.taken = true;
         i.group.visible = false;
-        got = i.spot.id;
+        got.push(i.spot.id);
       }
     }
     this.beamMaterial.opacity = 0.17 + Math.sin(time * 3) * 0.05;

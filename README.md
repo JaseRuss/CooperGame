@@ -96,7 +96,7 @@ press A or Enter, then type a new name, or on a controller use up and down to
 pick each letter, left and right to move, and X to delete. Your choices are
 remembered.
 
-**Local co-op:** pause, open **Options**, choose a controller for each player, and choose a **Vertical** (side-by-side) or **Horizontal** (top-and-bottom) split. Player 2 is disabled by default. Either player can use keyboard and mouse; when Player 2 uses them, use the arrow keys to move, the mouse to aim, and the number pad to fire (0), use the jam cannon (1), or switch camera (9). Each player has a separate view and health. Co-op currently supports the tank missions; the prison escape remains a single-player mission.
+**Local co-op:** pause, open **Options**, choose a controller for each player, and choose a **Vertical** (side-by-side) or **Horizontal** (top-and-bottom) split. Player 2 is disabled by default. Either player can use keyboard and mouse; when Player 2 uses them, use the arrow keys to move, the mouse to aim, and the number pad to fire (0), use the jam cannon (1), or switch camera (9). Both players have a complete HUD, separate views, health, weapons, vehicle state, and abilities. Co-op works across the tank missions and the prison escape; objectives can be advanced by either player, and both players take part in the prison raft crossing and escape.
 
 **Slower computers:** pause with **M** / **Start**, open **Options**, and set
 **Graphics** to **Low** for a softer picture without shadows. **Balanced** uses
