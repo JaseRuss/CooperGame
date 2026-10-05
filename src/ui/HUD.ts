@@ -881,7 +881,16 @@ export class HUD {
     if (!this.settings) return;
     const row = OPTION_ROWS[index];
     const current = row.values.findIndex((v) => v.value === this.settings?.[row.key]);
-    const next = row.values[(current + dir + row.values.length) % row.values.length];
+    let next = row.values[(current + dir + row.values.length) % row.values.length];
+    for (let attempts = 0; attempts < row.values.length; attempts++) {
+      const duplicateKeyboard = (row.key === 'player1Controller' && next.value === -1 && this.settings.player2Controller === -1)
+        || (row.key === 'player2Controller' && next.value === -1 && this.settings.player1Controller === -1);
+      const duplicatePad = (row.key === 'player1Controller' && typeof next.value === 'number' && next.value >= 0 && next.value === this.settings.player2Controller)
+        || (row.key === 'player2Controller' && typeof next.value === 'number' && next.value >= 0 && next.value === this.settings.player1Controller);
+      if (!duplicateKeyboard && !duplicatePad) break;
+      const at = row.values.indexOf(next);
+      next = row.values[(at + dir + row.values.length) % row.values.length];
+    }
     this.settings = { ...this.settings, [row.key]: next.value };
     this.onSettingsChange?.(this.settings);
     this.sfx('change'); // after the change, so a new volume is heard straight away

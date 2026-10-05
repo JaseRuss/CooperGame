@@ -363,6 +363,8 @@ export class Game {
   private readonly input: InputManager;
   private readonly hitRegistry = new HitRegistry();
   private readonly cameraRig: CameraRig;
+  private readonly camera2: THREE.PerspectiveCamera;
+  private readonly cameraRig2: CameraRig;
   private readonly hud: HUD;
   private readonly sound = new Sound(MISSION);
   /** Where the player was last frame, for the engine note's speed. */
@@ -396,6 +398,10 @@ export class Game {
   private landmarks!: LandmarkSet;
   private troops!: TroopManager;
   private player!: PlayerTank;
+  private player2: PlayerTank | null = null;
+  private readonly player2Hud: HTMLDivElement;
+  private readonly player2Crosshair: HTMLDivElement;
+  private readonly splitDivider: HTMLDivElement;
   private familyBases: FamilyBase[] = [];
   private highways: Polyline[] = [];
   private enemyBases: EnemyBase[] = [];
@@ -501,8 +507,25 @@ export class Game {
     // Skip scenery beyond the opaque fog. Night skies also contain distant, unfogged flares.
     this.camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, DARK ? 4000 : (JUNGLE ? JUNGLE_FOG_FAR : DAY_FOG_FAR) + 60);
     this.cameraRig = new CameraRig(this.camera);
+    this.camera2 = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, DARK ? 4000 : (JUNGLE ? JUNGLE_FOG_FAR : DAY_FOG_FAR) + 60);
+    this.cameraRig2 = new CameraRig(this.camera2);
     this.input = new InputManager(this.renderer.domElement);
     this.hud = new HUD(container);
+    window.addEventListener('gamepaddisconnected', (event) => {
+      const pad = event as GamepadEvent;
+      if (this.settings.player1Controller === pad.gamepad.index || this.settings.player2Controller === pad.gamepad.index) {
+        this.hud.showCallout(`CONTROLLER ${pad.gamepad.index + 1} DISCONNECTED · RECONNECT OR CHANGE IT IN OPTIONS`, '#ff8a7a');
+      }
+    });
+    this.player2Hud = document.createElement('div');
+    this.player2Hud.style.cssText = 'display:none;position:absolute;right:12px;top:12px;z-index:3;padding:7px 10px;background:#071018bb;color:#fff;font:700 13px system-ui;pointer-events:none';
+    container.appendChild(this.player2Hud);
+    this.player2Crosshair = document.createElement('div');
+    this.player2Crosshair.style.cssText = 'display:none;position:absolute;left:75%;top:50%;width:22px;height:22px;transform:translate(-50%,-50%);border:2px solid #fff;border-radius:50%;z-index:2;pointer-events:none;box-sizing:border-box';
+    container.appendChild(this.player2Crosshair);
+    this.splitDivider = document.createElement('div');
+    this.splitDivider.style.cssText = 'display:none;position:absolute;z-index:2;background:#d6dfd880;pointer-events:none';
+    container.appendChild(this.splitDivider);
     this.hud.setSoundHook((kind) => this.sound.play(kind === 'move' ? 'uiMove' : kind === 'change' ? 'uiChange' : kind === 'back' ? 'uiBack' : kind === 'open' ? 'uiOpen' : 'uiConfirm', { volume: 0.5, minGap: 0 }));
 
     this.loadingLabel = document.createElement('div');
@@ -944,12 +967,36 @@ export class Game {
   private applySettings(): void {
     this.applyGraphicsSettings();
     this.player.driveStyle = this.settings.driveStyle;
+    this.syncPlayer2();
     this.input.setAimScale(AIM_SPEED_SCALE[this.settings.aimSpeed]);
     this.sound.setVolumes(this.settings.sfxVolume, this.settings.musicVolume);
     for (const b of this.buddies) {
       b.setNameTagVisible(this.settings.nameTags);
       b.rename(this.settings.buddyNames[b.crew]);
     }
+  }
+
+  private syncPlayer2(): void {
+    const enabled = this.settings.player2Controller !== -2;
+    if (enabled && !this.player2) {
+      const offset = new THREE.Vector3(5, 0, 0).applyAxisAngle(new THREE.Vector3(0, 1, 0), this.player.yaw);
+      this.player2 = new PlayerTank(this.world, this.player.position.x + offset.x, this.player.position.z + offset.z, this.player.yaw);
+      this.player2.driveStyle = this.settings.driveStyle;
+      this.scene.add(this.player2.root);
+      this.hitRegistry.register(this.player2.physicsCollider, { kind: 'tank', tank: this.player2 });
+      this.player2Hud.style.display = 'block';
+      this.player2Crosshair.style.display = 'block';
+      this.splitDivider.style.display = 'block';
+    } else if (!enabled && this.player2) {
+      this.scene.remove(this.player2.root);
+      this.hitRegistry.unregister(this.player2.physicsCollider);
+      this.player2.dispose();
+      this.player2 = null;
+      this.player2Hud.style.display = 'none';
+      this.player2Crosshair.style.display = 'none';
+      this.splitDivider.style.display = 'none';
+    }
+    if (this.player2) this.player2.driveStyle = this.settings.driveStyle;
   }
 
   private applyGraphicsSettings(): void {
@@ -1255,6 +1302,7 @@ export class Game {
   private enemyTargets(): { position: THREE.Vector3 }[] {
     return [
       this.player,
+      ...(this.player2 ? [this.player2] : []),
       ...this.buddies,
       ...this.redTanks,
       ...this.troops.activeSoldiers('player'),
@@ -2482,13 +2530,16 @@ export class Game {
     const travel = pts.length > 1 ? pts[pts.length - 1].clone().sub(pts[pts.length - 2]) : this.player.muzzleWorldDirection;
     const target = this.classifyTarget(traj.hitCollider, traj.impact, travel, this.player.isJeep);
     this.aimGuide.update(traj, target, this.camera);
+    if (this.player2) this.aimGuide.setVisible(false);
     return { screen: this.toScreen(traj.impact), range: traj.normal ? traj.range : null, target };
   }
 
   private toScreen(world: THREE.Vector3): { x: number; y: number } | null {
     const ndc = world.clone().project(this.camera);
     if (ndc.z > 1 || Math.abs(ndc.x) > 1.2 || Math.abs(ndc.y) > 1.2) return null;
-    return { x: ((ndc.x + 1) / 2) * window.innerWidth, y: ((1 - ndc.y) / 2) * window.innerHeight };
+    const width = this.player2 && this.settings.splitOrientation === 'vertical' ? window.innerWidth / 2 : window.innerWidth;
+    const height = this.player2 && this.settings.splitOrientation === 'horizontal' ? window.innerHeight / 2 : window.innerHeight;
+    return { x: ((ndc.x + 1) / 2) * width, y: ((1 - ndc.y) / 2) * height };
   }
 
   /** `jam`: a jam round, whose only weak point is a pillbox gun slit (it gums the gun up for good). */
@@ -2666,6 +2717,8 @@ export class Game {
   private onResize(): void {
     this.camera.aspect = window.innerWidth / window.innerHeight;
     this.camera.updateProjectionMatrix();
+    this.camera2.aspect = this.settings.splitOrientation === 'vertical' ? window.innerWidth / 2 / window.innerHeight : window.innerWidth / (window.innerHeight / 2);
+    this.camera2.updateProjectionMatrix();
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.applyGraphicsSettings();
   }
@@ -2679,16 +2732,35 @@ export class Game {
     const dt = Math.min(this.clock.getDelta(), 0.05);
     // Typing a buddy name on the options screen: letters are text, not menu or map keys.
     this.input.textEntry = this.hud.editingText;
-    const rawInput = this.input.update(dt);
+    const secondUsesKeyboard = this.player2 !== null && this.settings.player2Controller === -1;
+    const p2Index = this.player2 === null ? -3 : this.settings.player2Controller;
+    const p1Index = this.settings.player1Controller !== -2
+      ? this.settings.player1Controller
+      : Array.from(navigator.getGamepads?.() ?? []).find((pad) => pad && (!this.player2 || pad.index !== p2Index))?.index ?? -1;
+    const p2First = secondUsesKeyboard;
+    const secondInput = p2First
+      ? this.input.update(dt, p2Index, 2, this.settings.splitOrientation)
+      : null;
+    const rawInput = this.input.update(dt, p1Index, 1, this.settings.splitOrientation, this.player2 !== null && p2Index === -1);
+    const player2Input = p2First ? secondInput : this.player2 ? this.input.update(dt, p2Index, 2, this.settings.splitOrientation) : null;
 
     // Full map doubles as the pause screen: nothing moves while it's open.
     if (this.hud.paused) {
-      this.hud.handleMenu(rawInput.menu);
-      if (rawInput.mapTogglePressed && this.hud.paused) this.hud.toggleBigMap();
+      this.hud.handleMenu({
+        ...rawInput.menu,
+        up: rawInput.menu.up || (player2Input?.menu.up ?? false),
+        down: rawInput.menu.down || (player2Input?.menu.down ?? false),
+        left: rawInput.menu.left || (player2Input?.menu.left ?? false),
+        right: rawInput.menu.right || (player2Input?.menu.right ?? false),
+        confirm: rawInput.menu.confirm || (player2Input?.menu.confirm ?? false),
+        back: rawInput.menu.back || (player2Input?.menu.back ?? false),
+        options: rawInput.menu.options || (player2Input?.menu.options ?? false),
+      });
+      if ((rawInput.mapTogglePressed || player2Input?.mapTogglePressed) && this.hud.paused) this.hud.toggleBigMap();
       this.sound.updateEngine(0, this.player.vehicle, false);
       this.hud.update(this.hudState(rawInput, false, { screen: null, range: null, target: 'none' }, null));
       if (!this.pausedRendered) {
-        this.renderer.render(this.ending?.phase === 'moon' && this.moonBase ? this.moonBase.scene : this.scene, this.camera);
+        this.renderViews(this.ending?.phase === 'moon' && this.moonBase ? this.moonBase.scene : this.scene);
         this.pausedRendered = true;
       }
       return;
@@ -2702,8 +2774,9 @@ export class Game {
       this.updateLastStand(dt, rawInput.menu.confirm);
       this.sound.updateEngine(0, this.player.vehicle, false);
       this.sound.setListener(this.camera);
+      if (this.player2) this.cameraRig2.update(this.player2, dt);
       this.hud.update(this.hudState(rawInput, true, { screen: null, range: null, target: 'none' }, null));
-      this.renderer.render(this.moonBase.scene, this.camera);
+      this.renderViews(this.moonBase.scene);
       this.hud.recordFrame();
       return;
     }
@@ -2718,6 +2791,23 @@ export class Game {
       : riding
         ? { ...rawInput, throttle: 0, steer: 0, moveX: 0, moveY: 0, resetPressed: false }
         : rawInput;
+
+    if (this.player2 && player2Input) {
+      const p2 = this.player2;
+      if (player2Input.mapTogglePressed) this.hud.toggleBigMap();
+      if (player2Input.cameraTogglePressed) this.cameraRig2.toggle();
+      if (player2Input.resetPressed) {
+        const base = this.familyBases.find((b) => b.info === nearestFriendlyBase(p2.position.x, p2.position.z));
+        if (this.fortHome) p2.teleport(this.fortHome.x + 5, this.fortHome.z, this.fortHome.yaw);
+        else if (base) p2.teleport(base.info.x + 5, base.info.z, base.spawnYaw);
+      }
+      const p2step = p2.step(inSequence ? { ...player2Input, throttle: 0, steer: 0, moveX: 0, moveY: 0, aimYawDelta: 0, aimPitchDelta: 0, firing: false } : player2Input, dt);
+      if (p2step) this.fire(p2, p2step);
+      if (!inSequence && player2Input.jamFiring && p2.vehicle !== 'motorbike') {
+        const glob = p2.tryJam();
+        if (glob) this.jam.fire(glob.origin, glob.direction, JAM_SPEED * glob.speedScale * (p2.vehicle === 'tank' ? TANK_JAM_SPEED_SCALE : 1), true);
+      }
+    }
 
     if (!inSequence) {
       if (input.cameraTogglePressed) this.cameraRig.toggle();
@@ -2855,7 +2945,7 @@ export class Game {
     // Who's shooting at whom this frame.
     const enemyTargets = this.enemyTargets();
     const enemyTargetPositions = enemyTargets.map((t) => t.position);
-    const playerSidePositions = this.playerSideTargets().map((t) => t.position);
+    const playerSidePositions = [...this.playerSideTargets().map((t) => t.position), ...(this.player2 ? [this.player2.position] : [])];
 
     for (const slot of this.enemySlots) {
       if (slot.tank) {
@@ -3015,11 +3105,17 @@ export class Game {
     if (cinematic) {
       this.player.setTurretHidden(false);
       this.aimGuide.setVisible(false);
+      if (this.player2) this.cameraRig2.update(this.player2, dt);
     } else {
       this.cameraRig.setAerial(this.player.isChopper);
       this.cameraRig.setJumpView(this.player.inRocketJump);
       this.cameraRig.setRideView(this.tanker?.riding ?? false);
       this.cameraRig.update(this.player, dt);
+      if (this.player2) {
+        this.cameraRig2.setAerial(this.player2.isChopper);
+        this.cameraRig2.setJumpView(this.player2.inRocketJump);
+        this.cameraRig2.update(this.player2, dt);
+      }
       aim = this.updateAim();
       if (this.player.vehicle !== 'motorbike' && (this.player.vehicle !== 'tank' ? this.missileCharge >= 1 : this.rocketCharge >= 1) && !this.rocketsDamaged) {
         const lock = this.findLockTarget();
@@ -3045,7 +3141,70 @@ export class Game {
     this.sound.setListener(this.camera);
 
     this.hud.update(this.hudState(input, cinematic, aim, lockScreen, aaLockScreen));
-    this.renderer.render(this.scene, this.camera);
+    this.player2Hud.textContent = this.player2
+      ? this.settings.player2Controller === -1
+        ? `P2  ${Math.ceil(this.player2.health)} / ${this.player2.maxHealth} · Arrows move · mouse aim · Num 0 fire · Num 1 jam · Num 9 camera · Del home`
+        : `P2  ${Math.ceil(this.player2.health)} / ${this.player2.maxHealth} · RT / A fire · LT jam · Y camera`
+      : '';
+    this.renderViews(this.scene);
     this.hud.recordFrame();
   };
+
+  private renderViews(scene: THREE.Scene): void {
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    this.renderer.setScissorTest(this.player2 !== null);
+    this.player2Crosshair.style.left = this.settings.splitOrientation === 'vertical' ? '75%' : '50%';
+    this.player2Crosshair.style.top = this.settings.splitOrientation === 'vertical' ? '50%' : '75%';
+    this.player2Hud.style.top = this.settings.splitOrientation === 'vertical' ? '12px' : 'calc(50% + 12px)';
+    this.splitDivider.style.left = this.settings.splitOrientation === 'vertical' ? '50%' : '0';
+    this.splitDivider.style.top = this.settings.splitOrientation === 'vertical' ? '0' : '50%';
+    this.splitDivider.style.width = this.settings.splitOrientation === 'vertical' ? '1px' : '100%';
+    this.splitDivider.style.height = this.settings.splitOrientation === 'vertical' ? '100%' : '1px';
+    if (!this.player2) {
+      this.camera.aspect = w / h;
+      this.camera.updateProjectionMatrix();
+      this.renderer.setViewport(0, 0, w, h);
+      this.player.setTurretHidden(this.cameraRig.mode === 'first');
+      this.renderer.render(scene, this.camera);
+      return;
+    }
+    this.renderer.setScissor(0, 0, w, h);
+    this.renderer.clear();
+    if (this.settings.splitOrientation === 'vertical') {
+      const half = Math.floor(w / 2);
+      this.camera.aspect = half / h;
+      this.camera2.aspect = (w - half) / h;
+      this.renderer.setViewport(0, 0, half, h);
+      this.renderer.setScissor(0, 0, half, h);
+      this.camera.updateProjectionMatrix();
+      this.player.setTurretHidden(this.cameraRig.mode === 'first');
+      this.player2?.setTurretHidden(false);
+      this.renderer.render(scene, this.camera);
+      this.renderer.setViewport(half, 0, w - half, h);
+      this.renderer.setScissor(half, 0, w - half, h);
+      this.camera2.updateProjectionMatrix();
+      this.player.setTurretHidden(false);
+      this.player2?.setTurretHidden(this.cameraRig2.mode === 'first');
+      this.renderer.render(scene, this.camera2);
+    } else {
+      const half = Math.floor(h / 2);
+      this.camera.aspect = w / (h - half);
+      this.camera2.aspect = w / half;
+      this.camera.updateProjectionMatrix();
+      this.renderer.setViewport(0, half, w, h - half);
+      this.renderer.setScissor(0, half, w, h - half);
+      this.player.setTurretHidden(this.cameraRig.mode === 'first');
+      this.player2?.setTurretHidden(false);
+      this.renderer.render(scene, this.camera);
+      this.camera2.updateProjectionMatrix();
+      this.renderer.setViewport(0, 0, w, half);
+      this.renderer.setScissor(0, 0, w, half);
+      this.player.setTurretHidden(false);
+      this.player2?.setTurretHidden(this.cameraRig2.mode === 'first');
+      this.renderer.render(scene, this.camera2);
+    }
+    this.player.setTurretHidden(this.cameraRig.mode === 'first');
+    this.player2?.setTurretHidden(this.cameraRig2.mode === 'first');
+  }
 }

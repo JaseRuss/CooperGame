@@ -3,6 +3,7 @@
 export type DriveStyle = 'warthog' | 'classic';
 export type AimSpeed = 'slow' | 'normal' | 'fast';
 export type GraphicsQuality = 'low' | 'balanced' | 'high';
+export type SplitOrientation = 'vertical' | 'horizontal';
 
 export const GRAPHICS_QUALITY: Record<GraphicsQuality, { pixelRatio: number; shadowSize: number }> = {
   low: { pixelRatio: 0.75, shadowSize: 0 },
@@ -28,6 +29,11 @@ export interface Settings {
   /** Off, Low, Medium or High. */
   musicVolume: Volume;
   sfxVolume: Volume;
+  /** Gamepad index, -1 for keyboard and mouse, -2 for automatic assignment. */
+  player1Controller: number;
+  /** Gamepad index, -1 for keyboard and mouse, -2 to disable the second player. */
+  player2Controller: number;
+  splitOrientation: SplitOrientation;
 }
 
 export type RideMinutes = 1 | 2 | 3 | 5;
@@ -50,6 +56,9 @@ export const DEFAULT_SETTINGS: Settings = {
   chopperMinutes: 3,
   musicVolume: 2,
   sfxVolume: 3,
+  player1Controller: -2,
+  player2Controller: -2,
+  splitOrientation: 'vertical',
 };
 
 /** Tidies a typed name: allowed characters only, trimmed, capped; blank falls back to `fallback`. */
@@ -79,7 +88,12 @@ export function loadSettings(): Settings {
       const graphicsQuality = saved.graphicsQuality === 'low' || saved.graphicsQuality === 'balanced' || saved.graphicsQuality === 'high'
         ? saved.graphicsQuality : DEFAULT_SETTINGS.graphicsQuality;
       const showFps = typeof saved.showFps === 'boolean' ? saved.showFps : DEFAULT_SETTINGS.showFps;
-      return { ...DEFAULT_SETTINGS, ...saved, buddyNames, jeepMinutes, chopperMinutes, musicVolume, sfxVolume, graphicsQuality, showFps };
+      const controller = (value: unknown, fallback: number) => typeof value === 'number' && Number.isInteger(value) && value >= -2 && value <= 15 ? value : fallback;
+      const player1Controller = controller(saved.player1Controller, DEFAULT_SETTINGS.player1Controller);
+      const player2Controller = controller(saved.player2Controller, DEFAULT_SETTINGS.player2Controller);
+      const splitOrientation = saved.splitOrientation === 'vertical' || saved.splitOrientation === 'horizontal' ? saved.splitOrientation : DEFAULT_SETTINGS.splitOrientation;
+      const duplicateInput = player2Controller === player1Controller && (player2Controller === -1 || player2Controller >= 0);
+      return { ...DEFAULT_SETTINGS, ...saved, buddyNames, jeepMinutes, chopperMinutes, musicVolume, sfxVolume, graphicsQuality, showFps, player1Controller, player2Controller: duplicateInput ? DEFAULT_SETTINGS.player2Controller : player2Controller, splitOrientation };
     }
   } catch {
     // Storage can be blocked (private windows, embedded previews); defaults are fine.
@@ -103,6 +117,32 @@ export interface OptionRow<K extends Exclude<keyof Settings, 'buddyNames'> = Exc
 }
 
 export const OPTION_ROWS: OptionRow[] = [
+  {
+    key: 'player1Controller',
+    label: 'Player 1 controls',
+    values: [
+      { value: -2, label: 'Automatic', hint: 'Use the keyboard and mouse, or the first controller that is connected.' },
+      { value: -1, label: 'Keyboard / mouse', hint: 'Assign keyboard and mouse to Player 1.' },
+      ...Array.from({ length: 8 }, (_, i) => ({ value: i, label: `Controller ${i + 1}`, hint: `Assign Controller ${i + 1} to Player 1.` })),
+    ],
+  },
+  {
+    key: 'player2Controller',
+    label: 'Player 2 controls',
+    values: [
+      { value: -2, label: 'Disabled', hint: 'Play solo. Choose a controller or keyboard and mouse to join.' },
+      { value: -1, label: 'Keyboard / mouse', hint: 'Assign keyboard and mouse to Player 2. Use arrow keys to move, mouse to aim, and number pad keys to fire and use controls.' },
+      ...Array.from({ length: 8 }, (_, i) => ({ value: i, label: `Controller ${i + 1}`, hint: `Assign Controller ${i + 1} to Player 2.` })),
+    ],
+  },
+  {
+    key: 'splitOrientation',
+    label: 'Split screen',
+    values: [
+      { value: 'vertical', label: 'Vertical', hint: 'Players appear side by side.' },
+      { value: 'horizontal', label: 'Horizontal', hint: 'Player 1 appears above Player 2.' },
+    ],
+  },
   {
     key: 'graphicsQuality',
     label: 'Graphics',
