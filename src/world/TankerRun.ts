@@ -32,7 +32,6 @@ export interface TankerHost {
   /** Takes a raider out: with a blast and a gag, or quietly. */
   remove(jeep: EnemyJeep, blast: boolean): void;
   explode(at: THREE.Vector3, size: number): void;
-  smoke(at: THREE.Vector3, rise: number): void;
   dust(at: THREE.Vector3): void;
   flash(origin: THREE.Vector3, direction: THREE.Vector3, scale: number): void;
   /** A round leaves a gun; `exclude` keeps it from hitting what it's fired from. */
@@ -106,8 +105,6 @@ const BULLET_SPEED = 220;
 const FUSE_SPEED = 15;
 const FUSE_MAX = 9;
 const GATE_INSET = 98;
-/** Extra upward speed on the exhaust smoke, so it climbs clear of the deck camera's view. */
-const STACK_SMOKE_RISE = 7;
 /** Raiders this close to a shell's burst are caught in it. */
 export const SHELL_SPLASH_RADIUS = 9;
 const DEMOLITION_GAP = 0.22;
@@ -154,7 +151,6 @@ export class TankerRun {
   private pieces: SetPiece[] = [];
   private readonly rng = mulberry32(1981);
   private smokeTimer = 0;
-  private stack = 0;
   private crushTimer = 0;
   private gunFire = [0, 0, 0, 0];
   private countdownShown = -1;
@@ -414,11 +410,6 @@ export class TankerRun {
     this.timer += dt;
     // The rig shakes and steams while it warms up.
     this.rig.root.position.y = this.garage.y + Math.sin(this.timer * 40) * 0.03;
-    this.smokeTimer -= dt;
-    if (this.smokeTimer <= 0) {
-      this.smokeTimer = 0.07;
-      this.stackSmoke();
-    }
     const left = Math.ceil(ASSEMBLE_TIME - this.timer);
     if (left !== this.countdownShown && left <= 3 && left > 0) {
       this.countdownShown = left;
@@ -446,7 +437,6 @@ export class TankerRun {
     this.smokeTimer -= dt;
     if (this.smokeTimer <= 0) {
       this.smokeTimer = 0.06;
-      this.stackSmoke();
       const tail = this.rig.root.localToWorld(new THREE.Vector3((Math.random() - 0.5) * 3, 0.3, 11));
       this.host.dust(tail);
     }
@@ -482,12 +472,6 @@ export class TankerRun {
     for (const raid of this.raiders) {
       if (!raid.jeep.isDestroyed && raid.jeep.position.distanceTo(at) < radius) raid.jeep.takeDamage(1000);
     }
-  }
-
-  /** A puff from one exhaust stack, taking them in turn. */
-  private stackSmoke(): void {
-    this.stack = 1 - this.stack;
-    this.host.smoke(this.rig.root.localToWorld(this.rig.stackTips[this.stack].clone()), STACK_SMOKE_RISE);
   }
 
   // ---------- explosions along the road ----------
@@ -772,11 +756,6 @@ export class TankerRun {
     rig.rotation.set(0, this.rigYaw, 0, 'YXZ');
     rig.updateMatrixWorld(true);
     this.rig.spin(this.speed * dt);
-    this.smokeTimer -= dt;
-    if (this.smokeTimer <= 0) {
-      this.smokeTimer = 0.05;
-      this.stackSmoke();
-    }
     this.crushTimer -= dt;
     if (this.crushTimer <= 0) {
       this.crushTimer = 0.2;

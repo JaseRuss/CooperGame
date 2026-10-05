@@ -115,7 +115,7 @@ export class TroopManager {
   update(
     dt: number,
     world: RAPIER.World,
-    playerPos: THREE.Vector3,
+    focus: THREE.Vector3[],
     targets: Record<Faction, THREE.Vector3[]>,
     onShot: (shot: Shot, faction: Faction) => void,
     air: Record<Faction, AirTarget[]> = { player: [], enemy: [] },
@@ -125,11 +125,11 @@ export class TroopManager {
     for (let q = this.squads.length - 1; q >= 0; q--) {
       const squad = this.squads[q];
       const foes = targets[squad.spawn.faction];
-      if (squad.spawn.march && !squad.spawn.march.arrived) this.advanceMarch(squad, squad.spawn.march, dt, playerPos, activeSq);
+      if (squad.spawn.march && !squad.spawn.march.arrived) this.advanceMarch(squad, squad.spawn.march, dt, focus, activeSq);
       for (let i = squad.soldiers.length - 1; i >= 0; i--) {
         const s = squad.soldiers[i];
         // Far-off soldiers stand still to save time, but zombies never stop coming.
-        if (s.isActive && !s.zombie && s.position.distanceToSquared(playerPos) > activeSq) continue;
+        if (s.isActive && !s.zombie && !focus.some((f) => s.position.distanceToSquared(f) <= activeSq)) continue;
         let target: THREE.Vector3 | null = null;
         let velocity: THREE.Vector3 | undefined;
         let nearest = Infinity;
@@ -181,8 +181,8 @@ export class TroopManager {
    * Moves a marching squad's anchor along its route, waiting while anyone in it is fighting (only
    * counting soldiers near the player: far-off ones aren't updated, so they'd never stop).
    */
-  private advanceMarch(squad: Squad, march: SquadMarch, dt: number, playerPos: THREE.Vector3, activeSq: number): void {
-    if (squad.soldiers.some((s) => s.engaged && s.position.distanceToSquared(playerPos) <= activeSq)) return;
+  private advanceMarch(squad: Squad, march: SquadMarch, dt: number, focus: THREE.Vector3[], activeSq: number): void {
+    if (squad.soldiers.some((s) => s.engaged && focus.some((f) => s.position.distanceToSquared(f) <= activeSq))) return;
     const anchor = squad.spawn.anchor;
     const target = march.route[march.next];
     const d = anchor.distanceTo(target);

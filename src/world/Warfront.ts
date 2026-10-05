@@ -76,11 +76,11 @@ export class Warfront {
     return this.besieged.has(base);
   }
 
-  update(dt: number, player: THREE.Vector3): WarNews[] {
+  update(dt: number, players: THREE.Vector3[]): WarNews[] {
     const news: WarNews[] = [];
     this.raidNewsTimer -= dt;
     const standing = this.enemyBases.filter((b) => !b.isDestroyed);
-    const home = nearestFriendlyBase(player.x, player.z);
+    const homes = players.map((p) => nearestFriendlyBase(p.x, p.z)).filter((h, i, all) => all.indexOf(h) === i);
 
     // Enemy raids on the family base nearest the player.
     this.enemyBases.forEach((base, i) => {
@@ -89,10 +89,11 @@ export class Warfront {
       if (this.raidTimers[i] > 0) return;
       this.raidTimers[i] = RAID_EVERY[0] + this.rng() * (RAID_EVERY[1] - RAID_EVERY[0]);
       if (this.marching('enemy') + RAID_SIZE > MAX_MARCHING) return;
-      this.launch(base.center, this.inside(home, base.center), 'enemy', ENEMY_ARMY_COLOR[base.army], RAID_SIZE, familyTitle(home));
+      const raided = homes[Math.floor(this.rng() * homes.length)];
+      this.launch(base.center, this.inside(raided, base.center), 'enemy', ENEMY_ARMY_COLOR[base.army], RAID_SIZE, familyTitle(raided));
       if (this.raidNewsTimer <= 0) {
         this.raidNewsTimer = RAID_NEWS_GAP;
-        news.push({ banner: false, text: `RAIDERS FROM ${baseTitle(base)} ARE HEADING FOR ${familyTitle(home)}!`, color: '#ff8a7a' });
+        news.push({ banner: false, text: `RAIDERS FROM ${baseTitle(base)} ARE HEADING FOR ${familyTitle(raided)}!`, color: '#ff8a7a' });
       }
     });
 
@@ -101,7 +102,8 @@ export class Warfront {
       this.allyTimer -= dt;
       if (this.allyTimer <= 0) {
         this.allyTimer = ALLY_EVERY;
-        this.sendAllies(new THREE.Vector3(home.x, 0, home.z), standing);
+        const sender = homes[Math.floor(this.rng() * homes.length)];
+        this.sendAllies(new THREE.Vector3(sender.x, 0, sender.z), standing);
       }
       for (const base of this.enemyBases) {
         if (!base.isDestroyed) continue;
@@ -128,7 +130,7 @@ export class Warfront {
     this.siegeTimer -= dt;
     if (this.siegeTimer <= 0) {
       this.siegeTimer = SIEGE_CHECK;
-      news.push(...this.checkSieges(home));
+      news.push(...this.checkSieges(homes));
     }
     return news;
   }
@@ -171,8 +173,8 @@ export class Warfront {
     this.marches.push({ spawn, faction, target, announced: false });
   }
 
-  /** Which family bases have raiders in them; the news when a siege starts or ends (big news if it's `home`). */
-  private checkSieges(home: FriendlyBase): WarNews[] {
+  /** Which family bases have raiders in them; the news when a siege starts or ends (big news for a base a player is at). */
+  private checkSieges(homes: FriendlyBase[]): WarNews[] {
     const news: WarNews[] = [];
     const raiders = this.troops.activeSoldiers('enemy');
     for (const base of FRIENDLY_BASES) {
@@ -182,7 +184,7 @@ export class Warfront {
         // The guards turn out to fight.
         this.troops.addSquad({ anchor: new THREE.Vector2(base.x, base.z), count: DEFENDERS, wanderRadius: 30, faction: 'player', color: ARMY_GREEN, holdWhile: null, once: true });
         news.push(
-          base === home
+          homes.includes(base)
             ? { banner: true, text: `${familyTitle(base)} IS UNDER ATTACK!`, sub: 'Raiders are in! Repairs there are stopped until you clear them out' }
             : { banner: false, text: `${familyTitle(base)} IS UNDER ATTACK!`, color: '#ff8a7a' },
         );
