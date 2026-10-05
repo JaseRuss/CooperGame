@@ -1603,14 +1603,19 @@ export class PrisonGame {
     const input = this.input.update(dt, p1Index, 1, this.settings.splitOrientation, this.player2 !== null && p2Index === -1, pads, lockedMousePlayer);
     const p2Input = p2Raw ?? (this.player2 ? this.input.update(dt, p2Index, 2, this.settings.splitOrientation, false, pads, lockedMousePlayer) : null);
 
+    const kbMenu = this.input.keyboardMenu();
+    input.mapTogglePressed ||= kbMenu.mapTogglePressed;
     if (this.hud.paused) {
       this.sound.updateEngine(0, 'chopper', false);
-      const menu = p2Input ? {
-        up: input.menu.up || p2Input.menu.up, down: input.menu.down || p2Input.menu.down,
-        left: input.menu.left || p2Input.menu.left, right: input.menu.right || p2Input.menu.right,
-        confirm: input.menu.confirm || p2Input.menu.confirm, back: input.menu.back || p2Input.menu.back,
-        options: input.menu.options || p2Input.menu.options,
-      } : input.menu;
+      const menu = {
+        up: input.menu.up || kbMenu.menu.up || (p2Input?.menu.up ?? false),
+        down: input.menu.down || kbMenu.menu.down || (p2Input?.menu.down ?? false),
+        left: input.menu.left || kbMenu.menu.left || (p2Input?.menu.left ?? false),
+        right: input.menu.right || kbMenu.menu.right || (p2Input?.menu.right ?? false),
+        confirm: input.menu.confirm || kbMenu.menu.confirm || (p2Input?.menu.confirm ?? false),
+        back: input.menu.back || kbMenu.menu.back || (p2Input?.menu.back ?? false),
+        options: input.menu.options || kbMenu.menu.options || (p2Input?.menu.options ?? false),
+      };
       this.hud.handleMenu(menu);
       if ((input.mapTogglePressed || p2Input?.mapTogglePressed) && this.hud.paused) this.hud.toggleBigMap();
       this.hud.update(this.hudState(input));
