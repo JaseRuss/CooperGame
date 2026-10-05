@@ -162,6 +162,32 @@ export class InputManager {
     return out;
   }
 
+  private readonly kbMenuLatch = new Map<keyof MenuInput, boolean>();
+  private kbMapLatch = false;
+
+  /**
+   * Keyboard menu navigation and the pause key, independent of which player owns the keyboard
+   * (or whether both players are on pads), so the keyboard can always drive the pause screen.
+   * Call once per frame.
+   */
+  keyboardMenu(): { menu: MenuInput; mapTogglePressed: boolean } {
+    const k = (...codes: string[]) => codes.some((c) => this.keys.has(c));
+    const typing = this.textEntry;
+    const held: MenuInput = {
+      up: typing ? k('ArrowUp') : k('ArrowUp', 'KeyW'),
+      down: typing ? k('ArrowDown') : k('ArrowDown', 'KeyS'),
+      left: typing ? k('ArrowLeft') : k('ArrowLeft', 'KeyA'),
+      right: typing ? k('ArrowRight') : k('ArrowRight', 'KeyD'),
+      confirm: typing ? k('Enter') : k('Enter', 'Space', 'Numpad0'),
+      back: typing ? k('Escape') : k('Escape', 'Backspace', 'NumpadSubtract'),
+      options: typing ? false : k('KeyO', 'NumpadAdd'),
+    };
+    const mapHeld = !typing && k('KeyM', 'NumpadEnter');
+    const mapTogglePressed = mapHeld && !this.kbMapLatch;
+    this.kbMapLatch = mapHeld;
+    return { menu: this.menuEdges(held, this.kbMenuLatch), mapTogglePressed };
+  }
+
   /** Poll device state and produce a single frame's InputState. Call once per frame. */
   update(
     dt: number,

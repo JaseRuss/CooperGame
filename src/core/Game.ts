@@ -412,6 +412,8 @@ export class Game {
   private landmarks!: LandmarkSet;
   private troops!: TroopManager;
   private player!: PlayerTank;
+  /** Player 1's tank; `player` is swapped to player 2 while its HUD and abilities run. */
+  private player1!: PlayerTank;
   private player2: PlayerTank | null = null;
   private player2Runtime: PlayerRuntimeSnapshot | null = null;
   private pendingTeamRocketCharge = 0;
@@ -713,6 +715,7 @@ export class Game {
     const home = this.familyBases[0];
     const start = this.fortHome ?? { x: home.info.x, z: home.info.z, yaw: home.spawnYaw };
     this.player = new PlayerTank(this.world, start.x, start.z, start.yaw);
+    this.player1 = this.player;
     this.scene.add(this.player.root);
     this.hitRegistry.register(this.player.physicsCollider, { kind: 'tank', tank: this.player });
     if (MISSION === 1) this.setupTanker();
@@ -1569,7 +1572,8 @@ export class Game {
     this.rocketCharge = 0;
     this.player.setRocketReady(false);
     // On the bomb tanker the camera stays with the rig: cutting away mid-ride is disorienting.
-    if (this.tanker?.riding) {
+    // In co-op there's no rocket cam either, since it would take over both players' screens.
+    if (this.tanker?.riding || this.player2) {
       this.rideRockets.push(rocket);
       return;
     }
@@ -1972,8 +1976,7 @@ export class Game {
       this.hud.showBanner('AIRBASE CLEARED!', 'Every enemy jet is down · allied paratroopers will drop in when you attack a base');
       this.sound.music.stinger();
     }
-    // The base being attacked: the nearest standing one within reach of the player.
-    const p = this.player.position;
+    // The base being attacked: the nearest standing one within reach of either player.
     const targets: { key: object; x: number; z: number; radius: number }[] = this.enemyBases
       .filter((b) => !b.isDestroyed)
       .map((b) => ({ key: b, x: b.center.x, z: b.center.z, radius: ENEMY_BASE_HALF }));
@@ -1981,12 +1984,16 @@ export class Game {
       targets.push({ key: this.fortress, x: this.fortress.center.x, z: this.fortress.center.z, radius: FORTRESS_HALF });
     }
     let target: (typeof targets)[number] | null = null;
+    let attacker: THREE.Vector3 = this.player1.position;
     let best = Infinity;
-    for (const t of targets) {
-      const d = Math.hypot(t.x - p.x, t.z - p.z);
-      if (d < t.radius + PARA_TRIGGER_MARGIN && d < best) {
-        best = d;
-        target = t;
+    for (const tank of this.player2 ? [this.player1, this.player2] : [this.player1]) {
+      for (const t of targets) {
+        const d = Math.hypot(t.x - tank.position.x, t.z - tank.position.z);
+        if (d < t.radius + PARA_TRIGGER_MARGIN && d < best) {
+          best = d;
+          target = t;
+          attacker = tank.position;
+        }
       }
     }
     if (!target) {
@@ -1998,7 +2005,7 @@ export class Game {
     if (this.paraTimer > 0 || waves >= PARA_MAX_WAVES) return;
     this.paraTimer = PARA_INTERVAL;
     this.paraWaves.set(target.key, waves + 1);
-    this.dropParatroopers(target, p);
+    this.dropParatroopers(target, attacker);
   }
 
   /** A squad of green paratroopers comes down ahead of the player, toward the base being attacked. */
@@ -2259,11 +2266,11 @@ export class Game {
     }
   }
 
-  private nearestEnemyBase(onlyStanding: boolean): { base: EnemyBase; distance: number } | null {
+  private nearestEnemyBase(onlyStanding: boolean, from: PlayerTank = this.player): { base: EnemyBase; distance: number } | null {
     let best: { base: EnemyBase; distance: number } | null = null;
     for (const base of this.enemyBases) {
       if (onlyStanding && base.isDestroyed) continue;
-      const d = Math.hypot(base.center.x - this.player.position.x, base.center.z - this.player.position.z);
+      const d = Math.hypot(base.center.x - from.position.x, base.center.z - from.position.z);
       if (!best || d < best.distance) best = { base, distance: d };
     }
     return best;
@@ -2739,24 +2746,18 @@ export class Game {
     return markers;
   }
 
-  private mapView(player: PlayerTank = this.player): MapView {
+  private mapView(player: PlayerTank = this.player1): MapView {
     const now = performance.now();
     const paused = this.hud.paused;
     if (this.cachedMapView && paused === this.mapWasPaused && (paused || now < this.nextMapUpdate)) return this.personalizeMapView(this.cachedMapView, player);
     this.mapWasPaused = paused;
     this.nextMapUpdate = now + 100;
-    const base = this.nearestEnemyBase(true);
     const f = this.fortress;
-    // Point at the nearest standing base; once they're all down, at the Fortress.
-    const objective = base
-      ? { x: base.base.center.x, z: base.base.center.z, name: base.base.name }
-      : f.isDestroyed
-        ? null
-        : { x: f.center.x, z: f.center.z, name: f.name };
+    const objective = this.mapObjective(this.player1);
     this.cachedMapView = {
-      playerX: this.player.position.x,
-      playerZ: this.player.position.z,
-      playerYaw: this.player.yaw,
+      playerX: this.player1.position.x,
+      playerZ: this.player1.position.z,
+      playerYaw: this.player1.yaw,
       partner: this.player2 ? { x: this.player2.position.x, z: this.player2.position.z, name: 'P2' } : null,
       friendlyBases: FRIENDLY_BASES,
       enemyBases: this.enemyBases.map((b) => ({ x: b.center.x, z: b.center.z, name: b.name, title: b.title, destroyed: b.isDestroyed })),
@@ -2764,7 +2765,7 @@ export class Game {
       markers: this.collectMarkers(),
       objective,
       home: (() => {
-        const h = nearestFriendlyBase(this.player.position.x, this.player.position.z);
+        const h = nearestFriendlyBase(this.player1.position.x, this.player1.position.z);
         return { x: h.x, z: h.z, name: h.name };
       })(),
       fortress: { x: f.center.x, z: f.center.z, name: f.name, title: f.title, locked: f.locked, destroyed: f.isDestroyed, friendly: ZOMBIES },
@@ -2779,8 +2780,19 @@ export class Game {
     return this.personalizeMapView(this.cachedMapView, player);
   }
 
+  /** Point at the nearest standing base; once they're all down, at the Fortress. */
+  private mapObjective(from: PlayerTank): MapView['objective'] {
+    const base = this.nearestEnemyBase(true, from);
+    const f = this.fortress;
+    return base
+      ? { x: base.base.center.x, z: base.base.center.z, name: base.base.name }
+      : f.isDestroyed
+        ? null
+        : { x: f.center.x, z: f.center.z, name: f.name };
+  }
+
   private personalizeMapView(view: MapView, player: PlayerTank): MapView {
-    if (player === this.player) return view;
+    if (player === this.player1) return view;
     if (this.cachedPlayer2MapSource === view && this.cachedPlayer2MapView) return this.cachedPlayer2MapView;
     const home = nearestFriendlyBase(player.position.x, player.position.z);
     this.cachedPlayer2MapSource = view;
@@ -2791,6 +2803,7 @@ export class Game {
       playerYaw: player.yaw,
       partner: { x: view.playerX, z: view.playerZ, name: 'P1' },
       home: { x: home.x, z: home.z, name: home.name },
+      objective: this.mapObjective(player),
     };
     return this.cachedPlayer2MapView;
   }
@@ -2929,17 +2942,20 @@ export class Game {
     const rawInput = this.input.update(dt, p1Index, 1, this.settings.splitOrientation, this.player2 !== null && p2Index === -1, pads, lockedMousePlayer);
     const player2Input = p2First ? secondInput : this.player2 ? this.input.update(dt, p2Index, 2, this.settings.splitOrientation, false, pads, lockedMousePlayer) : null;
 
+    // The keyboard can always open and drive the pause screen, even when both players are on pads.
+    const kbMenu = this.input.keyboardMenu();
+    rawInput.mapTogglePressed ||= kbMenu.mapTogglePressed;
+
     // Full map doubles as the pause screen: nothing moves while it's open.
     if (this.hud.paused) {
       this.hud.handleMenu({
-        ...rawInput.menu,
-        up: rawInput.menu.up || (player2Input?.menu.up ?? false),
-        down: rawInput.menu.down || (player2Input?.menu.down ?? false),
-        left: rawInput.menu.left || (player2Input?.menu.left ?? false),
-        right: rawInput.menu.right || (player2Input?.menu.right ?? false),
-        confirm: rawInput.menu.confirm || (player2Input?.menu.confirm ?? false),
-        back: rawInput.menu.back || (player2Input?.menu.back ?? false),
-        options: rawInput.menu.options || (player2Input?.menu.options ?? false),
+        up: rawInput.menu.up || kbMenu.menu.up || (player2Input?.menu.up ?? false),
+        down: rawInput.menu.down || kbMenu.menu.down || (player2Input?.menu.down ?? false),
+        left: rawInput.menu.left || kbMenu.menu.left || (player2Input?.menu.left ?? false),
+        right: rawInput.menu.right || kbMenu.menu.right || (player2Input?.menu.right ?? false),
+        confirm: rawInput.menu.confirm || kbMenu.menu.confirm || (player2Input?.menu.confirm ?? false),
+        back: rawInput.menu.back || kbMenu.menu.back || (player2Input?.menu.back ?? false),
+        options: rawInput.menu.options || kbMenu.menu.options || (player2Input?.menu.options ?? false),
       });
       if ((rawInput.mapTogglePressed || player2Input?.mapTogglePressed) && this.hud.paused) this.hud.toggleBigMap();
       this.sound.updateEngine(0, this.player.vehicle, false);
@@ -3273,6 +3289,11 @@ export class Game {
     this.updateFlamePits(dt);
     this.overrun?.update(dt, this.player.position, (p, r) => this.impacts.chimneyPuff(p, r));
     this.addRocketCharge(this.troops.runOver(this.player.position, RUN_OVER_RADIUS, 'player') * CHARGE_PER_TROOP);
+    if (this.player2) {
+      const p2 = this.player2;
+      const ran = this.troops.runOver(p2.position, RUN_OVER_RADIUS, 'player') * CHARGE_PER_TROOP;
+      if (ran > 0) this.withPlayerContext(p2, this.camera2, this.cameraRig2, () => this.addRocketCharge(ran));
+    }
 
     // Trees go over when a tank reaches them (or the chopper comes down low over them).
     const playerLow = this.player.heightAboveGround < CHOPPER_LOW;
