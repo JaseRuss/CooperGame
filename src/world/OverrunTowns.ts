@@ -99,7 +99,7 @@ export class OverrunTowns {
     return { group, tongues, on, size, phase: rng() * 10, smoke: rng() * SMOKE_INTERVAL };
   }
 
-  update(dt: number, player: THREE.Vector3, puff: (point: THREE.Vector3, radius: number) => void): void {
+  update(dt: number, players: THREE.Vector3[], puff: (point: THREE.Vector3, radius: number) => void): void {
     this.time += dt;
     for (const f of this.fires) {
       if (f.on?.destroyed) {
@@ -115,7 +115,7 @@ export class OverrunTowns {
       f.smoke -= dt;
       if (f.smoke <= 0) {
         f.smoke = SMOKE_INTERVAL;
-        if (f.group.position.distanceTo(player) < SMOKE_RANGE) {
+        if (players.some((p) => f.group.position.distanceTo(p) < SMOKE_RANGE)) {
           puff(f.group.position.clone().add(new THREE.Vector3(0, 2.6 * f.size, 0)), 0.9 * f.size);
         }
       }

@@ -374,6 +374,8 @@ export class Game {
   private readonly input: InputManager;
   private readonly hitRegistry = new HitRegistry();
   private cameraRig: CameraRig;
+  /** Player 1's rig; `cameraRig` is swapped to player 2's while its HUD and abilities run. */
+  private readonly cameraRig1: CameraRig;
   private readonly camera2: THREE.PerspectiveCamera;
   private readonly cameraRig2: CameraRig;
   private readonly hud: HUD;
@@ -415,6 +417,7 @@ export class Game {
   /** Player 1's tank; `player` is swapped to player 2 while its HUD and abilities run. */
   private player1!: PlayerTank;
   private player2: PlayerTank | null = null;
+  private wakeTimer2 = 0;
   private player2Runtime: PlayerRuntimeSnapshot | null = null;
   private pendingTeamRocketCharge = 0;
   private readonly player2Hud: HUD;
@@ -532,6 +535,7 @@ export class Game {
     // Skip scenery beyond the opaque fog. Night skies also contain distant, unfogged flares.
     this.camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, DARK ? 4000 : (JUNGLE ? JUNGLE_FOG_FAR : DAY_FOG_FAR) + 60);
     this.cameraRig = new CameraRig(this.camera);
+    this.cameraRig1 = this.cameraRig;
     this.camera2 = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, DARK ? 4000 : (JUNGLE ? JUNGLE_FOG_FAR : DAY_FOG_FAR) + 60);
     this.cameraRig2 = new CameraRig(this.camera2);
     this.input = new InputManager(this.renderer.domElement);
@@ -853,7 +857,6 @@ export class Game {
       },
       remove: (jeep, blast) => this.removeRaider(jeep, blast),
       explode: (at, size) => this.explode(at, size, 'player'),
-      smoke: (at, rise) => this.impacts.trailPuff(at, rise),
       dust: (at) => this.impacts.dustPuff(at),
       flash: (origin, direction, scale) => this.impacts.muzzleFlash(origin, direction, scale),
       tracer: (origin, direction, faction, exclude) => this.fireBullet({ origin, direction }, exclude, faction),
@@ -1199,6 +1202,10 @@ export class Game {
     // During rocket cam the camera is near the blast, not the tank.
     const camDist = point.distanceTo(this.rocketSeq ? this.camera.position : this.player.position);
     this.cameraRig.addShake((size * 0.9) / Math.max(1, camDist / 12));
+    // The other player's screen shakes too (the context's own rig was handled above).
+    const other = this.player === this.player2 ? this.player1 : this.player2;
+    const otherRig = this.player === this.player2 ? this.cameraRig1 : this.cameraRig2;
+    if (other) otherRig.addShake((size * 0.9) / Math.max(1, point.distanceTo(other.position) / 12));
   }
 
   /** Anyone lounging in the moat near a blast or a shell's splash goes in, with a splash of his own. */
@@ -1814,7 +1821,8 @@ export class Game {
       this.missiles.splice(i, 1);
     }
     for (let i = this.rideRockets.length - 1; i >= 0; i--) {
-      const hit = this.rideRockets[i].update(dt, this.world, (p) => this.impacts.trailPuff(p));
+      // No smoke trail behind the rockets fired from the bomb tanker.
+      const hit = this.rideRockets[i].update(dt, this.world, this.tanker?.riding ? () => {} : (p) => this.impacts.trailPuff(p));
       if (!hit) continue;
       this.rocketBlast(hit);
       this.rideRockets.splice(i, 1);
@@ -2449,7 +2457,7 @@ export class Game {
     if (this.escapeLeft !== null && this.launchPad) {
       this.escapeLeft = Math.max(0, this.escapeLeft - dt);
       const pad = this.launchPad.position;
-      if (Math.hypot(this.player.position.x - pad.x, this.player.position.z - pad.z) < PAD_REACH) this.startEnding('made-it');
+      if (this.allPlayers().some((p) => Math.hypot(p.position.x - pad.x, p.position.z - pad.z) < PAD_REACH)) this.startEnding('made-it');
       else if (this.escapeLeft <= 0) this.startEnding('late');
     }
   }
@@ -2746,6 +2754,11 @@ export class Game {
     return markers;
   }
 
+  /** Both local players (player 1 first), regardless of which one the context is currently swapped to. */
+  private allPlayers(): PlayerTank[] {
+    return this.player2 ? [this.player1, this.player2] : [this.player1];
+  }
+
   private mapView(player: PlayerTank = this.player1): MapView {
     const now = performance.now();
     const paused = this.hud.paused;
@@ -3024,8 +3037,32 @@ export class Game {
           : riding
             ? { ...player2Input, throttle: 0, steer: 0, moveX: 0, moveY: 0, resetPressed: false }
             : player2Input;
+        const p2before = p2.position.clone();
         const p2step = p2.step(p2Control, dt);
         if (p2step) this.fire(p2, p2step);
+        if (p2.vehicle === 'motorbike') {
+          this.bikeDustTimer = Math.max(0, this.bikeDustTimer - dt);
+          if (p2.heightAboveGround < MOTORBIKE_AIRBORNE_HEIGHT && this.bikeDustTimer <= 0) {
+            const displacement = p2.position.clone().sub(p2before);
+            const velocity = displacement.length() / Math.max(dt, 0.001);
+            if (velocity > 6) {
+              const travelDirection = displacement.normalize();
+              const point = p2.position.clone().addScaledVector(travelDirection, -1.55);
+              point.y = surfaceHeightAt(point.x, point.z) + 0.06;
+              if (waterDepthAt(point.x, point.z) <= 0.05) this.impacts.bikeDust(point, Math.min(1, velocity / 45), travelDirection.negate());
+              this.bikeDustTimer = 0.065;
+            }
+          }
+        }
+        // As for player 1: a chopper or rocket-jumping bike can't get into the locked Fortress.
+        this.fortressWarning -= dt;
+        if ((p2.isChopper || p2.vehicle === 'motorbike') && this.fortress.locked && this.fortress.contains(p2.position.x, p2.position.z) && !this.fortress.contains(p2before.x, p2before.z)) {
+          p2.holdAt(p2before.x, p2before.z);
+          if (this.fortressWarning <= 0) {
+            this.hud.showCallout('THE FORTRESS IS LOCKED!', '#ffd24a');
+            this.fortressWarning = 2;
+          }
+        }
         if (!inSequence && player2Input.firing && p2.vehicle !== 'tank') {
           const round = p2.tryRapidFire();
           if (round && p2.vehicle === 'motorbike') {
@@ -3241,7 +3278,8 @@ export class Game {
         this.removeBuddy(buddy);
         continue;
       }
-      const shot = buddy.think(dt, this.world, this.player, allyTargets);
+      const leader = this.allPlayers().reduce((a, b) => (a.position.distanceToSquared(buddy.position) <= b.position.distanceToSquared(buddy.position) ? a : b));
+      const shot = buddy.think(dt, this.world, leader, allyTargets);
       if (shot) this.fire(buddy, shot);
     }
     for (const slot of this.redSlots) {
@@ -3268,13 +3306,13 @@ export class Game {
     }
     // The enemy's anti-aircraft goes after your choppers: the buddy's, and yours once it's up.
     const choppers: Tank[] = this.buddies.filter((b) => b.flying && !b.isDestroyed);
-    if (this.player.isChopper && this.player.heightAboveGround > CHOPPER_LOW * 2) choppers.push(this.player);
+    for (const p of this.allPlayers()) if (p.isChopper && p.heightAboveGround > CHOPPER_LOW * 2) choppers.push(p);
     this.antiAir.track(choppers, dt);
     this.antiAir.updateGuns(dt, this.enemyBases.flatMap((b) => (b.aaGun ? [b.aaGun] : [])));
     this.troops.update(
       dt,
       this.world,
-      this.player.position,
+      this.allPlayers().map((p) => p.position),
       { enemy: enemyTargetPositions, player: playerSidePositions },
       (shot, faction) => {
         if (shot.melee) this.zombieBlow(shot.origin, shot.melee);
@@ -3287,7 +3325,7 @@ export class Game {
     this.aaWarning -= dt;
     if (this.waves) this.updateLastStand(dt, rawInput.menu.confirm);
     this.updateFlamePits(dt);
-    this.overrun?.update(dt, this.player.position, (p, r) => this.impacts.chimneyPuff(p, r));
+    this.overrun?.update(dt, this.allPlayers().map((p) => p.position), (p, r) => this.impacts.chimneyPuff(p, r));
     this.addRocketCharge(this.troops.runOver(this.player.position, RUN_OVER_RADIUS, 'player') * CHARGE_PER_TROOP);
     if (this.player2) {
       const p2 = this.player2;
@@ -3297,7 +3335,7 @@ export class Game {
 
     // Trees go over when a tank reaches them (or the chopper comes down low over them).
     const playerLow = this.player.heightAboveGround < CHOPPER_LOW;
-    const tankPositions = [...(playerLow ? [this.player] : []), ...this.buddies.filter((b) => !b.flying), ...this.enemySlots.flatMap((slot) => slot.tank ? [slot.tank] : []), ...this.redSlots.flatMap((slot) => slot.tank ? [slot.tank] : [])]
+    const tankPositions = [...this.allPlayers().filter((p) => p.heightAboveGround < CHOPPER_LOW), ...this.buddies.filter((b) => !b.flying), ...this.enemySlots.flatMap((slot) => slot.tank ? [slot.tank] : []), ...this.redSlots.flatMap((slot) => slot.tank ? [slot.tank] : [])]
       .filter((tank) => !tank.isDestroyed)
       .map((tank) => tank.position);
     if (this.tanker) tankPositions.push(...this.tanker.plowPoints());
@@ -3310,7 +3348,8 @@ export class Game {
       smoke: (p) => this.impacts.trailPuff(p),
       thud: (p) => {
         for (let i = 0; i < 3; i++) this.impacts.dustPuff(p);
-        this.cameraRig.addShake(0.25 / Math.max(1, p.distanceTo(this.player.position) / 15));
+        this.cameraRig.addShake(0.25 / Math.max(1, p.distanceTo(this.player1.position) / 15));
+        if (this.player2) this.cameraRig2.addShake(0.25 / Math.max(1, p.distanceTo(this.player2.position) / 15));
       },
       splash: (p) => this.impacts.splash(p, 0.8),
       burst: (p) => {
@@ -3331,7 +3370,7 @@ export class Game {
 
     // The war around you: raids on your bases, and your squads going after theirs.
     if (this.warfront) {
-      for (const n of this.warfront.update(dt, this.player.position)) {
+      for (const n of this.warfront.update(dt, this.allPlayers().map((p) => p.position))) {
         if (n.banner) this.hud.showBanner(n.text, n.sub ?? '');
         else this.hud.showCallout(n.text, n.color ?? '#ffd24a');
       }
@@ -3378,8 +3417,19 @@ export class Game {
         if (this.damageBoost === 0) this.hud.showCallout('DOUBLE DAMAGE WORE OFF', '#eef3f8');
       });
     }
-    const repairingAt = insideBase && !besieged && this.player.health < this.player.maxHealth ? home : null;
-    for (const fb of this.familyBases) fb.camp.update(dt, fb.info === repairingAt, this.camera.position, this.player.position);
+    const repairingAt = new Set<unknown>();
+    if (insideBase && !besieged && this.player.health < this.player.maxHealth) repairingAt.add(home);
+    if (this.player2) {
+      const p2Home = nearestFriendlyBase(this.player2.position.x, this.player2.position.z);
+      if (this.atHome(this.player2.position) && !(this.warfront?.isBesieged(p2Home) ?? false) && this.player2.health < this.player2.maxHealth) repairingAt.add(p2Home);
+    }
+    for (const fb of this.familyBases) {
+      // The bay walls fade for whichever player is nearer.
+      const viewer = this.player2 && Math.hypot(this.player2.position.x - fb.info.x, this.player2.position.z - fb.info.z) < Math.hypot(this.player1.position.x - fb.info.x, this.player1.position.z - fb.info.z)
+        ? { camera: this.camera2, tank: this.player2 }
+        : { camera: this.camera, tank: this.player1 };
+      fb.camp.update(dt, repairingAt.has(fb.info), viewer.camera.position, viewer.tank.position);
+    }
     this.landmarks.update(dt);
     for (const p of this.moat.update(dt)) this.impacts.splash(p, 0.35);
 
@@ -3392,6 +3442,15 @@ export class Game {
       bow.y = this.player.position.y;
       this.impacts.splash(bow, 0.3);
     }
+    if (this.player2 && this.wakeTimer2 <= 0 && player2Input && this.player2.heightAboveGround < CHOPPER_LOW
+      && Math.abs(player2Input.throttle) + Math.hypot(player2Input.moveX, player2Input.moveY) > 0.1
+      && waterDepthAt(this.player2.position.x, this.player2.position.z) > 0.3) {
+      this.wakeTimer2 = 0.12;
+      const bow = this.player2.position.clone().addScaledVector(this.player2.forward, 2.2);
+      bow.y = this.player2.position.y;
+      this.impacts.splash(bow, 0.3);
+    }
+    this.wakeTimer2 -= dt;
 
     const cinematic = this.updateEnding(dt) || this.updateOwnedRocketSequence(dt) || this.updateTankerCamera(dt);
     let aim: ReturnType<Game['updateAim']> = { screen: null, range: null, target: 'none' };
@@ -3452,6 +3511,15 @@ export class Game {
     this.hud.recordFrame();
   };
 
+  /** Renders one view with the shadow-casting light centred on that player, so both screens get shadows. */
+  private renderEye(scene: THREE.Scene, camera: THREE.PerspectiveCamera, tank: PlayerTank): void {
+    this.sun.position.copy(tank.position).add(this.sunOffset);
+    this.sun.target.position.copy(tank.position);
+    this.sun.target.updateMatrixWorld();
+    this.renderer.shadowMap.needsUpdate = true;
+    this.renderer.render(scene, camera);
+  }
+
   private renderViews(scene: THREE.Scene): void {
     const w = window.innerWidth;
     const h = window.innerHeight;
@@ -3474,7 +3542,7 @@ export class Game {
       this.aimGuide.setVisible(showGuides);
       this.aimGuide2.setVisible(false);
       this.player.setTurretHidden(this.cameraRig.mode === 'first');
-      this.renderer.render(scene, this.camera);
+      this.renderEye(scene, this.camera, this.player1);
       return;
     }
     if (this.settings.splitOrientation === 'vertical') {
@@ -3488,7 +3556,7 @@ export class Game {
       this.aimGuide2.setVisible(false);
       this.player.setTurretHidden(this.cameraRig.mode === 'first');
       this.player2?.setTurretHidden(false);
-      this.renderer.render(scene, this.camera);
+      this.renderEye(scene, this.camera, this.player1);
       this.renderer.setViewport(half, 0, w - half, h);
       this.renderer.setScissor(half, 0, w - half, h);
       this.camera2.updateProjectionMatrix();
@@ -3496,7 +3564,7 @@ export class Game {
       this.aimGuide2.setVisible(showGuides);
       this.player.setTurretHidden(false);
       this.player2?.setTurretHidden(this.cameraRig2.mode === 'first');
-      this.renderer.render(scene, this.camera2);
+      this.renderEye(scene, this.camera2, this.player2!);
     } else {
       const half = Math.floor(h / 2);
       this.camera.aspect = w / (h - half);
@@ -3508,7 +3576,7 @@ export class Game {
       this.aimGuide2.setVisible(false);
       this.player.setTurretHidden(this.cameraRig.mode === 'first');
       this.player2?.setTurretHidden(false);
-      this.renderer.render(scene, this.camera);
+      this.renderEye(scene, this.camera, this.player1);
       this.camera2.updateProjectionMatrix();
       this.renderer.setViewport(0, 0, w, half);
       this.renderer.setScissor(0, 0, w, half);
@@ -3516,7 +3584,7 @@ export class Game {
       this.aimGuide2.setVisible(showGuides);
       this.player.setTurretHidden(false);
       this.player2?.setTurretHidden(this.cameraRig2.mode === 'first');
-      this.renderer.render(scene, this.camera2);
+      this.renderEye(scene, this.camera2, this.player2!);
     }
     this.aimGuide.setVisible(showGuides);
     this.aimGuide2.setVisible(false);
