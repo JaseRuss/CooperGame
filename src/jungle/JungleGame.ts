@@ -16,6 +16,7 @@ import { FRIEND_SHOTS, ENEMY_SHOTS, WALLS_ONLY } from '../prison/groups';
 import { ARMY_GREEN, ARMY_TAN, ARMY_BLUE } from '../utils/plastic';
 import { mulberry32 } from '../utils/rng';
 import { Forest, type Clearing } from './Forest';
+import { Terrain, type Zone } from './Terrain';
 import { Weather } from './Weather';
 import { Trooper } from './Trooper';
 import { Enemies } from './Enemies';
@@ -27,22 +28,25 @@ import { JungleMap } from './JungleMap';
 import { Solids, Lookout, Target, buildOutpost, buildAirbase, type Outpost, type Airbase } from './Props';
 
 /** The jungle is a square this many metres either side of the middle. */
-const HALF = 190;
-const START = { x: 0, z: 165, yaw: 0 };
-const AIRBASE_AT = { x: -60, z: 128 };
+const HALF = 230;
+const START = { x: 0, z: 205, yaw: 0 };
+const AIRBASE_AT = { x: -104, z: 172 };
+/** A river crosses the middle of the jungle; these are the x positions of its bridges. */
+const BRIDGES = [0, 172];
 const LOOKOUTS = [
-  { x: 32, z: 112 },
-  { x: -118, z: -22 },
-  { x: 108, z: -88 },
+  { x: 40, z: 150 },
+  { x: -128, z: -44 },
+  { x: 118, z: -116 },
 ];
 const OUTPOSTS: { name: string; army: 'tan' | 'blue'; x: number; z: number }[] = [
-  { name: 'West outpost', army: 'tan', x: -102, z: 34 },
-  { name: 'East outpost', army: 'blue', x: 104, z: 6 },
-  { name: 'North outpost', army: 'tan', x: -8, z: -126 },
+  { name: 'West outpost', army: 'tan', x: -112, z: 36 },
+  { name: 'East outpost', army: 'blue', x: 112, z: -8 },
+  { name: 'North outpost', army: 'tan', x: -10, z: -170 },
 ];
 const PATROLS = [
-  { x: -36, z: 70 },
-  { x: 58, z: 52 },
+  { x: -50, z: 135 },
+  { x: 74, z: 128 },
+  { x: 60, z: -62 },
 ];
 const SQUAD_SIZE = 4;
 const SQUAD_HP = 40;
@@ -71,13 +75,12 @@ const GRENADES = 4;
 const GRENADE_RELOAD = 20;
 const BOMBS_AT_START = 3;
 const MAX_BOMBS = 5;
-/** Planting a bomb: stand at the dump this long, within this distance. */
-const PLANT_TIME = 2;
-const PLANT_REACH = 7;
+/** A bomb can be planted from this close to an ammo dump (its blast reaches further than that). */
+const PLANT_REACH = 12;
 /** Climbing a lookout: seconds up and down, how far round it you can see from the top. */
 const CLIMB_TIME = 3.4;
-const SCOUT_RADIUS = 110;
-const START_REVEAL = 78;
+const SCOUT_RADIUS = 120;
+const START_REVEAL = 90;
 const WALK_REVEAL = 26;
 const LADDER_REACH = 1.4;
 const HATCH_DWELL = 0.7;
@@ -89,7 +92,7 @@ const CONTROLS =
   '<span><b>Jam gun</b> (knocks trees flat, sticks soldiers) hold LT · hold E</span>' +
   '<span><b>Grenade launcher</b> (4 shots, then a reload) LB · F · right click</span>' +
   '<span><b>Squad: hold here / follow me</b> X</span><span><b>Camera</b> Y · C</span><span><b>Back to checkpoint</b> Back · R</span>' +
-  '<span><b>Bomb</b> plants itself when you stand at an ammo dump</span>';
+  '<span><b>Plant a bomb</b> (close to an ammo dump; 7 second fuse) RB · Q</span>';
 
 const NO_MAP: MapView = {
   playerX: 0,
@@ -148,6 +151,7 @@ export class JungleGame {
   private impacts!: ImpactEffects;
   private jam!: JamCannon;
   private forest!: Forest;
+  private terrain!: Terrain;
   private weather!: Weather;
   private solids!: Solids;
   private explosives!: Explosives;
@@ -171,7 +175,6 @@ export class JungleGame {
   private grenades = GRENADES;
   private reload = 0;
   private bombs = BOMBS_AT_START;
-  private plantProgress = 0;
   private climb: Climb | null = null;
   private onTower: Lookout | null = null;
   private hatchDwell = 0;
@@ -251,7 +254,17 @@ export class JungleGame {
     this.lookouts = LOOKOUTS.map((l) => new Lookout(this.solids, this.scene, l.x, l.z));
     this.outposts = OUTPOSTS.map((o) => buildOutpost(assets, this.scene, this.solids, o.name, o.army, o.army === 'tan' ? ARMY_TAN : ARMY_BLUE, o.x, o.z));
     this.airbase = buildAirbase(this.scene, this.solids, AIRBASE_AT.x, AIRBASE_AT.z, ARMY_TAN);
+    const avoid: Zone[] = [
+      { x: START.x, z: START.z, r: 22 },
+      { x: AIRBASE_AT.x, z: AIRBASE_AT.z, r: 58 },
+      ...this.lookouts.map((l) => ({ x: l.x, z: l.z, r: 12 })),
+      ...this.outposts.map((o) => ({ x: o.x, z: o.z, r: o.r + 4 })),
+    ];
+    this.terrain = new Terrain(this.world, this.scene, HALF, BRIDGES, avoid, 5150);
+    Trooper.route = (fx, fz, tx, tz) => this.terrain.route(fx, fz, tx, tz);
+    this.map.setTerrain({ isWater: (x, z) => this.terrain.isWater(x, z), bridges: this.terrain.bridges });
     const clearings: Clearing[] = [
+      ...this.terrain.clearings,
       { x: START.x, z: START.z, r: 17 },
       ...this.lookouts.map((l) => ({ x: l.x, z: l.z + 1, r: 9 })),
       ...this.outposts.map((o) => ({ x: o.x, z: o.z, r: o.r })),
@@ -278,6 +291,9 @@ export class JungleGame {
         this.addEnemy(o.x + Math.cos(a) * r, o.z + Math.sin(a) * r, o.army === 'tan' ? ARMY_TAN : ARMY_BLUE, 9);
       }
     }
+    // A few at the north end of the main bridge.
+    const gate = this.terrain.bridges[0];
+    for (let i = 0; i < 3; i++) this.addEnemy(gate.north.x - 6 + i * 6, gate.north.y - 14 - (i % 2) * 5, ARMY_TAN, 7);
     for (let i = 0; i < 4; i++) this.addEnemy(AIRBASE_AT.x - 18 + i * 14, AIRBASE_AT.z - 6 + (i % 2) * 14, ARMY_TAN, 8);
     for (const p of PATROLS) for (let i = 0; i < 3; i++) this.addEnemy(p.x + (rng() - 0.5) * 8, p.z + (rng() - 0.5) * 8, i % 2 ? ARMY_BLUE : ARMY_TAN, 18);
 
@@ -285,7 +301,7 @@ export class JungleGame {
     this.map.reveal(START.x, START.z, START_REVEAL);
     this.hud.setWorldMap(this.map.asWorldMap());
     this.hud.setOnFoot(CONTROLS, {
-      legend: '<span><i style="background:#4b7a2e"></i>You and your squad</span><span><i style="background:#c4a468"></i>Tan army</span><span><i style="background:#3f6fb0"></i>Blue army</span><span>Dark ground: not scouted yet. Climb a lookout to reveal the map around it</span>',
+      legend: '<span><i style="background:#4b7a2e"></i>You and your squad</span><span><i style="background:#c4a468"></i>Tan army</span><span><i style="background:#3f6fb0"></i>Blue army</span><span><i style="background:#3b8fc2"></i>River and ponds: cross at a bridge</span><span>Dark ground: not scouted yet. Climb a lookout to reveal the map around it</span>',
     });
     this.hud.setSettings(this.settings, (s) => {
       this.settings = s;
@@ -303,7 +319,7 @@ export class JungleGame {
     this.ready = true;
     this.sound.music.start();
     this.clock.start();
-    this.hud.showBanner('MISSION 2: JUNGLE PATROL', 'On foot with your squad. Scout from a lookout tower, wreck the airbase jets, and blow up the ammo dumps at the three enemy outposts');
+    this.hud.showBanner('MISSION 2: JUNGLE PATROL', 'On foot with your squad. Cross the river by a bridge, scout from a lookout tower, wreck the airbase jets, and blow up the ammo dumps at the three enemy outposts');
     if (import.meta.env.DEV) (window as unknown as { jungle: JungleGame }).jungle = this;
     requestAnimationFrame(this.animate);
   }
@@ -723,26 +739,41 @@ export class JungleGame {
   }
 
   /** At an ammo dump with a bomb: stand there a couple of seconds and it's planted. */
-  private updatePlanting(dt: number): void {
+  /** The nearest live ammo dump within planting reach of the player, if any. */
+  private dumpInReach(): Outpost | null {
     const p = this.player.position;
-    let near: Outpost | null = null;
-    if (!this.player.isDown && !this.onTower && !this.climb && this.bombs > 0) {
-      for (const o of this.outposts) {
-        if (!o.dump.alive) continue;
-        if (Math.hypot(p.x - o.x, p.z - o.z) < PLANT_REACH && !this.explosives.bombs.some((b) => Math.hypot(b.pos.x - o.x, b.pos.z - o.z) < 8)) near = o;
+    let best: Outpost | null = null;
+    let bestD = PLANT_REACH;
+    for (const o of this.outposts) {
+      if (!o.dump.alive) continue;
+      const d = Math.hypot(p.x - o.x, p.z - o.z);
+      if (d < bestD) {
+        bestD = d;
+        best = o;
       }
     }
-    if (!near) {
-      this.plantProgress = Math.max(0, this.plantProgress - dt * 2);
+    return best;
+  }
+
+  /** Q / RB: set a bomb down where he stands, if he's close enough to an ammo dump. */
+  private plantBomb(): void {
+    if (this.player.isDown || this.onTower || this.climb) return;
+    const o = this.dumpInReach();
+    if (!o) {
+      this.hud.showCallout('GET CLOSER TO AN AMMO DUMP TO PLANT A BOMB', '#ffd24a');
       return;
     }
-    this.plantProgress += dt / PLANT_TIME;
-    if (this.plantProgress < 1) return;
-    this.plantProgress = 0;
+    if (this.bombs <= 0) {
+      this.hud.showCallout('NO BOMBS LEFT: WRECK THE AIRBASE JETS FOR A SUPPLY DROP', '#ff8a7a');
+      return;
+    }
+    if (this.explosives.bombs.some((b) => Math.hypot(b.pos.x - o.x, b.pos.z - o.z) < 14)) {
+      this.hud.showCallout('THERE IS ALREADY A BOMB TICKING AT THIS DUMP', '#ffd24a');
+      return;
+    }
+    const p = this.player.position;
     this.bombs--;
-    // Down against the wall of the hut, a step in front of him.
-    const toward = new THREE.Vector3(near.x - p.x, 0, near.z - p.z).normalize();
-    this.explosives.plant(new THREE.Vector3(p.x + toward.x * 0.9, 0.25, p.z + toward.z * 0.9));
+    this.explosives.plant(new THREE.Vector3(p.x, 0.25, p.z).addScaledVector(this.player.forward(), 0.8));
     this.sound.play('clang', { volume: 0.6, rate: 1.1 });
     this.hud.showBanner('BOMB ARMED!', 'Get clear: it goes off in seven seconds. The squad is running too');
   }
@@ -771,6 +802,7 @@ export class JungleGame {
       if (input.resetPressed || (wasDown && !this.player.isDown && this.player.health === 0)) this.toCheckpoint();
       this.updateJam(input, dt);
       if (input.rocketPressed) this.fireGrenade();
+      if (input.aaPressed) this.plantBomb();
       // Lookouts: walk to the foot of the ladder to climb, to the gap at the top to come down.
       if (!this.player.isDown) {
         if (this.onTower) {
@@ -793,7 +825,6 @@ export class JungleGame {
         this.hud.showCallout('GRENADE LAUNCHER RELOADED', '#9be27a');
       }
     }
-    this.updatePlanting(dt);
     this.updateSupplies();
 
     this.squad.update(dt, this.battle, this.trail);
@@ -891,28 +922,24 @@ export class JungleGame {
     ];
   }
 
-  private prisonHUD(): PrisonHUD {
+  private prisonHUD(usingGamepad: boolean): PrisonHUD {
     const p = this.player.position;
     let prompt: string | null = null;
     const fuse = this.explosives.shortestFuse;
     if (this.player.downFor > 0) prompt = `Knocked down! Back on your feet in ${Math.ceil(this.player.downFor)}…`;
     else if (this.climb) prompt = this.climb.up ? 'Climbing the lookout…' : 'Climbing down…';
     else if (fuse !== null) prompt = `BOMB ARMED! GET CLEAR: ${Math.ceil(fuse)}`;
-    else if (this.plantProgress > 0) prompt = 'Planting the bomb…';
     else if (this.onTower) prompt = 'Look around! Walk to the gap in the rail at the head of the ladder to climb down';
     else {
       const l = this.lookouts.find((t) => Math.hypot(t.foot.x - p.x, t.foot.z - p.z) < 8);
-      const dump = this.outposts.find((o) => o.dump.alive && Math.hypot(o.x - p.x, o.z - p.z) < 16);
+      const dump = this.outposts.find((o) => o.dump.alive && Math.hypot(o.x - p.x, o.z - p.z) < 20);
       if (l) prompt = 'Walk to the foot of the ladder to climb the lookout';
-      else if (dump && this.bombs > 0) prompt = 'Stand at the ammo dump to plant a bomb (then run!)';
+      else if (dump && this.bombs > 0) prompt = this.dumpInReach() ? `Press ${usingGamepad ? 'RB' : 'Q'} to plant a bomb here, then run!` : 'Get closer to the ammo dump to plant a bomb';
       else if (dump) prompt = 'No bombs left: wreck the airbase jets for a supply drop';
       else if (this.time < 16) prompt = 'Follow the golden beams, or climb a lookout tower (ladder on the south side) to scout. Hold E to knock trees flat with the jam gun';
     }
     const standing = this.squad.standing;
-    const status = [
-      `Grenades ${'●'.repeat(this.grenades)}${'○'.repeat(GRENADES - this.grenades)}${this.reload > 0 ? ` reloading ${Math.ceil(this.reload)}s` : ''}  ·  Bombs ${this.bombs}`,
-      `Squad ${standing} / ${this.squad.list.length}${this.squad.holding ? ' (HOLDING)' : ''}  ·  Trees felled ${this.forest.fallen}`,
-    ];
+    const status = [`Squad ${standing} / ${this.squad.list.length}${this.squad.holding ? ' (HOLDING)' : ''}  ·  Trees felled ${this.forest.fallen}`];
     if (this.weather.raining) status.push(`STORM: you can see about ${this.weather.seeMetres} m`);
     const alerted = this.enemies.alerted;
     return {
@@ -928,6 +955,8 @@ export class JungleGame {
           ? { level: Math.min(1, 0.3 + alerted / 8), label: `${alerted} ENEMY ON THE ALERT`, color: '#ff6a4a' }
           : { level: 0, label: this.player.sneaking ? 'UNSEEN · CREEPING' : 'UNSEEN', color: '#9be27a' },
       status,
+      launcher: { shots: this.grenades, max: GRENADES, reloadLeft: this.reload, reloadTime: GRENADE_RELOAD },
+      bombs: { count: this.bombs, max: MAX_BOMBS },
     };
   }
 
@@ -968,7 +997,7 @@ export class JungleGame {
       airSupport: null,
       tanker: null,
       siege: null,
-      prison: this.prisonHUD(),
+      prison: this.prisonHUD(input.usingGamepad),
       driveStyle: this.settings.driveStyle,
       mouseCaptureHint: !input.usingGamepad && !input.pointerLocked && input.pointerLockAvailable,
       soundLocked: this.sound.locked && (this.settings.sfxVolume > 0 || this.settings.musicVolume > 0),
@@ -1035,6 +1064,7 @@ export class JungleGame {
       player: this.player,
       world: this.world,
       forest: this.forest,
+      terrain: this.terrain,
       weather: this.weather,
       squad: this.squad,
       enemies: this.enemies,
