@@ -160,6 +160,14 @@ export class Trooper {
     return true;
   }
 
+  /** Jumps him to (x, z), clear of whatever he was stuck on. */
+  warp(x: number, z: number): void {
+    this.body.setTranslation({ x, y: 0.9, z }, true);
+    this.pos.set(x, 0, z);
+    this.stuck = 0;
+    this.detour = 0;
+  }
+
   /** Back on his feet with `hp` (a squad mate who's been helped up). */
   revive(hp: number): void {
     this.state = 'active';

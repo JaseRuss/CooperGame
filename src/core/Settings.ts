@@ -121,7 +121,7 @@ export const OPTION_ROWS: OptionRow[] = [
     key: 'player1Controller',
     label: 'Player 1 controls',
     values: [
-      { value: -2, label: 'Automatic', hint: 'Use the keyboard and mouse, or the first controller that is connected.' },
+      { value: -2, label: 'Automatic', hint: 'Use the keyboard and mouse, or any controller that is connected. (Playing solo, any controller works whatever this says.)' },
       { value: -1, label: 'Keyboard / mouse', hint: 'Assign keyboard and mouse to Player 1.' },
       ...Array.from({ length: 8 }, (_, i) => ({ value: i, label: `Controller ${i + 1}`, hint: `Assign Controller ${i + 1} to Player 1.` })),
     ],

@@ -730,7 +730,8 @@ export class JailbreakGame {
     this.input.textEntry = this.hud.editingText;
     this.input.beginFrame();
     const pads = Array.from(navigator.getGamepads?.() ?? []);
-    const p1Index = this.settings.player1Controller;
+    // Solo: any controller (or the keyboard) drives, whatever Player 1 is set to.
+    const p1Index = -2;
     const input = this.input.update(dt, p1Index, 1, this.settings.splitOrientation, false, pads, 1);
     const kbMenu = this.input.keyboardMenu();
     input.mapTogglePressed ||= kbMenu.mapTogglePressed;

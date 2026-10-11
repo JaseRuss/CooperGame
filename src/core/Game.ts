@@ -3073,11 +3073,12 @@ export class Game {
     const pads = Array.from(navigator.getGamepads?.() ?? []);
     const secondUsesKeyboard = this.player2 !== null && this.settings.player2Controller === -1;
     const p2Index = this.player2 === null ? -3 : this.settings.player2Controller;
-    const p1Index = this.settings.player1Controller !== -2
-      ? this.settings.player1Controller
-      : this.player2
-        ? pads.find((pad) => pad && pad.index !== p2Index)?.index ?? -1
-        : -2;
+    // Playing solo, any controller (or the keyboard) drives; the Player 1 assignment only matters in co-op.
+    const p1Index = !this.player2
+      ? -2
+      : this.settings.player1Controller !== -2
+        ? this.settings.player1Controller
+        : pads.find((pad) => pad && pad.index !== p2Index)?.index ?? -1;
     const lockedMousePlayer: 1 | 2 = this.player2 && p2Index === -1 ? 2 : 1;
     const p2First = secondUsesKeyboard;
     const secondInput = p2First

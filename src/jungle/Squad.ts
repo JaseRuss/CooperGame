@@ -14,6 +14,14 @@ const REVIVE_HP = 22;
 const BOMB_CLEAR = 24;
 const WALK = 4.4;
 const RUN = 6.8;
+/** Catching up when well behind. */
+const SPRINT = 9.5;
+const CATCH_UP_FROM = 20;
+/** Lost: this far from him for this long (or jammed for the second figure), and he's put back out of sight behind him. */
+const LOST_DISTANCE = 36;
+const LOST_TIME = 2;
+const JAMMED_TIME = 3;
+
 
 interface Brain {
   t: Trooper;
@@ -22,6 +30,11 @@ interface Brain {
   fire: number;
   aim: THREE.Vector3 | null;
   holdAt: THREE.Vector2 | null;
+  /** Seconds far behind, and seconds spent not getting anywhere (sampled once a second from `last`). */
+  lost: number;
+  jammed: number;
+  sample: number;
+  last: THREE.Vector2;
 }
 
 /**
@@ -34,7 +47,7 @@ export class Squad {
   holding = false;
 
   add(t: Trooper): void {
-    this.list.push({ t, slot: this.list.length, scan: Math.random() * 0.3, fire: Math.random(), aim: null, holdAt: null });
+    this.list.push({ t, slot: this.list.length, scan: Math.random() * 0.3, fire: Math.random(), aim: null, holdAt: null, lost: 0, jammed: 0, sample: 0, last: new THREE.Vector2(t.pos.x, t.pos.z) });
   }
 
   /** Toggles "hold here" / "follow me". */
@@ -97,8 +110,42 @@ export class Squad {
         sz = p.z;
       }
       const d = Math.hypot(sx - t.pos.x, sz - t.pos.z);
-      if (d > 1.4) t.stepToward(sx, sz, d > 10 ? RUN : WALK, dt);
+      if (d > 1.4) t.stepToward(sx, sz, leaderDist > CATCH_UP_FROM ? SPRINT : d > 10 ? RUN : WALK, dt);
       else if (b.aim) t.faceToward(b.aim.x, b.aim.z, dt);
+      if (!b.holdAt) this.keepUp(b, d, leaderDist, dt, battle, trail);
+    }
+  }
+
+  /**
+   * If he's fallen a long way behind or is jammed against something, and nobody can see it, he's
+   * put back on the player's trail out of sight: the squad always keeps up.
+   */
+  private keepUp(b: Brain, spotDistance: number, leaderDist: number, dt: number, battle: Battle, trail: THREE.Vector3[]): void {
+    const t = b.t;
+    b.lost = leaderDist > LOST_DISTANCE ? b.lost + dt : 0;
+    b.sample += dt;
+    if (b.sample >= 1) {
+      b.sample = 0;
+      const moved = Math.hypot(t.pos.x - b.last.x, t.pos.z - b.last.y);
+      b.jammed = moved < 0.5 && spotDistance > 6 ? b.jammed + 1 : 0;
+      b.last.set(t.pos.x, t.pos.z);
+    }
+    if (b.lost < LOST_TIME && !(b.jammed >= JAMMED_TIME && leaderDist > 12)) return;
+    if (!battle.unseen(t.pos.clone().setY(1))) return;
+    // Back along the trail, beyond sight of the screen, and not on top of a mate.
+    const player = battle.player.pos;
+    for (let i = trail.length - 1 - Math.round(((b.slot + 1) * TRAIL_GAP) / 0.7); i >= Math.max(0, trail.length - 90); i--) {
+      const p = trail[i];
+      const dist = Math.hypot(p.x - player.x, p.z - player.z);
+      if (dist < 7 || dist > 34) continue;
+      const at = new THREE.Vector3(p.x, 1, p.z);
+      if (!battle.unseen(at)) continue;
+      if (this.list.some((o) => o !== b && Math.hypot(o.t.pos.x - p.x, o.t.pos.z - p.z) < 1.6)) continue;
+      t.warp(p.x, p.z);
+      b.lost = 0;
+      b.jammed = 0;
+      b.last.set(p.x, p.z);
+      return;
     }
   }
 
