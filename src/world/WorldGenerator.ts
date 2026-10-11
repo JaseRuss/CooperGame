@@ -18,9 +18,11 @@ import type { SquadSpawn } from '../entities/TroopManager';
 import { mulberry32 } from '../utils/rng';
 import { randRange } from '../utils/math';
 import { ENEMY_ARMY_COLOR, ARMY_RED, ARMY_TAN, ARMY_BLUE, plastic } from '../utils/plastic';
+import { toppleInstances } from './toppleInstances';
+export { toppleInstances };
 import { WORLD_HALF, WORLD_SEED, BASE_RADIUS, MAX_ENEMIES, FORTRESS_HALF, FORTRESS_CENTER, JUNGLE, KNIGHTS, ZOMBIES, distanceToFriendlyBase } from '../core/config';
 import { buildCottage, buildHayCart, COTTAGE_ROOFS, SHUTTER_COLORS } from './Medieval';
-import { Tree, TREE_SIZE, LAMP_SIZE, type ToppleSize } from './Tree';
+import { Tree, TREE_SIZE, LAMP_SIZE } from './Tree';
 import { inMoat } from './MoatShape';
 
 export interface EnemySpawnPoint {
@@ -574,52 +576,6 @@ function byChunk<T extends { x: number; z: number }>(items: T[]): T[][] {
   return [...chunks.values()];
 }
 
-/**
- * Instanced copies of `template` that each fall over when a tank drives into them (trees, lamp
- * posts): one InstancedMesh per part, with each Tree rewriting its own instance as it topples.
- */
-export function toppleInstances(
-  world: RAPIER.World,
-  scene: THREE.Object3D,
-  hitRegistry: HitRegistry,
-  staticBody: RAPIER.RigidBody,
-  source: THREE.Object3D,
-  placements: { x: number; y: number; z: number; yaw: number; scale: number }[],
-  size: ToppleSize,
-): Tree[] {
-  if (placements.length === 0) return [];
-  const template = source.clone(true);
-  template.position.set(0, 0, 0);
-  template.rotation.set(0, 0, 0);
-  template.scale.set(1, 1, 1);
-  template.updateMatrixWorld(true);
-  const meshes: { instanced: THREE.InstancedMesh; local: THREE.Matrix4 }[] = [];
-  template.traverse((child) => {
-    if (!(child instanceof THREE.Mesh)) return;
-    const instanced = new THREE.InstancedMesh(child.geometry, child.material, placements.length);
-    instanced.castShadow = true;
-    instanced.receiveShadow = true;
-    scene.add(instanced);
-    meshes.push({ instanced, local: child.matrixWorld.clone() });
-  });
-
-  const out = placements.map((p, index) => {
-    const writeTransform = (transform: THREE.Matrix4) => {
-      const combined = new THREE.Matrix4();
-      for (const { instanced, local } of meshes) {
-        instanced.setMatrixAt(index, combined.multiplyMatrices(transform, local));
-        instanced.instanceMatrix.needsUpdate = true;
-      }
-    };
-    return new Tree(world, hitRegistry, staticBody, scene, null, p.x, p.y, p.z, p.yaw, p.scale, writeTransform, size);
-  });
-  // Bounds must cover every instance even once they've toppled, so pad them out.
-  for (const { instanced } of meshes) {
-    instanced.computeBoundingSphere();
-    if (instanced.boundingSphere) instanced.boundingSphere.radius += 20;
-  }
-  return out;
-}
 
 function placeEnemySpawns(holds: HoldFor): EnemySpawnPoint[] {
   const rng = mulberry32(WORLD_SEED + 97);

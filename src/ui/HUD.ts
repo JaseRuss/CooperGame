@@ -711,12 +711,14 @@ export class HUD {
    * The bonus prison level: the player's on foot, so there's no map, rocket, AA, jam cannon or
    * buddy meter. The pause screen's map page shows the controls instead.
    */
-  setOnFoot(controls: string): void {
+  setOnFoot(controls: string, withMap?: { legend: string }): void {
     this.mirror?.setOnFoot(controls);
-    this.minimapWrap.style.display = 'none';
-    this.bigMapCanvas.style.display = 'none';
-    this.tabs.map.textContent = 'CONTROLS';
-    this.mapLegends[0].innerHTML = '<span><i style="background:#4b7a2e"></i>Green army: you and your buddies</span><span><i style="background:#c4a468"></i>Tan army: the guards</span>';
+    this.minimapWrap.style.display = withMap ? '' : 'none';
+    this.bigMapCanvas.style.display = withMap ? '' : 'none';
+    this.tabs.map.textContent = withMap ? 'MAP' : 'CONTROLS';
+    this.mapLegends[0].innerHTML = withMap
+      ? withMap.legend
+      : '<span><i style="background:#4b7a2e"></i>Green army: you and your buddies</span><span><i style="background:#c4a468"></i>Tan army: the guards</span>';
     this.mapLegends[1].innerHTML = controls;
   }
 

@@ -27,7 +27,7 @@ export type Mission = 1 | 2 | 3 | 4 | 5 | 6;
 /** Every mission in play order, as the level select lists them. */
 export const MISSIONS: { mission: Mission; title: string; blurb: string; bonus?: true }[] = [
   { mission: 1, title: 'Day to Night', blurb: 'Starts in sunny fields and towns, but the sun sets as each of the five enemy bases falls. Then storm the Fortress in a night raid.' },
-  { mission: 2, title: 'Jungle Strike', blurb: 'Thick jungle and wooden hut villages. Smash through the trees to find the enemy bases.' },
+  { mission: 2, title: 'Jungle Strike', blurb: 'On foot with your squad in dense, storm-lashed jungle. Climb lookouts, knock trees down with the jam gun and plant bombs on three enemy bases.' },
   { mission: 3, title: 'Castle Siege', blurb: 'Knights, cannons and dragons! Knock down five enemy castles, then the Great Castle.' },
   { mission: 4, title: 'Zombie Attack', blurb: 'Every army together at the Fortress against wave after wave of zombies. How long can you hold out?' },
   { mission: 5, title: 'Bonus: Prison Break', blurb: "On foot, at night! Break out of the tan army's prison, steal the gear for a raft, slip past the search helicopters across the sea and sneak home as the dawn breaks.", bonus: true },
