@@ -57,6 +57,9 @@ const REGROUP_TIME = 10;
 const ASSAULT_TIME = 50;
 /** Enemy soldiers within this of a castle's middle are still defending it. */
 const GARRISON_RADIUS = 95;
+/** A castle whose garrison (every knight, and the archer towers) has been beaten stays quiet this long, then it surrenders. */
+const SURRENDER_AFTER = 7;
+const GARRISON_CHECK = 0.5;
 /** Fewest survivors that can still take a castle. */
 const MIN_TO_TAKE = 3;
 
@@ -100,6 +103,8 @@ export class SiegeWar {
   readonly prisons: Prison[] = [];
   readonly wagons: PrisonWagon[] = [];
   private readonly waves: Wave[] = [];
+  private readonly clearFor = new Map<EnemyBase, number>();
+  private garrisonTimer = 0;
   private readonly pendingCapture: { soldier: Soldier; delay: number }[] = [];
   private captureNoticeTimer = 0;
   private readonly notices: SiegeNotice[] = [];
@@ -188,6 +193,40 @@ export class SiegeWar {
   /** Our soldiers still locked up in theirs. */
   get ours(): number {
     return this.enemyPrisons.reduce((n, p) => n + p.held, 0);
+  }
+
+  /** The defenders left in a castle: knights standing inside the walls, and archer towers still up. */
+  garrisonOf(base: EnemyBase): { knights: number; towers: number } {
+    let knights = 0;
+    for (const s of this.troops.activeSoldiers('enemy')) {
+      if (Math.abs(s.position.x - base.center.x) < GARRISON_RADIUS && Math.abs(s.position.z - base.center.z) < GARRISON_RADIUS) knights++;
+    }
+    return { knights, towers: base.archerTowers.filter((t) => t.alive).length };
+  }
+
+  /**
+   * "Under siege": a castle whose knights are all beaten (down or surrendered) and whose archer
+   * towers have fallen gives up after a few quiet seconds, whatever's still standing in it.
+   */
+  private updateGarrisons(dt: number): void {
+    this.garrisonTimer -= dt;
+    if (this.garrisonTimer > 0) return;
+    const step = GARRISON_CHECK - this.garrisonTimer;
+    this.garrisonTimer = GARRISON_CHECK;
+    for (const base of this.enemyBases) {
+      if (base.isDestroyed) continue;
+      const g = this.garrisonOf(base);
+      if (g.knights + g.towers > 0) {
+        this.clearFor.delete(base);
+        continue;
+      }
+      const t = (this.clearFor.get(base) ?? 0) + step;
+      this.clearFor.set(base, t);
+      if (t < SURRENDER_AFTER) continue;
+      this.clearFor.delete(base);
+      base.ruin();
+      this.notices.push({ text: `${base.title.toUpperCase()} SURRENDERS!`, banner: true, sub: 'Every knight is beaten: the white flag goes up over the castle' });
+    }
   }
 
   /** The freed soldiers' wave now, for the HUD: what it's doing and how many are left, or null. */
@@ -300,6 +339,7 @@ export class SiegeWar {
 
   update(dt: number): SiegeNotice[] {
     this.updateWaves(dt);
+    this.updateGarrisons(dt);
     this.captureNoticeTimer = Math.max(0, this.captureNoticeTimer - dt);
     for (const wagon of this.wagons) wagon.update(dt, this.context);
     for (let i = this.pendingCapture.length - 1; i >= 0; i--) {

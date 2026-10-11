@@ -457,7 +457,7 @@ prisoners. Single player (there is no co-op on this level).
 - **The jailbreak.** Drive to an enemy prison's yard gate and a prompt appears: press **Y** (**C**
   on the keyboard) to get out and go in on foot. The level is saved and the on-foot section
   loads (it is its own page, like the prison break). You're in a castle dungeon courtyard at night
-  with jailers who have vision cones. Stand at a cell door to unlock it; the freed soldiers follow
+  with jailers who have vision cones. The courtyard is dressed for whoever holds the prison: Welsh (stone roundhouses under thatch, a fire pit, red dragon banners) or German (half-timbered houses, a fountain, black eagle banners). Stand at a cell door to unlock it; the freed soldiers follow
   you. Creep (Shift) past the jailers, or press **X** to put on a **jailer disguise**: they won't
   notice you from a distance, but a jailer who looks you over up close, or sees you run, sees
   through it, and you start again from the gate. You can't disguise while you're being watched,
@@ -468,6 +468,12 @@ prisoners. Single player (there is no co-op on this level).
   arrows from up to 200 m, all round (they're targets, so knock them down to take the castle).
   Each castle also has a little village along the road in from the gate: cottages, a well and
   market stalls.
+- **Garrisons and surrender.** Near a castle the objective panel shows its **garrison**: the knights
+  still standing inside its walls and its archer towers still up. Beat them all (down, or
+  surrendered) and, after a few quiet seconds, the castle **surrenders**: the white flag goes up
+  and it's yours, whatever's still standing in it. A knocked-out cannon's gunners mostly climb
+  out with their hands up too. Peasants wander the green in each castle's village; they don't
+  fight. On this level the tan army is **Welsh** and the blue army **German**.
 - **The Great Castle.** On this level the final castle is modelled on Stirling Castle: a Palace
   with statues in niches, a dormered slate roof and a carved doorway under the Royal Standard
   (the red lion rampant); a Great Hall in "Stirling gold" with crow-stepped gables, buttresses,

@@ -11,6 +11,7 @@ import { distanceToPolyline, HIGHWAY_WIDTH, type Polyline } from '../world/RoadN
 import { JeepStation } from '../world/JeepStation';
 import { ChopperStation } from '../world/ChopperStation';
 import { SiegeWar } from '../world/SiegeWar';
+import { Villagers } from '../world/Villagers';
 import type { Prison } from '../world/Prison';
 import { loadSnapshot, saveSnapshot, saveRequest, loadResult, saveResult, RESUME, type SiegeSnapshot } from './SiegeSave';
 import { MotorbikeRamp } from '../world/MotorbikeRamp';
@@ -18,7 +19,7 @@ import type { Building } from '../world/Building';
 import { Bunker } from '../world/Bunker';
 import type { EnemyBase } from '../world/EnemyBase';
 import type { Fortress } from '../world/Fortress';
-import { ENEMY_BASE_HALF, SITES, siteToWorld, siteYaw, isInLandmark } from '../world/Landmarks';
+import { ENEMY_BASE_HALF, SITES, siteToWorld, siteYaw, isInLandmark, enemyArmyAt } from '../world/Landmarks';
 import { LaunchPad } from '../world/MoonRocket';
 import { MoonBase } from '../world/MoonBase';
 import { TreeManager } from '../world/TreeManager';
@@ -59,7 +60,7 @@ import { OverrunTowns } from '../world/OverrunTowns';
 import { FlamePit, FLAME_RANGE, FLAME_HALF_ANGLE } from '../world/FlamePit';
 import type { ShotStyle } from '../combat/Projectile';
 import { NightSky, MOON_DIRECTION } from '../world/NightSky';
-import { ARMY_GREEN, ARMY_RED, ARMY_TAN, ARMY_BLUE, shade } from '../utils/plastic';
+import { ARMY_GREEN, ARMY_RED, ARMY_TAN, ARMY_BLUE, ENEMY_ARMY_COLOR, shade } from '../utils/plastic';
 import { Sound } from '../audio/Sound';
 import { loadSettings, saveSettings, AIM_SPEED_SCALE, DEFAULT_BUDDY_NAMES, GRAPHICS_QUALITY, type Settings } from './Settings';
 
@@ -197,6 +198,10 @@ const CHECKLIST_RANGE = 350; // show the target list when this close to an enemy
 const VICTORY_SCREEN_TIME = 9;
 /** The siege level: how close to an enemy prison's yard gate the player can get out and go in on foot. */
 const JAILBREAK_REACH = 30;
+/** Siege level: how often a knocked-out cannon's gunners surrender instead of going up with it. */
+const CREW_SURRENDER_CHANCE = 0.7;
+/** The castle garrison counter shows when the player is this close to a castle. */
+const GARRISON_SHOWN_WITHIN = 260;
 const NEXT_MISSION_DELAY = 12; // after winning a mission, the next one starts this long after the victory screen
 /** The mission that follows this one, if any (the bonus level is only picked from the level select). */
 const nextMission = MISSIONS.find((m) => m.mission === MISSION + 1 && !m.bonus);
@@ -503,6 +508,8 @@ export class Game {
   private warfront: Warfront | null = null;
   /** The siege bonus level's prisons and prisoner wagons (null on the other missions). */
   private siege: SiegeWar | null = null;
+  /** Peasants wandering the villages inside the castles (siege level). */
+  private villagers: Villagers | null = null;
   private siegeWarning = 0;
   /** The vehicle to swap to once the smoke puff has thickened, and how long until then. */
   private pendingSwap: { to: Vehicle; delay: number } | null = null;
@@ -687,6 +694,7 @@ export class Game {
     // The Fortress's garrison lounging in the moat: tan and blue, or on the zombie mission ours.
     this.moat = new Moat(this.scene, ZOMBIES ? [ARMY_GREEN, ARMY_RED] : [ARMY_TAN, ARMY_BLUE]);
     if (!ZOMBIES) this.warfront = new Warfront(this.troops, this.enemyBases, Math.random);
+    if (SIEGE) this.villagers = new Villagers(this.scene, this.enemyBases, Math.random);
     if (SIEGE) this.siege = new SiegeWar(this.world, this.scene, this.troops, this.enemyBases, this.fortress, content.highways);
     this.troops.shielded = (p) => this.sealedInFortress(p);
     this.troops.onZombieDown = (z) => {
@@ -945,9 +953,17 @@ export class Game {
     slot.tank = tank;
   }
 
-  private removeEnemy(slot: EnemySlot, gag = slot.tank instanceof HelicopterEnemy ? null : pickWreckGag()): void {
+  private removeEnemy(slot: EnemySlot, rolled = slot.tank instanceof HelicopterEnemy ? null : pickWreckGag()): void {
     const tank = slot.tank;
     if (!tank) return;
+    let gag = rolled;
+    // Siege level: most knocked-out cannons aren't blown up: the gunners climb out with their hands up.
+    const crewGivesUp = SIEGE && !(tank instanceof HelicopterEnemy) && gag !== 'firework' && Math.random() < CREW_SURRENDER_CHANCE;
+    if (crewGivesUp) {
+      gag = 'surrender';
+      const p = tank.position;
+      this.troops.addSurrendered(p.x + 3, p.z + 3, ENEMY_ARMY_COLOR[enemyArmyAt(p.x, p.z)], 2);
+    }
     // Now and then a tank goes out with a gag rather than just blowing up (helicopters always blow up).
     this.explode(tank.position.clone(), gag === 'surrender' ? 0.6 : gag === 'firework' ? 1.2 : 2.5, null);
     let keepHull = gag === 'turtle' || gag === 'surrender' || gag === 'firework';
@@ -2347,6 +2363,15 @@ export class Game {
     this.applyJailbreak();
   }
 
+  /** The nearest standing castle within sight of the player, and how many defenders it has left (siege level). */
+  private garrisonHUD(): { name: string; knights: number; towers: number } | null {
+    const siege = this.siege;
+    if (!siege) return null;
+    const near = this.nearestEnemyBase(true);
+    if (!near || near.distance > GARRISON_SHOWN_WITHIN) return null;
+    return { name: near.base.name.toUpperCase(), ...siege.garrisonOf(near.base) };
+  }
+
   /** The enemy prison whose gate the player's at (in anything that drives), if there's anyone left locked up in it. */
   private findJailbreak(): Prison | null {
     const siege = this.siege;
@@ -2359,7 +2384,7 @@ export class Game {
   private startJailbreak(prison: Prison): void {
     const siege = this.siege as SiegeWar;
     saveSnapshot(this.captureSiege());
-    saveRequest({ prison: siege.prisons.indexOf(prison), held: prison.held, royal: prison === siege.royalPrison });
+    saveRequest({ prison: siege.prisons.indexOf(prison), held: prison.held, royal: prison === siege.royalPrison, army: prison.color === ARMY_BLUE ? 'blue' : 'tan' });
     saveResult(null);
     const url = new URL(window.location.href);
     url.searchParams.set('mission', '6');
@@ -3018,6 +3043,7 @@ export class Game {
             surrendered: this.troops.surrendered().length,
             carrying: this.siege.wagons.reduce((n, w) => n + w.carrying, 0),
             wave: this.siege.waveStatus(),
+            garrison: this.garrisonHUD(),
             prompt: this.jailbreakPrison ? `${input.usingGamepad ? 'Y' : 'C'}: get out and break the ${this.jailbreakPrison.held} prisoners out on foot` : null,
           }
         : null,
@@ -3491,6 +3517,7 @@ export class Game {
       }
       this.jailbreakPrison = this.findJailbreak();
     }
+    this.villagers?.update(dt, this.allPlayers().map((p) => p.position));
     // A family base with raiders in it can't repair you until they're cleared out.
     const home = nearestFriendlyBase(this.player.position.x, this.player.position.z);
     const besieged = this.warfront?.isBesieged(home) ?? false;

@@ -135,7 +135,7 @@ export interface HUDState {
   /** The bomb tanker objective on the first mission, or null on the others. */
   tanker: TankerHUD | null;
   /** The siege level's prisoners (knights locked up, ours still held), or null on the other missions. */
-  siege: { captives: number; ours: number; surrendered: number; carrying: number; wave: { text: string; left: number } | null; prompt: string | null } | null;
+  siege: { captives: number; ours: number; surrendered: number; carrying: number; wave: { text: string; left: number } | null; prompt: string | null; garrison: { name: string; knights: number; towers: number } | null } | null;
   /** Set on the bonus prison level, where the player is on foot. */
   prison: PrisonHUD | null;
   driveStyle: Settings['driveStyle'];
@@ -1506,10 +1506,14 @@ export class HUD {
     const siege = state.siege;
     if (!siege) return '';
     const waiting = siege.surrendered > 0 ? ` · <b style="color:#ffd24a">${siege.surrendered}</b> surrendered waiting for the wagon` : '';
+    const garrison = siege.garrison
+      ? `<br>🏰 ${siege.garrison.name} garrison: <b style="color:#ff8a7a">${siege.garrison.knights}</b> knights · <b style="color:#ff8a7a">${siege.garrison.towers}</b> archer tower${siege.garrison.towers === 1 ? '' : 's'}` +
+        (siege.garrison.knights + siege.garrison.towers === 0 ? ' · <b style="color:#9be27a">hold on, they are giving up…</b>' : ' (beat them all and the castle surrenders)')
+      : '';
     const wave = siege.wave ? `<br>➜ ${siege.wave.text} · <b style="color:#9be27a">${siege.wave.left}</b> soldiers` : '';
     return (
       `<div class="siege" style="font-size:${compact ? 11 : 12}px; margin-top:4px; opacity:0.95">` +
-      `⛓ KNIGHTS LOCKED UP <b style="color:#9be27a">${siege.captives}</b> · OURS STILL HELD <b style="color:#ff8a7a">${siege.ours}</b>${waiting}${wave}</div>`
+      `⛓ KNIGHTS LOCKED UP <b style="color:#9be27a">${siege.captives}</b> · OURS STILL HELD <b style="color:#ff8a7a">${siege.ours}</b>${waiting}${garrison}${wave}</div>`
     );
   }
 

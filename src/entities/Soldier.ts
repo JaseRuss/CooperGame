@@ -668,7 +668,7 @@ export class Soldier {
   knockDown(from: THREE.Vector3, strength: number): void {
     if (this.state !== 'active') return;
     if (SIEGE && this.faction === 'enemy' && !this.zombie && strength < SURRENDER_MAX_STRENGTH && this.rng() < SURRENDER_CHANCE) {
-      this.surrender();
+      this.giveUp();
       return;
     }
     if (this.hp > 1) {
@@ -695,7 +695,7 @@ export class Soldier {
   }
 
   /** Beaten but not blasted flat: drops the crossbow, throws his hands up and shouts. */
-  private surrender(): void {
+  giveUp(): void {
     this.jamTime = 0;
     this.clearGunJam();
     this.state = 'surrendered';
