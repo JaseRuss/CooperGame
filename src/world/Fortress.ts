@@ -647,6 +647,11 @@ export class Fortress {
     return best;
   }
 
+  /** Flattens everything inside without any show: the freed soldiers took the Great Castle (siege level). */
+  ruin(): void {
+    for (const b of this.buildings) b.ruin();
+  }
+
   get remaining(): number {
     return this.objectives.filter((o) => !o.isDestroyed()).length;
   }

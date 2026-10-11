@@ -12,6 +12,7 @@ import { Prison } from './Prison';
 import { PrisonWagon, type WagonContext } from './PrisonWagon';
 import type { EnemyBase } from './EnemyBase';
 import type { Fortress } from './Fortress';
+import { GOLD } from './StirlingCastle';
 import type { SquadSpawn, TroopManager } from '../entities/TroopManager';
 import type { Soldier } from '../entities/Soldier';
 
@@ -59,6 +60,16 @@ const GARRISON_RADIUS = 95;
 /** Fewest survivors that can still take a castle. */
 const MIN_TO_TAKE = 3;
 
+/** What the freed soldiers march on: an enemy castle, or the Great Castle once they're all down. */
+interface Objective {
+  center: THREE.Vector3;
+  title: string;
+  ruin(): void;
+}
+
+/** Our soldiers locked up in the Great Castle's dungeon, a bigger lot than the castles' jails. */
+const ROYAL_PRISONERS = 14;
+
 interface Wave {
   spawn: SquadSpawn;
   size: number;
@@ -66,7 +77,7 @@ interface Wave {
   prison: Prison;
   phase: 'escape' | 'regroup' | 'assault';
   timer: number;
-  target: EnemyBase | null;
+  target: Objective | null;
   /** The chasers, whose squad is checked for the optional "cover their escape" objective. */
   chasers: SquadSpawn;
   /** Every freed soldier who gets to the friendly base is counted once. */
@@ -124,6 +135,9 @@ export class SiegeWar {
       const site = findSite(base.x, base.z, 150, Math.atan2(-base.x, -base.z), clear);
       this.prisons.push(new Prison(world, scene, { ...site, side: 'friendly', color: ARMY_GREEN, name: i === 0 ? 'West stockade' : 'East stockade', held: 0 }));
     });
+    // The Great Castle's own dungeon, off to one side of its south gate (sealed until its gates open).
+    const royal = findSite(this.fortress.center.x, this.fortress.center.z, 235, Math.atan2(home.x - this.fortress.center.x, home.z - this.fortress.center.z) + 0.5, clear);
+    this.prisons.push(new Prison(world, scene, { ...royal, side: 'enemy', color: GOLD, name: 'Royal dungeon', held: ROYAL_PRISONERS }));
     // A wagon starts at each of our prisons.
     for (const prison of this.friendlyPrisons) {
       const wagon = new PrisonWagon(scene, prison.door, prison.yaw + Math.PI);
@@ -151,6 +165,11 @@ export class SiegeWar {
   restore(held: number[], freed: number[]): void {
     this.prisons.forEach((p, i) => p.setHeld(held[i] ?? p.held));
     for (const i of freed) this.freed.add(i);
+  }
+
+  /** The Great Castle's dungeon (its prisoners can only be freed once the gates are open). */
+  get royalPrison(): Prison {
+    return this.prisons[this.prisons.length - 1];
   }
 
   get friendlyPrisons(): Prison[] {
@@ -247,7 +266,7 @@ export class SiegeWar {
         if (w.timer > 0) continue;
         const standing = this.enemyBases.filter((b) => !b.isDestroyed);
         const here = new THREE.Vector3(w.base.x, 0, w.base.z);
-        const target = standing.sort((a, b) => a.center.distanceTo(here) - b.center.distanceTo(here))[0];
+        const target: Objective | undefined = standing.sort((a, b) => a.center.distanceTo(here) - b.center.distanceTo(here))[0] ?? (this.fortress.isDestroyed ? undefined : this.fortress);
         if (!target) {
           this.waves.splice(i, 1);
           continue;

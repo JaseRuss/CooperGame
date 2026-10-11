@@ -476,6 +476,14 @@ prisoners. Single player (there is no co-op on this level).
   corbelled parapet; a Grand Battery of guns each side of the gate; knot gardens; and round
   towers with bartizans and conical slate roofs round the wall and on the Forework gatehouse.
   Mission 3's Great Castle is unchanged.
+- **The Royal Dungeon.** The Great Castle has a dungeon of its own, a third enemy prison off to
+  one side of its south gate holding 14 of ours. It's sealed until the Great Castle's gates open
+  (every other castle taken); then the same prompt appears. The on-foot section there is the
+  Stirling Castle courtyard at night: round corner towers and a Forework gate, the Great Hall,
+  Chapel Royal and Great Kitchens round the yard, a knot garden, the Elphinstone Tower in the
+  middle for cover, and a slate-roofed cell block under the Royal Standard. Freeing them sends a
+  wave of 14 to the Great Castle itself once every other castle has fallen, and if they take it
+  the level is won.
 - **The wave.** Back in the tank, the freed soldiers run for the nearest friendly base with the
   jailers chasing them. Covering their escape is optional. Once they make it they regroup, march
   on the nearest enemy castle, take it themselves, and hold it. A castle they take counts as one

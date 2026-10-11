@@ -3,7 +3,20 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import { PartBuilder } from '../utils/modelKit';
 import { plastic, shade, ARMY_GREEN } from '../utils/plastic';
 import { createFigureMesh } from '../entities/Soldier';
-import { buildWallSegment, buildGateTower, buildCottage, WALL_THICK, STONE, STONE_DARK, WOOD, WOOD_DARK } from '../world/Medieval';
+import { buildWallSegment, buildGateTower, buildCottage, gableRoofAlongX, prism, WALL_HEIGHT, WALL_THICK, STONE, STONE_DARK, WOOD, WOOD_DARK } from '../world/Medieval';
+import {
+  addCornerTower,
+  addGateTower,
+  addWallDetail,
+  buildStirlingGreatHall,
+  buildChapelRoyal,
+  buildGreatKitchens,
+  buildElphinstoneTower,
+  buildKnotGarden,
+  saltire,
+  royalStandard,
+  BUFF,
+} from '../world/StirlingCastle';
 import type { GuardPost } from '../prison/Facility';
 
 /** The courtyard: inside the walls it runs from -YARD_X to YARD_X across and -YARD_Z to YARD_Z deep. */
@@ -67,7 +80,12 @@ export class Dungeon {
   private readonly flames: THREE.Mesh[] = [];
   private time = 0;
 
-  constructor(private readonly world: RAPIER.World, cellCount: number, armyColor: number) {
+  /**
+   * `royal`: the Great Castle's dungeon, dressed like Stirling Castle: round corner towers and a
+   * Forework gate, the Great Hall, Chapel Royal and Great Kitchens round the yard, a knot garden,
+   * the Elphinstone Tower for cover, and a slate roof and chimneys on the cell block.
+   */
+  constructor(private readonly world: RAPIER.World, cellCount: number, armyColor: number, private readonly royal = false) {
     const cells = Math.max(1, Math.min(MAX_CELLS, cellCount));
     this.buildGround();
     this.buildWalls(armyColor);
@@ -138,11 +156,42 @@ export class Dungeon {
     const sideLen = WALL_X + 3 - gateInner;
     for (const s of [-1, 1]) {
       wall(sideLen, s * (gateInner + sideLen / 2), WALL_Z, 0, true);
-      const tower = buildGateTower(armyColor);
-      tower.position.set(s * (GATE_HALF + towerHalf), 0, WALL_Z);
-      this.group.add(tower);
+      if (!this.royal) {
+        const tower = buildGateTower(armyColor);
+        tower.position.set(s * (GATE_HALF + towerHalf), 0, WALL_Z);
+        this.group.add(tower);
+      }
       this.solid({ x: s * (GATE_HALF + towerHalf), y: 6, z: WALL_Z, hx: towerHalf, hy: 6, hz: towerHalf });
     }
+    if (this.royal) this.buildRoyalTowers();
+  }
+
+  /** Stirling's round towers on the four corners and either side of the Forework gate, and bartizans along the walls. */
+  private buildRoyalTowers(): void {
+    const p = new PartBuilder();
+    const flag = saltire();
+    const flagAt = (x: number, y: number, z: number) => {
+      const f = new THREE.Mesh(new THREE.PlaneGeometry(3.6, 2.3).translate(1.8, 0, 0), flag);
+      f.position.set(x, y, z);
+      this.group.add(f);
+    };
+    for (const sx of [-1, 1]) {
+      for (const sz of [-1, 1]) {
+        const tip = addCornerTower(p, sx * WALL_X, sz * WALL_Z);
+        flagAt(sx * WALL_X, tip - 0.6, sz * WALL_Z);
+        this.solid({ x: sx * WALL_X, y: 7.5, z: sz * WALL_Z, hx: 6.4, hy: 7.5, hz: 6.4 });
+      }
+    }
+    for (const sx of [-1, 1]) addGateTower(p, sx * (GATE_HALF + 4.6), WALL_Z, 1);
+    const detail = (x0: number, z0: number, x1: number, z1: number) => {
+      const along = Math.atan2(x1 - x0, z1 - z0);
+      const out = Math.sign(Math.cos(along) * ((x0 + x1) / 2) - Math.sin(along) * ((z0 + z1) / 2)) || 1;
+      addWallDetail(p, x0, z0, x1, z1, WALL_HEIGHT, WALL_THICK, out, 0x434b55);
+    };
+    detail(-WALL_X + 9, -WALL_Z, WALL_X - 9, -WALL_Z);
+    detail(-WALL_X, -WALL_Z + 9, -WALL_X, WALL_Z - 9);
+    detail(WALL_X, -WALL_Z + 9, WALL_X, WALL_Z - 9);
+    p.buildInto(this.group);
   }
 
   // ---------- the cell block ----------
@@ -151,7 +200,7 @@ export class Dungeon {
     const width = count * CELL_PITCH + 2;
     const frontZ = DOOR_Z - CELL_DEPTH; // the block's face behind the cells
     const p = new PartBuilder();
-    const stone = plastic(STONE);
+    const stone = plastic(this.royal ? BUFF : STONE);
     const stoneDark = plastic(STONE_DARK);
     const gloom = plastic(GLOOM);
     const iron = plastic(IRON);
@@ -180,6 +229,7 @@ export class Dungeon {
     const roof = new THREE.Group();
     p.buildInto(roof);
     this.group.add(roof);
+    if (this.royal) this.addRoyalRoof(width, depth);
     this.solid({ x: 0, y: BLOCK_HEIGHT / 2, z: BLOCK_BACK + depth / 2, hx: width / 2, hy: BLOCK_HEIGHT / 2, hz: depth / 2 });
 
     for (let i = 0; i < count; i++) {
@@ -196,6 +246,30 @@ export class Dungeon {
       cells.push({ index: i, x, door, bars, open: 0, opening: false, prisoners: [] });
     }
     return cells;
+  }
+
+  /** A steep slate roof, gable ends, and chimney stacks over the cell block (Stirling's palace vaults). */
+  private addRoyalRoof(width: number, depth: number): void {
+    const rp = new PartBuilder();
+    const slate = plastic(0x59636f);
+    const buff = plastic(BUFF);
+    gableRoofAlongX(rp, width, depth, 5, BLOCK_HEIGHT + 0.5, slate, 0.7, 0.4);
+    for (const sx of [-1, 1]) rp.add(prism(depth, 5, 0.6).rotateY(Math.PI / 2), buff, sx * (width / 2 - 0.3), BLOCK_HEIGHT + 0.5, 0);
+    for (let i = 0; i < 4; i++) {
+      const x = (i - 1.5) * (width / 4);
+      rp.add(new THREE.BoxGeometry(1.7, 3.2, 1.7), buff, x, BLOCK_HEIGHT + 4.6, 0);
+      rp.add(new THREE.BoxGeometry(2.2, 0.3, 2.2), plastic(STONE_DARK), x, BLOCK_HEIGHT + 6.3, 0);
+      for (const dx of [-0.4, 0.4]) rp.add(new THREE.CylinderGeometry(0.28, 0.34, 0.9, 8), plastic(0xa5502e), x + dx, BLOCK_HEIGHT + 6.9, 0);
+    }
+    const g = new THREE.Group();
+    rp.buildInto(g);
+    g.position.z = BLOCK_BACK + depth / 2;
+    this.group.add(g);
+    const standard = new THREE.Mesh(new THREE.PlaneGeometry(4.6, 3).translate(2.3, 0, 0), royalStandard());
+    standard.position.set(0, BLOCK_HEIGHT + 12, BLOCK_BACK + depth / 2);
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.13, 8, 6), plastic(WOOD_DARK));
+    pole.position.set(0, BLOCK_HEIGHT + 9, BLOCK_BACK + depth / 2);
+    this.group.add(standard, pole);
   }
 
   /** Puts `n` of our soldiers in a cell (called by the game, which knows how many are held). */
@@ -219,7 +293,55 @@ export class Dungeon {
 
   // ---------- cover ----------
 
+  /** The royal courtyard: Stirling's Great Hall, Chapel Royal and Great Kitchens round the yard, a knot garden, the Elphinstone Tower, and cover. */
+  private buildRoyalProps(): void {
+    const put = (model: THREE.Object3D, x: number, z: number, yaw = 0) => {
+      model.position.set(x, 0, z);
+      model.rotation.y = yaw;
+      this.group.add(model);
+    };
+    put(buildStirlingGreatHall(0xc4a468), 28.4, 8);
+    this.solid({ x: 28.4, y: 6, z: 8, hx: 7.8, hy: 6, hz: 20.3 });
+    this.solid({ x: 28.4, y: 6, z: -14.5, hx: 5.4, hy: 6, hz: 5.4 });
+    put(buildChapelRoyal(0xc4a468), -29, 24);
+    this.solid({ x: -29, y: 4.5, z: 24, hx: 5.8, hy: 4.5, hz: 10.4 });
+    put(buildGreatKitchens(0xc4a468), -29.6, -3, Math.PI);
+    this.solid({ x: -29, y: 4, z: -3, hx: 6.2, hy: 4, hz: 15.2 });
+    put(buildElphinstoneTower(), 0, -6);
+    this.solid({ x: 0, y: 12, z: -6, hx: 5.6, hy: 12, hz: 5.6 });
+    put(buildKnotGarden(), 0, 16);
+    const p = new PartBuilder();
+    const wood = plastic(WOOD);
+    const woodDark = plastic(WOOD_DARK);
+    const iron = plastic(IRON);
+    const hay = plastic(0xe3c45a);
+    const crate = (x: number, z: number, s: number, yaw: number) => {
+      p.add(new THREE.BoxGeometry(2 * s, 1.6 * s, 2 * s), wood, x, 0.8 * s, z, 0, yaw);
+      p.add(new THREE.BoxGeometry(2.1 * s, 0.18 * s, 2.1 * s), woodDark, x, 0.3 * s, z, 0, yaw);
+      this.solid({ x, y: 0.8 * s, z, hx: s, hy: 0.8 * s, hz: s, yaw });
+    };
+    const barrel = (x: number, z: number) => {
+      p.add(new THREE.CylinderGeometry(0.62, 0.56, 1.3, 12), wood, x, 0.65, z);
+      for (const y of [0.25, 1.05]) p.add(new THREE.CylinderGeometry(0.66, 0.66, 0.1, 12), iron, x, y, z);
+      this.round(x, z, 0.62, 1.3);
+    };
+    const bale = (x: number, z: number, yaw: number) => {
+      p.add(new THREE.BoxGeometry(2.4, 1.2, 1.2), hay, x, 0.6, z, 0, yaw);
+      this.solid({ x, y: 0.6, z, hx: 1.2, hy: 0.6, hz: 0.6, yaw });
+    };
+    crate(-12, 25, 1.1, 0.2); crate(-9.8, 26.8, 0.9, -0.3); barrel(-13.6, 27.6);
+    crate(12, 24, 1.2, -0.2); crate(10, 26, 0.9, 0.4); barrel(13.4, 26.6); bale(11.4, 21.4, 0.5);
+    crate(-13, 4, 1.2, 0.1); crate(-10.6, 5.8, 0.9, 0.5); bale(-14.8, 2.6, -0.2);
+    crate(13.5, 1, 1.1, 0.3); barrel(11.6, 3.4); bale(14, -2.6, 0.6);
+    crate(-12, -9, 1.0, 0.5); barrel(-14, -7.6); crate(12.4, -10, 1.0, -0.2);
+    p.buildInto(this.group);
+  }
+
   private buildProps(): void {
+    if (this.royal) {
+      this.buildRoyalProps();
+      return;
+    }
     const p = new PartBuilder();
     const wood = plastic(WOOD);
     const woodDark = plastic(WOOD_DARK);
@@ -304,6 +426,18 @@ export class Dungeon {
    */
   private guardPosts(): GuardPost[] {
     const lane = (x0: number, z0: number, x1: number, z1: number) => ({ x: x0, z: z0, yaw: Math.atan2(-(x1 - x0), -(z1 - z0)), zone: 'yard' as const, patrol: [{ x: x0, z: z0 }, { x: x1, z: z1 }] });
+    if (this.royal) {
+      return [
+        lane(-18, 32, -18, -14),
+        lane(18, -14, 18, 32),
+        lane(-21, -15.5, 21, -15.5),
+        { x: -8, z: 10, yaw: 0, zone: 'yard', sight: 14 },
+        { x: 9, z: -3, yaw: Math.PI, zone: 'yard', sight: 14 },
+        { x: -10, z: 14, yaw: -Math.PI / 2, zone: 'yard', sight: 12 },
+        { x: 7, z: 8, yaw: Math.PI / 2, zone: 'yard', sight: 12 },
+        { x: 0, z: -13.2, yaw: Math.PI, zone: 'yard', sight: 12 },
+      ];
+    }
     return [
       lane(-21, 32, -21, -14), // down the west side
       lane(21, -14, 21, 32), // and the east

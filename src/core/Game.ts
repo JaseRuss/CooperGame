@@ -2351,14 +2351,15 @@ export class Game {
   private findJailbreak(): Prison | null {
     const siege = this.siege;
     if (!siege || this.player.isChopper || this.hud.paused || this.victoryTimer > 0) return null;
-    return siege.enemyPrisons.find((p) => p.held > 0 && p.nearGate(this.player.position, JAILBREAK_REACH)) ?? null;
+    // The Great Castle's dungeon is sealed until its gates open (every other castle taken).
+    return siege.enemyPrisons.find((p) => p.held > 0 && !(p === siege.royalPrison && this.fortress.locked) && p.nearGate(this.player.position, JAILBREAK_REACH)) ?? null;
   }
 
   /** Gets out of the tank and goes into the prison on foot: the level is saved, and the on-foot page takes over. */
   private startJailbreak(prison: Prison): void {
     const siege = this.siege as SiegeWar;
     saveSnapshot(this.captureSiege());
-    saveRequest({ prison: siege.prisons.indexOf(prison), held: prison.held });
+    saveRequest({ prison: siege.prisons.indexOf(prison), held: prison.held, royal: prison === siege.royalPrison });
     saveResult(null);
     const url = new URL(window.location.href);
     url.searchParams.set('mission', '6');

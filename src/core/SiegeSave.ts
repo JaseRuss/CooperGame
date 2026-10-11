@@ -21,6 +21,8 @@ export interface JailbreakRequest {
   prison: number;
   /** Our soldiers locked up inside. */
   held: number;
+  /** The Great Castle's dungeon, dressed like Stirling Castle. */
+  royal?: boolean;
 }
 
 /** How it ended: the prisoners freed (0 if the player gave up). */
