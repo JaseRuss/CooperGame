@@ -154,11 +154,12 @@ function prepareMaterials(obj: THREE.Object3D): void {
 export class AssetLibrary {
   private readonly models = new Map<string, THREE.Object3D>();
 
-  async load(onProgress?: (loaded: number, total: number) => void): Promise<void> {
+  /** `only`: load just these groups (the on-foot jungle needs the trees and huts, not the city). */
+  async load(onProgress?: (loaded: number, total: number) => void, only?: AssetGroup[]): Promise<void> {
     const manager = new THREE.LoadingManager();
     manager.setURLModifier(versionAssetURL);
     const loader = new GLTFLoader(manager);
-    const groups = (Object.keys(MANIFEST) as AssetGroup[]).filter((g) => JUNGLE || !JUNGLE_GROUPS.includes(g));
+    const groups = only ?? (Object.keys(MANIFEST) as AssetGroup[]).filter((g) => JUNGLE || !JUNGLE_GROUPS.includes(g));
     const jobs = groups.flatMap((group) =>
       MANIFEST[group].names.map((name) => ({ group, name, url: `${import.meta.env.BASE_URL}models/${MANIFEST[group].dir}/${name}.glb` })),
     );

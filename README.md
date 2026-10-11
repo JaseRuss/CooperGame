@@ -316,14 +316,29 @@ rocket down each side.
 
 ## Mission 2: Jungle Strike
 
-Win the first mission and the jungle is next: thick jungle on a fresh battlefield,
-with villages of wooden huts and shacks joined by dirt tracks. The trees hide
-the enemy until you're close, so drive through them or blast them over with the
-main gun to clear a path.
+Win the first mission and the jungle is next, and this one is **entirely on foot**: a small,
+very dense patch of jungle (about 3,400 trees), you, and a **squad** of four green soldiers who
+follow you, shoot at what they can see, and get back up after being knocked down. Press **X** to
+make them hold their ground or follow you again.
+
+- **Three enemy outposts** (the tan and blue armies' hut camps), each with an ammo dump in a storage hut. Blow
+  all three up to win. Stand next to a dump for two seconds and you plant a **bomb** (you start with three and can
+  carry five). It goes off after seven seconds, so run, and your squad runs too.
+- **An enemy airbase right by where you start.** It's optional: wreck its three jets and **paratroopers** drop in to
+  join your squad, along with a supply crate that refills your grenades and gives you another bomb.
+- **Lookout towers.** Walk up to the foot of the ladder to climb. From the top you can see over the trees, and the
+  ground around the tower is revealed on your map (the rest starts out unscouted). Walk to the gap in the rail to climb down.
+- **The jam gun** (hold **E**) is a short-range handheld cannon that sticks soldiers and **knocks trees flat**, so you
+  can clear a way or a line of sight.
+- **The grenade launcher** (**F**, right click or LB) fires four lobbed grenades, then needs a 20 second reload.
+- **Rain storms** roll in every minute or two: the sky darkens, the rain pours, and everyone (you and the enemy)
+  can only see a short way until it clears. Creeping (Shift) makes you harder to spot.
+- You can also use the rifle (click) and the checkpoint (R). The enemy shoots back and calls for help
+  once they've seen you, so scout first, then pick the outposts off one at a time.
 
 ## Mission 3: Castle Siege
 
-Win the jungle and you ride into the land of knights. You're still in your tank,
+Win the jungle and you're back in your tank in the land of knights,
 but the enemy bases are stone **castles** with towers, a gatehouse, a keep, a
 great hall, a forge, powder stores (one shell sets them off), a watchtower and a
 trebuchet. Shells can knock holes in the castle walls, so you don't have to go

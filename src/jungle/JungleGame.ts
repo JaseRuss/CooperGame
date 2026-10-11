@@ -1,0 +1,1050 @@
+import * as THREE from 'three';
+import RAPIER from '@dimforge/rapier3d-compat';
+import { initPhysics, createWorld } from '../physics/PhysicsWorld';
+import { InputManager, type InputState } from '../input/InputManager';
+import { HUD, type HUDState, type PrisonHUD } from '../ui/HUD';
+import type { MapView } from '../ui/WorldMap';
+import { Sound } from '../audio/Sound';
+import { ImpactEffects } from '../combat/ImpactEffects';
+import { JamCannon } from '../combat/JamCannon';
+import { AssetLibrary } from '../world/AssetLibrary';
+import { loadSettings, saveSettings, AIM_SPEED_SCALE, GRAPHICS_QUALITY, type Settings } from '../core/Settings';
+import { MISSIONS, MISSION, startMission } from '../core/config';
+import { PlayerSoldier, MAX_HEALTH } from '../prison/PlayerSoldier';
+import { ShoulderCam } from '../prison/ShoulderCam';
+import { FRIEND_SHOTS, ENEMY_SHOTS, WALLS_ONLY } from '../prison/groups';
+import { ARMY_GREEN, ARMY_TAN, ARMY_BLUE } from '../utils/plastic';
+import { mulberry32 } from '../utils/rng';
+import { Forest, type Clearing } from './Forest';
+import { Weather } from './Weather';
+import { Trooper } from './Trooper';
+import { Enemies } from './Enemies';
+import { Squad } from './Squad';
+import type { Battle } from './Battle';
+import { Explosives, type Blast } from './Explosives';
+import { Drops } from './Drops';
+import { JungleMap } from './JungleMap';
+import { Solids, Lookout, Target, buildOutpost, buildAirbase, type Outpost, type Airbase } from './Props';
+
+/** The jungle is a square this many metres either side of the middle. */
+const HALF = 190;
+const START = { x: 0, z: 165, yaw: 0 };
+const AIRBASE_AT = { x: -60, z: 128 };
+const LOOKOUTS = [
+  { x: 32, z: 112 },
+  { x: -118, z: -22 },
+  { x: 108, z: -88 },
+];
+const OUTPOSTS: { name: string; army: 'tan' | 'blue'; x: number; z: number }[] = [
+  { name: 'West outpost', army: 'tan', x: -102, z: 34 },
+  { name: 'East outpost', army: 'blue', x: 104, z: 6 },
+  { name: 'North outpost', army: 'tan', x: -8, z: -126 },
+];
+const PATROLS = [
+  { x: -36, z: 70 },
+  { x: 58, z: 52 },
+];
+const SQUAD_SIZE = 4;
+const SQUAD_HP = 40;
+const ENEMY_HP = 3;
+const MAX_SQUAD = 8;
+
+const SHADOW_HALF = 38;
+const SHOT_RANGE = 120;
+const TRACER_TIME = 0.06;
+/** What an enemy hit takes off the player or a squad mate, and a rifle hit off an enemy. */
+const ENEMY_DAMAGE = 7;
+/** The rifle's noise is heard this far (halved in a storm). */
+const SHOT_NOISE = 44;
+/** The jam gun, as on the prison level. */
+const JAM_INTERVAL = 0.07;
+const JAM_SPEED = 22;
+const JAM_GRAVITY = 12;
+const JAM_RANGE = 22;
+const JAM_DRAIN = 0.28;
+const JAM_REFILL = 0.2;
+const JAM_RADIUS = 1.8;
+/** A jam splat knocks flat every tree this close to it. */
+const JAM_TREE_RADIUS = 1.6;
+/** The grenade launcher: shots in a magazine, and how long the reload takes once it's empty. */
+const GRENADES = 4;
+const GRENADE_RELOAD = 20;
+const BOMBS_AT_START = 3;
+const MAX_BOMBS = 5;
+/** Planting a bomb: stand at the dump this long, within this distance. */
+const PLANT_TIME = 2;
+const PLANT_REACH = 7;
+/** Climbing a lookout: seconds up and down, how far round it you can see from the top. */
+const CLIMB_TIME = 3.4;
+const SCOUT_RADIUS = 110;
+const START_REVEAL = 78;
+const WALK_REVEAL = 26;
+const LADDER_REACH = 1.4;
+const HATCH_DWELL = 0.7;
+const VICTORY_DELAY = 11;
+
+const CONTROLS =
+  '<span><b>Move</b> left stick · W A S D</span><span><b>Aim</b> right stick · mouse</span>' +
+  '<span><b>Creep</b> (they see you from less far) RB · Shift</span><span><b>Rifle</b> RT · click</span>' +
+  '<span><b>Jam gun</b> (knocks trees flat, sticks soldiers) hold LT · hold E</span>' +
+  '<span><b>Grenade launcher</b> (4 shots, then a reload) LB · F · right click</span>' +
+  '<span><b>Squad: hold here / follow me</b> X</span><span><b>Camera</b> Y · C</span><span><b>Back to checkpoint</b> Back · R</span>' +
+  '<span><b>Bomb</b> plants itself when you stand at an ammo dump</span>';
+
+const NO_MAP: MapView = {
+  playerX: 0,
+  playerZ: 0,
+  playerYaw: 0,
+  friendlyBases: [],
+  enemyBases: [],
+  buddies: [],
+  markers: [],
+  objective: null,
+  home: null,
+  fortress: { x: 0, z: 0, name: '', title: '', locked: false, destroyed: false, friendly: true },
+  stations: [],
+  prisons: [],
+  wagons: [],
+  tanker: null,
+  airbase: null,
+};
+
+interface Climb {
+  tower: Lookout;
+  up: boolean;
+  t: number;
+  path: THREE.Vector3[];
+}
+
+interface Crate {
+  mesh: THREE.Mesh;
+  pos: THREE.Vector3;
+}
+
+/**
+ * Mission 2, the jungle, on foot. A small square of very thick jungle: thousands of trees (you can
+ * knock them flat with the jam gun), lookout towers to climb for a view that puts the country round
+ * them on the map, rain storms that roll in and cut the fog in to a few dozen metres, three enemy
+ * outposts whose ammunition dumps you blow up with a planted bomb, an enemy airbase near where you
+ * start (wreck its jets and paratroopers and a supply drop come in), a grenade launcher, and a
+ * squad of four who follow you and fight.
+ */
+export class JungleGame {
+  private readonly renderer: THREE.WebGLRenderer;
+  private readonly scene = new THREE.Scene();
+  private readonly camera: THREE.PerspectiveCamera;
+  private readonly input: InputManager;
+  private readonly hud: HUD;
+  private readonly sound = new Sound(MISSION);
+  private readonly sun: THREE.DirectionalLight;
+  private readonly hemi: THREE.HemisphereLight;
+  private readonly fog: THREE.Fog;
+  private readonly clock = new THREE.Clock();
+  private readonly loadingLabel: HTMLDivElement;
+  private settings: Settings = loadSettings();
+  private ready = false;
+  private pausedRendered = false;
+  private world!: RAPIER.World;
+  private impacts!: ImpactEffects;
+  private jam!: JamCannon;
+  private forest!: Forest;
+  private weather!: Weather;
+  private solids!: Solids;
+  private explosives!: Explosives;
+  private drops!: Drops;
+  private player!: PlayerSoldier;
+  private cam!: ShoulderCam;
+  private squad = new Squad();
+  private enemies = new Enemies();
+  private battle!: Battle;
+  private map = new JungleMap(HALF);
+  private lookouts: Lookout[] = [];
+  private outposts: Outpost[] = [];
+  private airbase!: Airbase;
+  private readonly crates: Crate[] = [];
+  private readonly byHandle = new Map<number, Trooper>();
+  private readonly trail: THREE.Vector3[] = [];
+  private checkpoint = { x: START.x, z: START.z - 3, yaw: START.yaw };
+  private time = 0;
+  private jamTank = 1;
+  private jamCooldown = 0;
+  private grenades = GRENADES;
+  private reload = 0;
+  private bombs = BOMBS_AT_START;
+  private plantProgress = 0;
+  private climb: Climb | null = null;
+  private onTower: Lookout | null = null;
+  private hatchDwell = 0;
+  private scouted = false;
+  private airSupportCalled = false;
+  private victoryAt: number | null = null;
+  private mapAge = 0;
+  private mapView: MapView = NO_MAP;
+  private reinforcements = 0;
+  private downTime = 0;
+  private readonly stats = { enemiesDown: 0, treesFelled: 0, grenadesFired: 0 };
+  private readonly tracers: { line: THREE.Line; age: number }[] = [];
+  private readonly friendTracer = new THREE.LineBasicMaterial({ color: 0xffe7a0, transparent: true });
+  private readonly enemyTracer = new THREE.LineBasicMaterial({ color: 0xff9a5a, transparent: true });
+  /** Dev only: pins the camera for screenshots. */
+  debugCam: { pos: [number, number, number]; look: [number, number, number] } | null = null;
+
+  constructor(container: HTMLElement) {
+    this.renderer = new THREE.WebGLRenderer({ antialias: this.settings.graphicsQuality !== 'low' });
+    const graphics = GRAPHICS_QUALITY[this.settings.graphicsQuality];
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, graphics.pixelRatio));
+    this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this.renderer.shadowMap.enabled = graphics.shadowSize > 0;
+    this.renderer.shadowMap.autoUpdate = false;
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
+    container.appendChild(this.renderer.domElement);
+
+    this.camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 600);
+    this.input = new InputManager(this.renderer.domElement);
+    this.hud = new HUD(container);
+    this.hud.setSoundHook((kind) => this.sound.play(kind === 'move' ? 'uiMove' : kind === 'change' ? 'uiChange' : kind === 'back' ? 'uiBack' : kind === 'open' ? 'uiOpen' : 'uiConfirm', { volume: 0.5, minGap: 0 }));
+
+    this.loadingLabel = document.createElement('div');
+    this.loadingLabel.style.cssText =
+      'position:absolute; inset:0; display:flex; align-items:center; justify-content:center;' +
+      "font-size:22px; background:#0a0e14; color:#e8eef5; font-family:'Segoe UI',system-ui,sans-serif; z-index:10;";
+    this.loadingLabel.textContent = 'Loading jungle…';
+    container.appendChild(this.loadingLabel);
+
+    this.fog = new THREE.Fog(0x9fbfa4, 28, 235);
+    this.scene.fog = this.fog;
+    this.hemi = new THREE.HemisphereLight(0xd6f0d0, 0x2c3b24, 1.5);
+    this.scene.add(this.hemi);
+    this.sun = new THREE.DirectionalLight(0xfff0cc, 1.15);
+    this.sun.castShadow = true;
+    this.sun.shadow.mapSize.set(graphics.shadowSize || 1024, graphics.shadowSize || 1024);
+    const sh = this.sun.shadow.camera;
+    sh.left = sh.bottom = -SHADOW_HALF;
+    sh.right = sh.top = SHADOW_HALF;
+    sh.far = 160;
+    this.sun.shadow.bias = -0.0008;
+    this.scene.add(this.sun, this.sun.target);
+
+    window.addEventListener('resize', () => this.onResize());
+    void this.init();
+  }
+
+  private async init(): Promise<void> {
+    await initPhysics();
+    this.world = createWorld();
+    this.impacts = new ImpactEffects(this.scene);
+    this.jam = new JamCannon(this.scene, () => 0, FRIEND_SHOTS);
+    this.explosives = new Explosives(this.scene, this.world);
+    this.drops = new Drops(this.scene, (kind, at) => this.landed(kind, at));
+    const assets = new AssetLibrary();
+    await assets.load((n, total) => (this.loadingLabel.textContent = `Loading jungle… ${n}/${total}`), ['jungleTree', 'undergrowth', 'hut', 'bigHut']);
+    this.solids = new Solids(this.world);
+
+    // The ground, and the edge of the map.
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(900, 900).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0x3c5a2c, roughness: 1 }));
+    floor.receiveShadow = true;
+    this.scene.add(floor);
+    this.solids.box(0, -0.5, 0, 450, 0.5, 450);
+    for (const [x, z, hx, hz] of [[0, -HALF - 1, HALF + 4, 1], [0, HALF + 1, HALF + 4, 1], [-HALF - 1, 0, 1, HALF + 4], [HALF + 1, 0, 1, HALF + 4]]) this.solids.box(x, 15, z, hx, 15, hz);
+
+    // Where things stand, and the clearings the forest leaves for them.
+    this.lookouts = LOOKOUTS.map((l) => new Lookout(this.solids, this.scene, l.x, l.z));
+    this.outposts = OUTPOSTS.map((o) => buildOutpost(assets, this.scene, this.solids, o.name, o.army, o.army === 'tan' ? ARMY_TAN : ARMY_BLUE, o.x, o.z));
+    this.airbase = buildAirbase(this.scene, this.solids, AIRBASE_AT.x, AIRBASE_AT.z, ARMY_TAN);
+    const clearings: Clearing[] = [
+      { x: START.x, z: START.z, r: 17 },
+      ...this.lookouts.map((l) => ({ x: l.x, z: l.z + 1, r: 9 })),
+      ...this.outposts.map((o) => ({ x: o.x, z: o.z, r: o.r })),
+      this.airbase.clearing,
+    ];
+    this.forest = new Forest(this.world, this.scene, assets, HALF, clearings, 20241011);
+
+    this.weather = new Weather(this.scene, this.fog, this.hemi, this.sun);
+    this.scene.background = this.weather.skyColor;
+
+    // The player and his squad.
+    this.player = new PlayerSoldier(this.world, START.x, START.z, START.yaw);
+    this.scene.add(this.player.root);
+    this.cam = new ShoulderCam(this.camera, this.world);
+    const names = this.settings.buddyNames;
+    for (let i = 0; i < SQUAD_SIZE; i++) this.addSquadMate(START.x + (i - 1.5) * 1.6, START.z + 2.4, names[i] ?? `Buddy ${i + 1}`);
+
+    // The enemy: six at each outpost, four guarding the airbase, two patrols out in the trees.
+    const rng = mulberry32(777);
+    for (const o of this.outposts) {
+      for (let i = 0; i < 6; i++) {
+        const a = rng() * Math.PI * 2;
+        const r = 5 + rng() * 11;
+        this.addEnemy(o.x + Math.cos(a) * r, o.z + Math.sin(a) * r, o.army === 'tan' ? ARMY_TAN : ARMY_BLUE, 9);
+      }
+    }
+    for (let i = 0; i < 4; i++) this.addEnemy(AIRBASE_AT.x - 18 + i * 14, AIRBASE_AT.z - 6 + (i % 2) * 14, ARMY_TAN, 8);
+    for (const p of PATROLS) for (let i = 0; i < 3; i++) this.addEnemy(p.x + (rng() - 0.5) * 8, p.z + (rng() - 0.5) * 8, i % 2 ? ARMY_BLUE : ARMY_TAN, 18);
+
+    this.battle = this.makeBattle();
+    this.map.reveal(START.x, START.z, START_REVEAL);
+    this.hud.setWorldMap(this.map.asWorldMap());
+    this.hud.setOnFoot(CONTROLS, {
+      legend: '<span><i style="background:#4b7a2e"></i>You and your squad</span><span><i style="background:#c4a468"></i>Tan army</span><span><i style="background:#3f6fb0"></i>Blue army</span><span>Dark ground: not scouted yet. Climb a lookout to reveal the map around it</span>',
+    });
+    this.hud.setSettings(this.settings, (s) => {
+      this.settings = s;
+      saveSettings(s);
+      this.applySettings();
+    });
+    this.applySettings();
+    this.hud.setMissionStart((m) => startMission(m));
+    for (const o of this.outposts) o.dump.onDestroyed = () => this.onDumpDestroyed(o);
+    for (const j of this.airbase.jets) j.onDestroyed = () => this.onJetDestroyed();
+    void this.sound.load();
+    this.world.step();
+
+    this.loadingLabel.remove();
+    this.ready = true;
+    this.sound.music.start();
+    this.clock.start();
+    this.hud.showBanner('MISSION 2: JUNGLE PATROL', 'On foot with your squad. Scout from a lookout tower, wreck the airbase jets, and blow up the ammo dumps at the three enemy outposts');
+    if (import.meta.env.DEV) (window as unknown as { jungle: JungleGame }).jungle = this;
+    requestAnimationFrame(this.animate);
+  }
+
+  private applySettings(): void {
+    const graphics = GRAPHICS_QUALITY[this.settings.graphicsQuality];
+    const ratio = Math.min(window.devicePixelRatio, graphics.pixelRatio);
+    if (this.renderer.getPixelRatio() !== ratio) this.renderer.setPixelRatio(ratio);
+    this.renderer.shadowMap.enabled = graphics.shadowSize > 0;
+    this.renderer.shadowMap.autoUpdate = false;
+    const size = graphics.shadowSize || 1024;
+    if (this.sun.shadow.mapSize.x !== size) {
+      this.sun.shadow.map?.dispose();
+      this.sun.shadow.map = null;
+      this.sun.shadow.mapSize.set(size, size);
+    }
+    this.input.setAimScale(AIM_SPEED_SCALE[this.settings.aimSpeed]);
+    this.sound.setVolumes(this.settings.sfxVolume, this.settings.musicVolume);
+    this.pausedRendered = false;
+  }
+
+  private onResize(): void {
+    this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this.hud.setViewport({ left: 0, top: 0, width: window.innerWidth, height: window.innerHeight });
+    this.pausedRendered = false;
+  }
+
+  // ---------- people ----------
+
+  private addSquadMate(x: number, z: number, name: string): Trooper {
+    const t = new Trooper(this.world, x, z, 'friend', ARMY_GREEN, SQUAD_HP, name);
+    this.scene.add(t.root);
+    this.byHandle.set(t.collider.handle, t);
+    this.squad.add(t);
+    return t;
+  }
+
+  private addEnemy(x: number, z: number, color: number, roam: number): void {
+    const t = new Trooper(this.world, x, z, 'enemy', color, ENEMY_HP);
+    this.scene.add(t.root);
+    this.byHandle.set(t.collider.handle, t);
+    this.enemies.add(t, roam);
+  }
+
+  private makeBattle(): Battle {
+    const game = this;
+    const chest = new THREE.Vector3();
+    return {
+      sees: (a, b) => this.sees(a, b),
+      get visibility() {
+        return game.weather.visibility;
+      },
+      player: {
+        get pos() {
+          return game.player.position;
+        },
+        get chest() {
+          return chest.copy(game.player.position).setY(game.player.position.y + 1.15);
+        },
+        get down() {
+          return game.player.isDown;
+        },
+        get sneaking() {
+          return game.player.sneaking;
+        },
+      },
+      fireAt: (shooter, aim) => this.troopFire(shooter, aim),
+      squad: () => this.squad.list.filter((b) => b.t.active).map((b) => b.t),
+      enemies: () => this.enemies.list.filter((b) => b.t.active).map((b) => b.t),
+      bombs: () => this.explosives.armed(),
+    };
+  }
+
+  // ---------- shooting ----------
+
+  /** A clear line (trunks, huts and walls block it; people don't). */
+  private sees(a: THREE.Vector3, b: THREE.Vector3): boolean {
+    const dir = b.clone().sub(a);
+    const d = dir.length();
+    if (d < 0.01) return true;
+    return !this.world.castRay(new RAPIER.Ray(a, dir.divideScalar(d)), Math.max(0, d - 0.4), true, undefined, WALLS_ONLY);
+  }
+
+  private aimPoint(): THREE.Vector3 {
+    const camPos = this.camera.getWorldPosition(new THREE.Vector3());
+    const aim = this.cam.aimDirection();
+    const sight = this.world.castRay(new RAPIER.Ray(camPos, aim), SHOT_RANGE, true, undefined, FRIEND_SHOTS);
+    return camPos.addScaledVector(aim, sight ? sight.timeOfImpact : SHOT_RANGE);
+  }
+
+  /** One rifle round from `from` along `dir`: what it hits, tracer and all. */
+  private resolveRound(from: THREE.Vector3, dir: THREE.Vector3, side: 'friend' | 'enemy', by: Trooper | null): void {
+    const hit = this.world.castRay(new RAPIER.Ray(from, dir), SHOT_RANGE, true, undefined, side === 'friend' ? FRIEND_SHOTS : ENEMY_SHOTS);
+    const end = from.clone().addScaledVector(dir, hit ? hit.timeOfImpact : 60);
+    this.addTracer(from, end, side === 'friend' ? this.friendTracer : this.enemyTracer);
+    if (!hit) return;
+    const handle = hit.collider.handle;
+    if (side === 'friend') {
+      const e = this.byHandle.get(handle);
+      if (e && e.side === 'enemy' && !e.down) {
+        this.impacts.dustPuff(end);
+        if (e.hurt(1)) {
+          this.stats.enemiesDown++;
+          this.sound.play('thud', { at: end, volume: 0.5, rate: 1.2, minGap: 0.05 });
+        }
+      } else this.impacts.dustPuff(end);
+      return;
+    }
+    this.impacts.dustPuff(end);
+    if (handle === this.player.collider.handle) {
+      const wasUp = !this.player.isDown;
+      this.player.takeDamage(ENEMY_DAMAGE);
+      this.cam.addShake(0.22);
+      this.sound.play('thud', { volume: 0.45, rate: 1.6, minGap: 0.1 });
+      if (wasUp && this.player.isDown) this.downTime = 0;
+      return;
+    }
+    const f = this.byHandle.get(handle);
+    if (f && f.side === 'friend' && !f.down) f.hurt(ENEMY_DAMAGE);
+    void by;
+  }
+
+  /** A soldier fires at `aim`, with a scatter that grows with the range. */
+  private troopFire(shooter: Trooper, aim: THREE.Vector3): void {
+    const fwd = new THREE.Vector3(-Math.sin(shooter.yaw), 0, -Math.cos(shooter.yaw));
+    const from = shooter.pos.clone().setY(1.45).addScaledVector(fwd, 0.7);
+    const dir = aim.clone().sub(from);
+    const dist = dir.length();
+    dir.normalize();
+    const spread = (shooter.side === 'friend' ? 0.02 : 0.03) + dist * (shooter.side === 'friend' ? 0.0016 : 0.0021);
+    dir.x += (Math.random() - 0.5) * spread * 2;
+    dir.y += (Math.random() - 0.5) * spread;
+    dir.z += (Math.random() - 0.5) * spread * 2;
+    dir.normalize();
+    this.impacts.muzzleFlash(from, dir, 0.25);
+    this.sound.play('crack', { at: from, volume: 0.2, rate: shooter.side === 'friend' ? 2.1 : 1.8, minGap: 0.04 });
+    this.resolveRound(from, dir, shooter.side, shooter);
+    // A friend's shots are heard too: the enemy near them comes to look.
+    if (shooter.side === 'friend') this.enemies.hear(shooter.pos, SHOT_NOISE * this.weather.visibility * 0.8 + 8);
+  }
+
+  private firePlayerRifle(): void {
+    const muzzle = this.player.muzzle();
+    const target = this.aimPoint();
+    const dir = target.clone().sub(muzzle).normalize();
+    const hit = this.world.castRay(new RAPIER.Ray(muzzle, dir), SHOT_RANGE, true, undefined, FRIEND_SHOTS);
+    this.impacts.muzzleFlash(muzzle, dir, 0.3);
+    this.sound.play('crack', { volume: 0.28, rate: 2.3, minGap: 0.05 });
+    this.cam.addShake(0.07);
+    this.enemies.hear(muzzle, SHOT_NOISE * this.weather.visibility + 8);
+    void hit;
+    this.resolveRound(muzzle, dir, 'friend', null);
+  }
+
+  private addTracer(from: THREE.Vector3, to: THREE.Vector3, material: THREE.LineBasicMaterial): void {
+    const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints([from, to]), material);
+    this.scene.add(line);
+    this.tracers.push({ line, age: 0 });
+  }
+
+  private updateTracers(dt: number): void {
+    for (let i = this.tracers.length - 1; i >= 0; i--) {
+      const t = this.tracers[i];
+      t.age += dt;
+      if (t.age < TRACER_TIME) continue;
+      this.scene.remove(t.line);
+      t.line.geometry.dispose();
+      this.tracers.splice(i, 1);
+    }
+  }
+
+  // ---------- the jam gun ----------
+
+  private updateJam(input: InputState, dt: number): void {
+    const spraying = input.jamFiring && !this.player.isDown && this.jamTank > 0;
+    if (spraying) {
+      this.jamTank = Math.max(0, this.jamTank - JAM_DRAIN * dt);
+      this.jamCooldown -= dt;
+      if (this.jamCooldown <= 0) {
+        this.jamCooldown = JAM_INTERVAL;
+        this.lobJam(this.player.muzzle(), this.aimPoint());
+        this.sound.play('jamShot', { volume: 0.22, rate: 1.1, minGap: 0.09 });
+      }
+    } else {
+      this.jamCooldown = 0;
+      if (!input.jamFiring) this.jamTank = Math.min(1, this.jamTank + JAM_REFILL * dt);
+    }
+    this.jam.update(
+      dt,
+      this.world,
+      this.player.collider,
+      (point) => {
+        this.sound.play('splat', { at: point, volume: 0.9, minGap: 0.1 });
+        // Wherever it lands, trees within reach go over, away from the player.
+        const dir = new THREE.Vector3(point.x - this.player.position.x, 0, point.z - this.player.position.z).normalize();
+        this.forest.fell(point, dir, JAM_TREE_RADIUS);
+        this.jamSoldiers(point, JAM_RADIUS);
+      },
+      (point) => this.jamSoldiers(point, 1),
+    );
+  }
+
+  private jamSoldiers(point: THREE.Vector3, radius: number): number {
+    let n = 0;
+    for (const b of this.enemies.list) {
+      const t = b.t;
+      if (!t.active || Math.hypot(t.pos.x - point.x, t.pos.z - point.z) > radius || point.y > 3) continue;
+      if (t.jam()) {
+        n++;
+        this.enemies.hear(t.pos, 12);
+      }
+    }
+    return n;
+  }
+
+  private lobJam(from: THREE.Vector3, target: THREE.Vector3): void {
+    const dir = target.clone().sub(from);
+    const reach = Math.min(JAM_RANGE, Math.hypot(dir.x, dir.z));
+    dir.normalize();
+    dir.x += (Math.random() - 0.5) * 0.08;
+    dir.y += Math.min(0.4, (JAM_GRAVITY * reach) / (2 * JAM_SPEED * JAM_SPEED)) + (Math.random() - 0.5) * 0.05;
+    dir.z += (Math.random() - 0.5) * 0.08;
+    this.jam.fire(from, dir.normalize(), JAM_SPEED * (0.95 + Math.random() * 0.1));
+  }
+
+  // ---------- grenades and bombs ----------
+
+  private fireGrenade(): void {
+    if (this.grenades <= 0 || this.player.isDown) {
+      if (this.grenades <= 0) this.hud.showCallout(`GRENADE LAUNCHER RELOADING: ${Math.ceil(this.reload)}s`, '#ffd24a');
+      return;
+    }
+    const muzzle = this.player.muzzle();
+    const dir = this.aimPoint().sub(muzzle).normalize();
+    dir.y += 0.2;
+    this.explosives.launch(muzzle, dir.normalize());
+    this.grenades--;
+    this.stats.grenadesFired++;
+    if (this.grenades === 0) this.reload = GRENADE_RELOAD;
+    this.sound.play('cannon', { volume: 0.35, rate: 1.7, minGap: 0.2 });
+    this.impacts.muzzleFlash(muzzle, dir, 0.4);
+    this.cam.addShake(0.14);
+    this.enemies.hear(muzzle, 30 * this.weather.visibility + 8);
+  }
+
+  /** A grenade or bomb has gone off: everything near it feels it. */
+  private onBlast(b: Blast): void {
+    const bomb = b.kind === 'bomb';
+    this.impacts.explode(b.at, bomb ? 5 : 2);
+    if (bomb) {
+      for (let i = 0; i < 6; i++) this.impacts.explode(b.at.clone().add(new THREE.Vector3((Math.random() - 0.5) * 12, Math.random() * 4, (Math.random() - 0.5) * 12)), 2.4);
+    }
+    this.sound.play(bomb ? 'boom' : 'cannon', { at: b.at, volume: bomb ? 1 : 0.7, rate: bomb ? 0.7 : 1.2 });
+    const away = new THREE.Vector3();
+    for (const e of this.enemies.list) {
+      const t = e.t;
+      if (t.down) continue;
+      const d = Math.hypot(t.pos.x - b.at.x, t.pos.z - b.at.z);
+      if (d > b.radius) continue;
+      if (t.hurt(bomb ? 99 : d < b.radius * 0.55 ? 3 : 2)) this.stats.enemiesDown++;
+    }
+    this.enemies.hear(b.at, bomb ? 80 : 45);
+    // Friendly fire: the bigger the blast and the closer you are, the worse.
+    const power = bomb ? 90 : 30;
+    const dp = Math.hypot(this.player.position.x - b.at.x, this.player.position.z - b.at.z);
+    if (dp < b.radius && !this.player.isDown) {
+      const wasUp = !this.player.isDown;
+      this.player.takeDamage(power * (1 - dp / b.radius));
+      if (wasUp && this.player.isDown) this.downTime = 0;
+    }
+    for (const s of this.squad.list) {
+      const dist = Math.hypot(s.t.pos.x - b.at.x, s.t.pos.z - b.at.z);
+      if (dist < b.radius && !s.t.down) s.t.hurt(power * (1 - dist / b.radius));
+    }
+    // Trees go over, away from the blast; dumps and jets are damaged.
+    away.copy(b.at);
+    this.forest.fell(b.at, new THREE.Vector3(1, 0, 0), b.radius * 0.92);
+    for (const t of this.targets()) {
+      if (Math.hypot(t.pos.x - b.at.x, t.pos.z - b.at.z) < b.radius + t.radius) t.hurt(bomb ? 12 : 1.6);
+    }
+    const shake = 1 / Math.max(1, dp / 10);
+    this.cam.addShake((bomb ? 0.9 : 0.35) * Math.min(1, shake));
+  }
+
+  private targets(): Target[] {
+    return [...this.outposts.map((o) => o.dump), ...this.airbase.jets];
+  }
+
+  private onDumpDestroyed(o: Outpost): void {
+    o.beacon.visible = false;
+    o.flagMaterial.color.setHex(ARMY_GREEN);
+    this.impacts.explode(o.dump.pos, 4);
+    const left = this.outposts.filter((x) => x.dump.alive).length;
+    this.checkpoint = { x: o.x + 3, z: o.z + 15, yaw: 0 };
+    this.sound.music.stinger();
+    if (left === 0) {
+      this.victoryAt = this.time;
+      this.hud.showVictory('The jungle is ours! All three ammunition dumps are gone.', 'Starting the next mission shortly…');
+      this.sound.music.fanfare();
+    } else {
+      this.hud.showBanner(`${o.name.toUpperCase()} DESTROYED!`, `${left} ammo dump${left === 1 ? '' : 's'} to go`);
+    }
+  }
+
+  private onJetDestroyed(): void {
+    const left = this.airbase.jets.filter((j) => j.alive).length;
+    if (left > 0) {
+      this.hud.showCallout(`JET DOWN! ${left} LEFT AT THE AIRBASE`, '#8fd3ff');
+      return;
+    }
+    if (this.airSupportCalled) return;
+    this.airSupportCalled = true;
+    this.hud.showBanner('AIRBASE WRECKED!', 'Air support is on its way: paratroopers and a supply drop are coming in near you');
+    this.sound.music.stinger();
+    const p = this.player.position;
+    for (let i = 0; i < 4; i++) {
+      const a = (i / 4) * Math.PI * 2 + Math.random();
+      this.drops.drop('soldier', p.x + Math.cos(a) * (8 + Math.random() * 6), p.z + Math.sin(a) * (8 + Math.random() * 6), i * 0.7);
+    }
+    this.drops.drop('crate', p.x + 7, p.z - 4, 0.5);
+  }
+
+  /** A chute has come down: a paratrooper joins the squad, or the supply crate lands. */
+  private landed(kind: 'soldier' | 'crate', at: THREE.Vector3): void {
+    if (kind === 'soldier') {
+      if (this.squad.list.length < MAX_SQUAD) {
+        this.reinforcements++;
+        this.addSquadMate(at.x, at.z, `Para ${this.reinforcements}`);
+        this.impacts.dustPuff(at);
+      }
+      return;
+    }
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.8, 1.1), new THREE.MeshStandardMaterial({ color: 0x8b5e38 }));
+    mesh.position.set(at.x, 0.4, at.z);
+    this.scene.add(mesh);
+    this.crates.push({ mesh, pos: at.clone() });
+    this.hud.showCallout('SUPPLY CRATE LANDED: grenades and a bomb', '#ffd24a');
+  }
+
+  // ---------- the lookout towers ----------
+
+  private startClimb(tower: Lookout, up: boolean): void {
+    const top = tower.top;
+    const path = up
+      ? [tower.foot.clone(), new THREE.Vector3(tower.foot.x, top - 0.6, tower.foot.z - 0.2), tower.arrive.clone()]
+      : [tower.hatch.clone(), new THREE.Vector3(tower.hatch.x, top - 0.6, tower.hatch.z + 1.6), tower.foot.clone().setZ(tower.foot.z + 0.2)];
+    this.climb = { tower, up, t: 0, path };
+    this.sound.play('clang', { volume: 0.35, rate: 1.4 });
+  }
+
+  private updateClimb(dt: number): void {
+    const c = this.climb;
+    if (!c) return;
+    c.t = Math.min(1, c.t + dt / CLIMB_TIME);
+    const legs = c.path.length - 1;
+    const f = c.t * legs;
+    const i = Math.min(legs - 1, Math.floor(f));
+    const at = c.path[i].clone().lerp(c.path[i + 1], f - i);
+    this.player.climbAt(at, c.up ? 0 : Math.PI);
+    if (Math.floor(c.t * 9) !== Math.floor((c.t - dt / CLIMB_TIME) * 9)) this.sound.play('thud', { volume: 0.15, rate: 2, minGap: 0.1 });
+    if (c.t < 1) return;
+    this.climb = null;
+    if (c.up) {
+      const a = c.tower.arrive;
+      this.player.teleport(a.x, a.z, 0, a.y);
+      this.onTower = c.tower;
+      this.hatchDwell = 0;
+      const before = this.scouted;
+      this.map.reveal(c.tower.x, c.tower.z, SCOUT_RADIUS);
+      this.scouted = true;
+      this.hud.showBanner('FROM THE LOOKOUT', before ? 'More of the map is yours. Walk to the gap in the rail at the head of the ladder to climb down' : 'The country round the tower is on your map. Walk to the gap in the rail at the head of the ladder to climb down');
+    } else {
+      this.player.teleport(c.tower.foot.x, c.tower.foot.z + 0.6, Math.PI, 0);
+      this.onTower = null;
+    }
+  }
+
+  // ---------- the frame ----------
+
+  private toCheckpoint(): void {
+    this.player.teleport(this.checkpoint.x, this.checkpoint.z, this.checkpoint.yaw);
+    this.onTower = null;
+    this.climb = null;
+    this.downTime = 0;
+  }
+
+  private recordTrail(): void {
+    const p = this.player.position;
+    const last = this.trail[this.trail.length - 1];
+    if (!last || Math.hypot(p.x - last.x, p.z - last.z) > 0.7) this.trail.push(new THREE.Vector3(p.x, 0, p.z));
+    if (this.trail.length > 400) this.trail.splice(0, 100);
+  }
+
+  private updateWeather(dt: number): void {
+    this.weather.update(dt, this.camera);
+    for (const e of this.weather.takeEvents()) {
+      if (e === 'rolling') this.hud.showCallout('A STORM IS ROLLING IN: the visibility is dropping', '#8fd3ff');
+      else if (e === 'storm') this.hud.showBanner('RAIN STORM!', 'You can see only a few dozen metres, and so can they. Creep past, or fight in the downpour');
+      else if (e === 'clearing') this.hud.showCallout('THE STORM IS PASSING', '#c9d3dc');
+      else if (e === 'thunder') this.sound.play('boom', { volume: 0.45, rate: 0.5, minGap: 1 });
+    }
+  }
+
+  private updateSupplies(): void {
+    const p = this.player.position;
+    for (let i = this.crates.length - 1; i >= 0; i--) {
+      const c = this.crates[i];
+      if (Math.hypot(p.x - c.pos.x, p.z - c.pos.z) > 2.2) continue;
+      this.grenades = GRENADES;
+      this.reload = 0;
+      this.bombs = Math.min(MAX_BOMBS, this.bombs + 1);
+      this.scene.remove(c.mesh);
+      this.crates.splice(i, 1);
+      this.hud.showCallout('GRENADES RELOADED · +1 BOMB', '#ffd24a');
+      this.sound.play('uiConfirm', { volume: 0.7 });
+    }
+  }
+
+  /** At an ammo dump with a bomb: stand there a couple of seconds and it's planted. */
+  private updatePlanting(dt: number): void {
+    const p = this.player.position;
+    let near: Outpost | null = null;
+    if (!this.player.isDown && !this.onTower && !this.climb && this.bombs > 0) {
+      for (const o of this.outposts) {
+        if (!o.dump.alive) continue;
+        if (Math.hypot(p.x - o.x, p.z - o.z) < PLANT_REACH && !this.explosives.bombs.some((b) => Math.hypot(b.pos.x - o.x, b.pos.z - o.z) < 8)) near = o;
+      }
+    }
+    if (!near) {
+      this.plantProgress = Math.max(0, this.plantProgress - dt * 2);
+      return;
+    }
+    this.plantProgress += dt / PLANT_TIME;
+    if (this.plantProgress < 1) return;
+    this.plantProgress = 0;
+    this.bombs--;
+    // Down against the wall of the hut, a step in front of him.
+    const toward = new THREE.Vector3(near.x - p.x, 0, near.z - p.z).normalize();
+    this.explosives.plant(new THREE.Vector3(p.x + toward.x * 0.9, 0.25, p.z + toward.z * 0.9));
+    this.sound.play('clang', { volume: 0.6, rate: 1.1 });
+    this.hud.showBanner('BOMB ARMED!', 'Get clear: it goes off in seven seconds. The squad is running too');
+  }
+
+  private step(input: InputState, dt: number): void {
+    if (input.mapTogglePressed) this.hud.toggleBigMap();
+    this.time += dt;
+    this.updateWeather(dt);
+    if (this.victoryAt !== null && this.time - this.victoryAt > VICTORY_DELAY) {
+      const next = MISSIONS.find((m) => m.mission === MISSION + 1 && !m.bonus);
+      if (next) startMission(next.mission);
+      this.victoryAt = null;
+    }
+    if (input.cameraTogglePressed) this.cam.toggle();
+    if (input.megaJamPressed) {
+      const holding = this.squad.toggleHold();
+      this.hud.showCallout(holding ? 'SQUAD: HOLD HERE' : 'SQUAD: FOLLOW ME', holding ? '#ffd24a' : '#9be27a');
+      this.sound.play('uiChange', { volume: 0.5 });
+    }
+    if (this.player.isDown) this.downTime += dt;
+    const p = this.player.position;
+    if (this.climb) this.updateClimb(dt);
+    else {
+      const wasDown = this.player.isDown;
+      if (this.player.step(input, dt)) this.firePlayerRifle();
+      if (input.resetPressed || (wasDown && !this.player.isDown && this.player.health === 0)) this.toCheckpoint();
+      this.updateJam(input, dt);
+      if (input.rocketPressed) this.fireGrenade();
+      // Lookouts: walk to the foot of the ladder to climb, to the gap at the top to come down.
+      if (!this.player.isDown) {
+        if (this.onTower) {
+          const h = this.onTower.hatch;
+          if (Math.hypot(p.x - h.x, p.z - h.z) < 0.9) {
+            this.hatchDwell += dt;
+            if (this.hatchDwell > HATCH_DWELL) this.startClimb(this.onTower, false);
+          } else this.hatchDwell = 0;
+        } else {
+          for (const l of this.lookouts) if (Math.hypot(p.x - l.foot.x, p.z - l.foot.z) < LADDER_REACH) this.startClimb(l, true);
+        }
+      }
+    }
+    if (!this.onTower) this.recordTrail();
+    if (this.reload > 0) {
+      this.reload -= dt;
+      if (this.reload <= 0) {
+        this.reload = 0;
+        this.grenades = GRENADES;
+        this.hud.showCallout('GRENADE LAUNCHER RELOADED', '#9be27a');
+      }
+    }
+    this.updatePlanting(dt);
+    this.updateSupplies();
+
+    this.squad.update(dt, this.battle, this.trail);
+    this.enemies.update(dt, this.battle);
+    for (const [handle, t] of this.byHandle) if (t.gone) this.byHandle.delete(handle);
+    this.explosives.update(dt, (b) => this.onBlast(b), (pt) => this.impacts.trailPuff(pt));
+    this.drops.update(dt);
+    this.forest.update(dt);
+    this.world.step();
+
+    // The map: a patch round the player wherever he walks, the lookouts' circles, who's in view.
+    this.map.reveal(p.x, p.z, WALK_REVEAL);
+    this.cam.update(this.player, dt);
+    this.impacts.update(dt);
+    this.updateTracers(dt);
+    this.updateAtmosphere();
+    this.mapAge += dt;
+    if (this.mapAge > 0.15) {
+      this.mapAge = 0;
+      this.refreshMap();
+    }
+    if (import.meta.env.DEV && this.debugCam) {
+      this.camera.position.set(...this.debugCam.pos);
+      this.camera.lookAt(...this.debugCam.look);
+    }
+  }
+
+  private updateAtmosphere(): void {
+    const p = this.player.position;
+    this.sun.position.set(p.x - 30, 70, p.z + 25);
+    this.sun.target.position.set(p.x, 0, p.z);
+    this.sun.target.updateMatrixWorld();
+  }
+
+  private refreshMap(): void {
+    const d = this.map.data;
+    const p = this.player.position;
+    d.player = { x: p.x, z: p.z, yaw: this.player.yaw };
+    d.squad = this.squad.list.map((b) => ({ x: b.t.pos.x, z: b.t.pos.z, down: b.t.down }));
+    // Enemies show when someone of ours is near them, or from a lookout within its circle.
+    const watch = [p, ...this.squad.list.filter((b) => b.t.active).map((b) => b.t.pos)];
+    d.enemies = this.enemies.list
+      .filter((b) => b.t.active && (watch.some((w) => Math.hypot(w.x - b.t.pos.x, w.z - b.t.pos.z) < 48 * this.weather.visibility + 8) || (this.onTower && Math.hypot(this.onTower.x - b.t.pos.x, this.onTower.z - b.t.pos.z) < SCOUT_RADIUS * (0.55 + 0.45 * this.weather.visibility))))
+      .map((b) => ({ x: b.t.pos.x, z: b.t.pos.z }));
+    d.outposts = this.outposts.map((o) => ({ x: o.x, z: o.z, army: o.army, destroyed: !o.dump.alive }));
+    d.towers = this.lookouts.map((l) => ({ x: l.x, z: l.z }));
+    d.airbase = { x: this.airbase.x, z: this.airbase.z, left: this.airbase.jets.filter((j) => j.alive).length };
+    d.bombs = this.explosives.bombs.map((b) => ({ x: b.pos.x, z: b.pos.z }));
+    this.mapView = { ...NO_MAP, playerX: p.x, playerZ: p.z, playerYaw: this.player.yaw };
+  }
+
+  // ---------- HUD ----------
+
+  private waypointTo(point: THREE.Vector3, label: string): HUDState['waypoint'] {
+    const view = point.clone().applyMatrix4(this.camera.matrixWorldInverse);
+    let x = view.x;
+    let y = view.y;
+    let onScreen = false;
+    if (view.z < -1) {
+      const ndc = point.clone().project(this.camera);
+      x = ndc.x;
+      y = ndc.y;
+      onScreen = Math.abs(x) < 0.92 && Math.abs(y) < 0.8;
+    } else {
+      y = -Math.abs(y) - 0.2 * Math.abs(x) - 1e-3;
+    }
+    if (!onScreen) {
+      const k = Math.max(Math.abs(x) / 0.9, Math.abs(y) / 0.75);
+      x /= k;
+      y /= k;
+    }
+    return { x: ((x + 1) / 2) * window.innerWidth, y: ((1 - y) / 2) * window.innerHeight, onScreen, angle: Math.atan2(-y, x), label };
+  }
+
+  /** The way to go next: the nearest dump we've found, else the nearest lookout. */
+  private waypoint(): HUDState['waypoint'] {
+    if (this.hud.paused || this.victoryAt !== null) return null;
+    const p = this.player.position;
+    const known = this.outposts.filter((o) => o.dump.alive && this.map.known(o.x, o.z));
+    if (known.length) {
+      const o = known.reduce((a, b) => (Math.hypot(a.x - p.x, a.z - p.z) < Math.hypot(b.x - p.x, b.z - p.z) ? a : b));
+      return this.waypointTo(new THREE.Vector3(o.x, 8, o.z), `${o.name.toUpperCase()} ${Math.round(Math.hypot(o.x - p.x, o.z - p.z))} m`);
+    }
+    const tower = this.lookouts.filter((l) => !this.map.known(l.x + 30, l.z)).concat(this.lookouts)[0];
+    return this.waypointTo(new THREE.Vector3(tower.x, 17, tower.z), 'LOOKOUT');
+  }
+
+  private objectives(): { label: string; done: boolean }[] {
+    const dumps = this.outposts.filter((o) => !o.dump.alive).length;
+    const jets = this.airbase.jets.filter((j) => !j.alive).length;
+    return [
+      { label: 'Climb a lookout tower to scout (optional)', done: this.scouted },
+      { label: `Blow up the ammo dumps at the enemy outposts (${dumps} / ${this.outposts.length})`, done: dumps === this.outposts.length },
+      { label: `Wreck the airbase jets for air support (${jets} / ${this.airbase.jets.length}) (optional)`, done: jets === this.airbase.jets.length },
+    ];
+  }
+
+  private prisonHUD(): PrisonHUD {
+    const p = this.player.position;
+    let prompt: string | null = null;
+    const fuse = this.explosives.shortestFuse;
+    if (this.player.downFor > 0) prompt = `Knocked down! Back on your feet in ${Math.ceil(this.player.downFor)}…`;
+    else if (this.climb) prompt = this.climb.up ? 'Climbing the lookout…' : 'Climbing down…';
+    else if (fuse !== null) prompt = `BOMB ARMED! GET CLEAR: ${Math.ceil(fuse)}`;
+    else if (this.plantProgress > 0) prompt = 'Planting the bomb…';
+    else if (this.onTower) prompt = 'Look around! Walk to the gap in the rail at the head of the ladder to climb down';
+    else {
+      const l = this.lookouts.find((t) => Math.hypot(t.foot.x - p.x, t.foot.z - p.z) < 8);
+      const dump = this.outposts.find((o) => o.dump.alive && Math.hypot(o.x - p.x, o.z - p.z) < 16);
+      if (l) prompt = 'Walk to the foot of the ladder to climb the lookout';
+      else if (dump && this.bombs > 0) prompt = 'Stand at the ammo dump to plant a bomb (then run!)';
+      else if (dump) prompt = 'No bombs left: wreck the airbase jets for a supply drop';
+      else if (this.time < 16) prompt = 'Follow the golden beams, or climb a lookout tower (ladder on the south side) to scout. Hold E to knock trees flat with the jam gun';
+    }
+    const standing = this.squad.standing;
+    const status = [
+      `Grenades ${'●'.repeat(this.grenades)}${'○'.repeat(GRENADES - this.grenades)}${this.reload > 0 ? ` reloading ${Math.ceil(this.reload)}s` : ''}  ·  Bombs ${this.bombs}`,
+      `Squad ${standing} / ${this.squad.list.length}${this.squad.holding ? ' (HOLDING)' : ''}  ·  Trees felled ${this.forest.fallen}`,
+    ];
+    if (this.weather.raining) status.push(`STORM: you can see about ${this.weather.seeMetres} m`);
+    const alerted = this.enemies.alerted;
+    return {
+      title: 'JUNGLE PATROL',
+      objectives: this.objectives(),
+      prompt,
+      downFor: this.player.downFor,
+      jam: this.jamTank,
+      onRaft: false,
+      stealth: this.player.isDown
+        ? null
+        : alerted > 0
+          ? { level: Math.min(1, 0.3 + alerted / 8), label: `${alerted} ENEMY ON THE ALERT`, color: '#ff6a4a' }
+          : { level: 0, label: this.player.sneaking ? 'UNSEEN · CREEPING' : 'UNSEEN', color: '#9be27a' },
+      status,
+    };
+  }
+
+  private hudState(input: InputState): HUDState {
+    return {
+      zombies: null,
+      health: this.player.health,
+      maxHealth: MAX_HEALTH,
+      reloadFraction: 0,
+      damageBoost: 0,
+      ride: null,
+      cameraMode: this.cam.mode,
+      usingGamepad: input.usingGamepad,
+      insideBase: null,
+      map: this.mapView,
+      aimScreen: this.hud.paused ? null : { x: window.innerWidth / 2, y: window.innerHeight / 2 },
+      aimRange: null,
+      aimTarget: 'none',
+      rocketCharge: 0,
+      rocketDamaged: false,
+      rocketLockScreen: null,
+      aaLoaded: 0,
+      aaMax: 0,
+      aaFiring: false,
+      aaRearming: false,
+      aaLockScreen: null,
+      buddyCharge: 0,
+      megaJamCharge: 0,
+      buddyRoster: [],
+      buddyOut: [],
+      buddyMax: 0,
+      cinematic: false,
+      cinematicLabel: '',
+      waypoint: this.waypoint(),
+      enemyBasesLeft: 0,
+      enemyBasesTotal: 0,
+      nearbyBase: null,
+      airSupport: null,
+      tanker: null,
+      siege: null,
+      prison: this.prisonHUD(),
+      driveStyle: this.settings.driveStyle,
+      mouseCaptureHint: !input.usingGamepad && !input.pointerLocked && input.pointerLockAvailable,
+      soundLocked: this.sound.locked && (this.settings.sfxVolume > 0 || this.settings.musicVolume > 0),
+    };
+  }
+
+  private render(): void {
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    this.hud.setViewport({ left: 0, top: 0, width: w, height: h });
+    this.renderer.shadowMap.needsUpdate = true;
+    this.camera.aspect = w / h;
+    this.camera.updateProjectionMatrix();
+    this.renderer.setViewport(0, 0, w, h);
+    this.renderer.render(this.scene, this.camera);
+  }
+
+  private readonly animate = (): void => {
+    requestAnimationFrame(this.animate);
+    if (!this.ready) return;
+    const dt = Math.min(this.clock.getDelta(), 0.05);
+    this.input.textEntry = this.hud.editingText;
+    this.input.beginFrame();
+    const pads = Array.from(navigator.getGamepads?.() ?? []);
+    const input = this.input.update(dt, this.settings.player1Controller, 1, this.settings.splitOrientation, false, pads, 1);
+    const kbMenu = this.input.keyboardMenu();
+    input.mapTogglePressed ||= kbMenu.mapTogglePressed;
+    if (this.hud.paused) {
+      this.sound.updateEngine(0, 'chopper', false);
+      this.hud.handleMenu({
+        up: input.menu.up || kbMenu.menu.up,
+        down: input.menu.down || kbMenu.menu.down,
+        left: input.menu.left || kbMenu.menu.left,
+        right: input.menu.right || kbMenu.menu.right,
+        confirm: input.menu.confirm || kbMenu.menu.confirm,
+        back: input.menu.back || kbMenu.menu.back,
+        options: input.menu.options || kbMenu.menu.options,
+      });
+      if (input.mapTogglePressed && this.hud.paused) this.hud.toggleBigMap();
+      this.hud.update(this.hudState(input));
+      if (!this.pausedRendered) {
+        this.render();
+        this.pausedRendered = true;
+      }
+      return;
+    }
+    this.pausedRendered = false;
+    this.step(input, dt);
+    this.sound.setListener(this.camera);
+    this.hud.update(this.hudState(input));
+    this.render();
+    this.hud.recordFrame();
+  };
+
+  /** Dev only: runs the game `seconds` ahead with `hold` pressed. */
+  debugAdvance(seconds: number, hold: Partial<InputState> = {}): void {
+    const base = this.input.update(0);
+    for (let t = 0; t < seconds; t += 0.05) this.step({ ...base, ...hold }, 0.05);
+  }
+
+  /** Dev only: the pieces a test needs to reach in and look at. */
+  get debug() {
+    return {
+      player: this.player,
+      world: this.world,
+      forest: this.forest,
+      weather: this.weather,
+      squad: this.squad,
+      enemies: this.enemies,
+      outposts: this.outposts,
+      airbase: this.airbase,
+      lookouts: this.lookouts,
+      explosives: this.explosives,
+      map: this.map,
+      stats: this.stats,
+      state: () => ({ grenades: this.grenades, reload: this.reload, bombs: this.bombs, onTower: !!this.onTower, climbing: !!this.climb, scouted: this.scouted, victory: this.victoryAt !== null, trees: this.forest.trees.length, felled: this.forest.fallen }),
+    };
+  }
+}
