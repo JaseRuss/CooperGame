@@ -11,7 +11,22 @@ import { plantBuilding } from './placeModel';
 import { buildJeep, buildTruck } from './Vehicles';
 import { PartBuilder, tubeX, tubeZ } from '../utils/modelKit';
 import { plastic, shade, ARMY_TAN, ARMY_BLUE, ENEMY_ARMY_COLOR, type EnemyArmy } from '../utils/plastic';
-import { KNIGHTS, ZOMBIES } from '../core/config';
+import { KNIGHTS, ZOMBIES, SIEGE } from '../core/config';
+import {
+  buildStirlingPalace,
+  buildStirlingGreatHall,
+  buildChapelRoyal,
+  buildKingsOldBuilding,
+  buildGreatKitchens,
+  buildElphinstoneTower,
+  buildGrandBattery,
+  buildKnotGarden,
+  addCornerTower,
+  addGateTower,
+  addWallDetail,
+  BUFF,
+  GOLD,
+} from './StirlingCastle';
 import { buildKeep, buildGreatHall, buildPowderStore, buildBombard, buildWizardTower, buildHayCart, STONE, STONE_DARK, WOOD } from './Medieval';
 
 const WALL = 100; // wall line, local
@@ -19,7 +34,7 @@ const WALL_HEIGHT = 7;
 const WALL_THICK = 3;
 const GATE_HALF = 12;
 const DOOR_OPEN_TIME = 5;
-const CONCRETE = KNIGHTS ? STONE : 0xa99f86;
+const CONCRETE = SIEGE ? BUFF : KNIGHTS ? STONE : 0xa99f86;
 /** The Great Castle's royal purple (its keep's roofs and flag on the HUD). */
 const ROYAL = 0x7a4aa8;
 /** Kenney colormap textures multiplied by these give tan and blue buildings. */
@@ -61,7 +76,7 @@ function signTexture(text: string): THREE.CanvasTexture {
   ctx.font = '900 58px "Black Ops One", Impact, sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText(text, 256, 52);
+  ctx.fillText(text, 256, 52, 480);
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
   return tex;
@@ -234,7 +249,9 @@ export class Fortress {
       this.objectives.push({ label, position: b.center, isDestroyed: () => b.destroyed });
     };
 
-    if (KNIGHTS) {
+    if (SIEGE) {
+      this.buildStirlingInside(world, hitRegistry, objective);
+    } else if (KNIGHTS) {
       this.buildCastleInside(world, hitRegistry, objective);
     } else {
       const hq = at(0, -50);
@@ -341,6 +358,62 @@ export class Fortress {
     }
   }
 
+  /**
+   * The siege level's Great Castle, after Stirling Castle: the Palace (in place of the keep), the
+   * Great Hall, Chapel Royal, King's Old Building and Great Kitchens, the Elphinstone Tower, a Grand
+   * Battery on each side of the gate, knot gardens, and the same guardhouses and powder stores.
+   */
+  private buildStirlingInside(world: RAPIER.World, hitRegistry: HitRegistry, objective: (label: string, b: Building) => void): void {
+    const yaw = siteYaw(this.site);
+    const at = (lx: number, lz: number) => siteToWorld(this.site, lx, lz);
+    const plant = (model: THREE.Object3D, lx: number, lz: number, turn: number, scale: number, hp: number, debris = STONE_DARK) => {
+      const p = at(lx, lz);
+      return plantBuilding(world, this.scene, hitRegistry, model, p.x, p.z, yaw + turn, scale, hp, debris);
+    };
+    const palace = plant(buildStirlingPalace(), 0, -50, 0, 1, 700, 0xa99f86);
+    palace.explosionSize = 4.5;
+    objective('Royal Palace', palace);
+    objective('Elphinstone Tower', plant(buildElphinstoneTower(), 0, 28, 0, 1, 220, 0xa99f86));
+    for (const s of [-1, 1]) {
+      const army = sideArmy(s);
+      const name = army === 'tan' ? 'Tan' : 'Blue';
+      const color = ENEMY_ARMY_COLOR[army];
+      if (s > 0) {
+        objective('Great Hall', plant(buildStirlingGreatHall(color), s * 64, -62, 0, 1, 420, GOLD));
+        objective("King's Old Building", plant(buildKingsOldBuilding(color), s * 66, 0, Math.PI / 2, 1, 280, GOLD));
+      } else {
+        objective('Chapel Royal', plant(buildChapelRoyal(color), s * 64, -62, 0, 1, 320, 0xa99f86));
+        objective('Great Kitchens', plant(buildGreatKitchens(color), s * 66, 0, Math.PI / 2, 1, 260, 0x8c836f));
+      }
+      for (const lz of [44, 62]) {
+        const store = plant(buildPowderStore(), s * 80, lz, 0, 1, 20, 0x5a3b24);
+        store.fuel = true;
+        objective(`${name} Powder Store`, store);
+      }
+      objective(`${name} Grand Battery`, plant(buildGrandBattery(color), s * 34, 66, 0, 1, 260, 0x8c836f));
+      const bp = at(s * 26, 6);
+      const bunker = new Bunker(world, this.scene, hitRegistry, bp.x, bp.z, yaw + Math.PI, 'enemy', color);
+      this.bunkers.push(bunker);
+      this.buildings.push(bunker.building);
+      this.objectives.push({ label: `${name} Guardhouse`, position: bunker.position, isDestroyed: () => !bunker.alive });
+      for (const lz of [-80, 80]) {
+        const gb = at(s * 26, lz);
+        const guard = new Bunker(world, this.scene, hitRegistry, gb.x, gb.z, yaw + (lz > 0 ? Math.PI : 0), 'enemy', color);
+        this.bunkers.push(guard);
+        this.buildings.push(guard.building);
+      }
+      // A knot garden each side (nothing solid, so the assault tanks drive through), and hay carts about the yard.
+      const gp = at(s * 44, -30);
+      const garden = buildKnotGarden();
+      garden.position.set(gp.x, heightAt(gp.x, gp.z), gp.z);
+      garden.rotation.y = yaw;
+      this.scene.add(garden);
+      for (const [lx, lz, turn] of [[s * 40, 30, Math.PI / 2], [s * 86, -20, 0], [s * 86, -30, 0.1]]) {
+        this.buildings.push(plant(buildHayCart(), lx, lz, turn, 1, 40, 0x8a6a3a));
+      }
+    }
+  }
+
   private solidBox(x: number, y: number, z: number, hx: number, hy: number, hz: number, yaw: number): RAPIER.RigidBody {
     const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
     const body = this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(x, y, z).setRotation({ x: q.x, y: q.y, z: q.z, w: q.w }));
@@ -403,6 +476,11 @@ export class Fortress {
         p.add(new THREE.BoxGeometry(WALL_THICK + 0.3, 1.2, 2), cap, mx, WALL_HEIGHT + 1.1, mz, 0, along);
         if (i % 5 === 2) p.add(new THREE.BoxGeometry(WALL_THICK + 1.2, WALL_HEIGHT, 1.6), concrete, mx, WALL_HEIGHT / 2, mz, 0, along);
       }
+      if (SIEGE) {
+        const nx = Math.cos(along);
+        const nz = -Math.sin(along);
+        addWallDetail(p, x0, z0, x1, z1, WALL_HEIGHT, WALL_THICK, Math.sign(nx * cx + nz * cz) || 1, 0x434b55);
+      }
       // Collider for the run, in world space.
       const c = world(cx, cz);
       this.solidBox(c.x, ground + WALL_HEIGHT / 2, c.z, WALL_THICK / 2, WALL_HEIGHT / 2 + 2, len / 2, yaw + along);
@@ -417,19 +495,25 @@ export class Fortress {
     // Corner towers flying each army's flag.
     for (const x of [-WALL, WALL]) {
       for (const z of [-WALL, WALL]) {
-        p.add(new THREE.CylinderGeometry(6, 6.8, 13, 20), concrete, x, 6.5, z);
-        p.add(new THREE.CylinderGeometry(6.6, 6.6, 0.6, 20), cap, x, 13.3, z);
-        for (let i = 0; i < 12; i++) {
-          const a = (i / 12) * Math.PI * 2;
-          p.add(new THREE.BoxGeometry(1.6, 1.4, 1.2), cap, x + Math.cos(a) * 6, 14.3, z + Math.sin(a) * 6, 0, -a);
+        let flagY: number;
+        if (SIEGE) {
+          flagY = addCornerTower(p, x, z) + 1.2;
+        } else {
+          p.add(new THREE.CylinderGeometry(6, 6.8, 13, 20), concrete, x, 6.5, z);
+          p.add(new THREE.CylinderGeometry(6.6, 6.6, 0.6, 20), cap, x, 13.3, z);
+          for (let i = 0; i < 12; i++) {
+            const a = (i / 12) * Math.PI * 2;
+            p.add(new THREE.BoxGeometry(1.6, 1.4, 1.2), cap, x + Math.cos(a) * 6, 14.3, z + Math.sin(a) * 6, 0, -a);
+          }
+          p.add(new THREE.CylinderGeometry(6.9, 6.9, 1.2, 20), x < 0 ? tan : blue, x, 10.5, z);
+          // The Great Castle's towers wear tall pointed roofs.
+          const roof = KNIGHTS ? 12 : 0;
+          if (KNIGHTS) p.add(new THREE.ConeGeometry(7.4, roof, 20), plastic(ROYAL), x, 14 + roof / 2, z);
+          p.add(new THREE.CylinderGeometry(0.12, 0.15, 8, 6), dark, x, 17.6 + roof, z);
+          flagY = 20 + roof;
         }
-        p.add(new THREE.CylinderGeometry(6.9, 6.9, 1.2, 20), x < 0 ? tan : blue, x, 10.5, z);
-        // The Great Castle's towers wear tall pointed roofs.
-        const roof = KNIGHTS ? 12 : 0;
-        if (KNIGHTS) p.add(new THREE.ConeGeometry(7.4, roof, 20), plastic(ROYAL), x, 14 + roof / 2, z);
-        p.add(new THREE.CylinderGeometry(0.12, 0.15, 8, 6), dark, x, 17.6 + roof, z);
         const flag = new THREE.Mesh(new THREE.PlaneGeometry(4, 2.5).translate(2, 0, 0), new THREE.MeshStandardMaterial({ map: flagTexture(sideArmy(x)), side: THREE.DoubleSide }));
-        flag.position.set(x, 20 + roof, z);
+        flag.position.set(x, flagY, z);
         g.add(flag);
         const c = world(x, z);
         this.solidBox(c.x, ground + 7, c.z, 5.5, 7, 5.5, yaw);
@@ -442,6 +526,12 @@ export class Fortress {
       const out = Math.sign(z);
       for (const s of [-1, 1]) {
         const tx = s * (GATE_HALF + 4);
+        if (SIEGE) {
+          addGateTower(p, s * (GATE_HALF + 4.6), z, out);
+          const c = world(tx, z);
+          this.solidBox(c.x, ground + 6, c.z, 4, 6, 4, yaw);
+          continue;
+        }
         p.add(new THREE.BoxGeometry(8, 12, 8), concrete, tx, 6, z);
         p.add(new THREE.BoxGeometry(8.6, 0.6, 8.6), cap, tx, 12.3, z);
         for (const [mx, mz] of [[-3, -3], [3, -3], [-3, 3], [3, 3], [0, -3], [0, 3], [-3, 0], [3, 0]]) {

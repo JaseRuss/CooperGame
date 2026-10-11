@@ -170,6 +170,7 @@ Cut from the earlier version: the co-op truck intro and all co-op support in `Ja
   enemy castle and take it (`EnemyBase.ruin` once the garrison's beaten on screen, or settled by
   numbers after 50 seconds if the player is too far to see it). They hold it; no repeating raids
   are added for them.
+- **The Great Castle:** `src/world/StirlingCastle.ts` and the `SIEGE` branches of `Fortress.ts`: a Stirling Castle inspired final castle (Palace, Great Hall, Chapel Royal, King's Old Building, Great Kitchens, Elphinstone Tower, Grand Batteries, knot gardens, bartizaned walls, round Forework towers, Royal Standard and Saltire). Same slots, hit points and objectives as mission 3's, so the assault logic is unchanged. Roughly 800 more draw calls than mission 3's castle when the whole thing is in view.
 - Not built: tall archer towers, villages inside castles, garrison counters, tank crews that bail
   out and surrender, a second dungeon layout (both enemy prisons use the same courtyard), and the
   final Great Castle jailbreak.
