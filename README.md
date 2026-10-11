@@ -463,6 +463,11 @@ prisoners. Single player (there is no co-op on this level).
   through it, and you start again from the gate. You can't disguise while you're being watched,
   and firing a shot drops it. Right behind a jailer, the fire button is a quiet **takedown**.
   Press **R** to go back to the gate. Walk out of the gate to finish.
+- **Archer towers and villages.** Every enemy castle on this level has two very tall **archer
+  towers** inside the walls, each with archers on top who turn to face you and loose volleys of
+  arrows from up to 200 m, all round (they're targets, so knock them down to take the castle).
+  Each castle also has a little village along the road in from the gate: cottages, a well and
+  market stalls.
 - **The Great Castle.** On this level the final castle is modelled on Stirling Castle: a Palace
   with statues in niches, a dormered slate roof and a carved doorway under the Royal Standard
   (the red lion rampant); a Great Hall in "Stirling gold" with crow-stepped gables, buttresses,

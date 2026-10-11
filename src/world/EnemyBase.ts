@@ -4,7 +4,7 @@ import type { AssetLibrary } from './AssetLibrary';
 import type { Building } from './Building';
 import { Bunker } from './Bunker';
 import { AAGun } from './AAGun';
-import { KNIGHTS } from '../core/config';
+import { KNIGHTS, SIEGE } from '../core/config';
 import type { HitRegistry } from '../combat/HitRegistry';
 import { heightAt } from './Terrain';
 import { siteToWorld, siteYaw, enemyArmyOfSite, ENEMY_BASE_HALF, type Site } from './Landmarks';
@@ -24,7 +24,12 @@ import {
   buildWatchtower,
   buildTrebuchet,
   buildHayCart,
+  buildCottage,
+  SHUTTER_COLORS,
+  STONE,
   STONE_DARK,
+  WOOD,
+  WOOD_DARK,
 } from './Medieval';
 
 export interface Objective {
@@ -109,6 +114,8 @@ export class EnemyBase {
   readonly objectives: Objective[] = [];
   readonly buildings: Building[] = [];
   readonly bunker: Bunker;
+  /** The tall archer towers inside a castle on the siege level (they shoot, and each is a target). */
+  readonly archerTowers: Bunker[] = [];
   /** The flak gun that shoots at your choppers (not on the knights mission: no flak in castles). */
   readonly aaGun: AAGun | null = null;
   private readonly smokestacks: { building: Building; top: THREE.Vector3; timer: number }[] = [];
@@ -307,6 +314,64 @@ export class EnemyBase {
     this.trebuchetArm = treb.arm;
     target('Trebuchet', plant(treb.group, 34, 8, Math.PI / 2, 25, 0x5a3b24));
     for (const [lx, lz, turn] of [[22, 58, 0.3], [32, 60, -0.2], [26, 50, Math.PI / 2]]) plant(buildHayCart(), lx, lz, turn, 40, 0x8a6a3a);
+    if (SIEGE) this.buildSiegeExtras(world, hitRegistry, yaw, color, plant);
+  }
+
+  /**
+   * What the siege level adds to each castle: two tall archer towers looking out over the walls
+   * (each one a target, and each shooting arrows all round), and a little village inside the
+   * walls along the road in from the gate: cottages, a well and market stalls.
+   */
+  private buildSiegeExtras(
+    world: RAPIER.World,
+    hitRegistry: HitRegistry,
+    yaw: number,
+    color: number,
+    plant: (model: THREE.Object3D, lx: number, lz: number, turn: number, hp: number, debris?: number, scale?: number) => Building,
+  ): void {
+    const at = (lx: number, lz: number) => siteToWorld(this.site, lx, lz);
+    for (const s of [-1, 1]) {
+      const p = at(s * 56, -8);
+      // Facing into the castle, so the garrison squad that stands in front of each bunker is inside the walls.
+      const tower = new Bunker(world, this.scene, hitRegistry, p.x, p.z, yaw - s * (Math.PI / 2), 'enemy', color, 'archer');
+      this.archerTowers.push(tower);
+      this.objectives.push({ label: 'Archer Tower', position: tower.position, isDestroyed: () => !tower.alive });
+    }
+    // The village along the road in from the gate.
+    const roofs = ['thatch', 'tile', 'thatch', 'slate'] as const;
+    let n = 0;
+    for (const s of [-1, 1]) {
+      for (const lz of [14, 27, 40]) {
+        const model = buildCottage(n, roofs[n % roofs.length], SHUTTER_COLORS[n % SHUTTER_COLORS.length]);
+        plant(model, s * 17, lz + (n % 2) * 1.5, s > 0 ? -Math.PI / 2 : Math.PI / 2, 60, 0x7a5a3a);
+        n++;
+      }
+    }
+    // A well in the middle of the green, and a pair of market stalls.
+    const well = new THREE.Group();
+    const wp = new PartBuilder();
+    wp.add(new THREE.CylinderGeometry(1.5, 1.6, 1.1, 14), plastic(STONE), 0, 0.55, 0);
+    wp.add(new THREE.CylinderGeometry(1.1, 1.1, 0.12, 14), plastic(0x2e5f86), 0, 1.0, 0);
+    for (const sx of [-1, 1]) wp.add(new THREE.BoxGeometry(0.2, 2.6, 0.2), plastic(WOOD_DARK), sx * 1.5, 2.2, 0);
+    wp.add(new THREE.BoxGeometry(3.6, 0.2, 0.2), plastic(WOOD_DARK), 0, 3.4, 0);
+    wp.add(new THREE.ConeGeometry(2.4, 1.3, 4).rotateY(Math.PI / 4), plastic(0xcfa85a), 0, 4.2, 0, 0, 0, 0, 1, 0.8, 0.6);
+    wp.buildInto(well);
+    const wpos = at(0, 30);
+    well.position.set(wpos.x + Math.sin(yaw) * 0, heightAt(wpos.x, wpos.z), wpos.z);
+    this.scene.add(well);
+    for (const [lx, lz, awning] of [[-7, 20, 0xb8392e], [7, 33, 0x3d6fc4]] as [number, number, number][]) {
+      const stall = new THREE.Group();
+      const sp = new PartBuilder();
+      for (const sx of [-1, 1]) for (const sz of [-1, 1]) sp.add(new THREE.CylinderGeometry(0.1, 0.12, 2.6, 6), plastic(WOOD_DARK), sx * 1.5, 1.3, sz * 1);
+      sp.add(new THREE.BoxGeometry(3.4, 0.9, 1.6), plastic(WOOD), 0, 0.45, 0);
+      sp.add(new THREE.BoxGeometry(3.8, 0.12, 2.6), plastic(awning), 0, 2.7, 0, 0.25);
+      for (let i = 0; i < 5; i++) sp.add(new THREE.SphereGeometry(0.22, 8, 6), plastic(i % 2 ? 0xd9a520 : 0xb8392e), -1.2 + i * 0.6, 1.05, 0.1);
+      sp.buildInto(stall);
+      const sPos = at(lx, lz);
+      stall.position.set(sPos.x, heightAt(sPos.x, sPos.z), sPos.z);
+      stall.rotation.y = yaw + (lx < 0 ? Math.PI / 2 : -Math.PI / 2);
+      this.scene.add(stall);
+    }
   }
 
   private buildCastleGround(yaw: number, ground: number): void {
@@ -415,6 +480,7 @@ export class EnemyBase {
   /** Flattens every target without any show: this castle fell on an earlier visit to the level. */
   ruin(): void {
     this.bunker.building.ruin();
+    for (const t of this.archerTowers) t.building.ruin();
     for (const o of this.objectives) {
       const b = this.buildings.find((x) => x.center === o.position);
       b?.ruin();
