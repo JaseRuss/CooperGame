@@ -8,10 +8,21 @@ import type { Shot } from '../entities/Soldier';
 import type { Faction } from '../entities/Tank';
 import { PartBuilder, sandbagGeometry, tubeZ } from '../utils/modelKit';
 import { KNIGHTS } from '../core/config';
+import { createArcherMesh } from '../entities/Soldier';
 import { STONE, STONE_DARK, WOOD, WOOD_DARK } from './Medieval';
 
 const BUNKER_COLOR = 0xa99f86;
 const BUNKER_HEALTH = 180;
+/** The archer towers (siege level): tough, tall, and they shoot all round. */
+const ARCHER_HEALTH = 340;
+const ARCHER_RANGE = 200;
+const ARCHER_VOLLEY = 3;
+const ARCHER_GAP = 0.32;
+const ARCHER_COOLDOWN = 2.8;
+/** Where an archer tower's arrows leave it (local), and how many archers stand on top. */
+const ARCHER_MUZZLE_Y = 22.4;
+const ARCHER_COUNT = 4;
+const ARCHER_FLOOR = 21.1
 const GUN_RANGE = 170;
 const GUN_ARC = (80 * Math.PI) / 180; // either side of the firing slit
 const BURST_SIZE = 6;
@@ -171,6 +182,66 @@ function guardhouseShapes(trim: number): Map<THREE.Material, THREE.BufferGeometr
   return shapes;
 }
 
+/**
+ * A big archer tower: a tall stone drum with a flared base, bands, spiralling arrow slits and a
+ * corbelled platform with a timber palisade, under a conical roof in the army's colour held up on
+ * posts so the archers can be seen. About 30 m tall: taller than anything else in a castle.
+ */
+function archerTowerShapes(trim: number): Map<THREE.Material, THREE.BufferGeometry> {
+  const key = -1000 - trim;
+  const cached = shapeCache.get(key);
+  if (cached) return cached;
+  const stone = plastic(STONE);
+  const dark = plastic(STONE_DARK);
+  const gloom = plastic(0x2a2620);
+  const wood = plastic(WOOD);
+  const woodDark = plastic(WOOD_DARK);
+  const army = plastic(trim);
+  const p = new PartBuilder();
+  const r = 4.2;
+  const h = 20;
+  p.add(new THREE.CylinderGeometry(r + 1.5, r + 2.1, 1.6, 20), dark, 0, 0.8, 0);
+  p.add(new THREE.CylinderGeometry(r, r + 0.9, h, 20), stone, 0, h / 2, 0);
+  for (let y = 4; y < h; y += 4) p.add(new THREE.CylinderGeometry(r + 0.35 - (y / h) * 0.5, r + 0.35 - (y / h) * 0.5, 0.3, 20), dark, 0, y, 0);
+  for (let i = 0; i < 14; i++) {
+    const a = i * 0.95;
+    const rr = r + 0.6 - ((3 + i * 1.2) / h) * 0.7;
+    p.add(new THREE.BoxGeometry(0.28, 1.3, 0.3), gloom, Math.cos(a) * rr, 3 + i * 1.2, Math.sin(a) * rr);
+  }
+  // A door at the foot, with steps.
+  p.add(new THREE.BoxGeometry(2.2, 3.2, 0.3), woodDark, 0, 1.9, r + 0.7);
+  p.add(new THREE.BoxGeometry(3.4, 0.5, 1.4), dark, 0, 0.25, r + 1.5);
+  // The corbelled platform and its palisade.
+  for (let ring = 0; ring < 3; ring++) p.add(new THREE.CylinderGeometry(r + 0.7 + ring * 0.45, r + 0.3 + ring * 0.35, 0.5, 20), dark, 0, h - 0.5 + ring * 0.5, 0);
+  for (let i = 0; i < 20; i++) {
+    const a = (i / 20) * Math.PI * 2;
+    p.add(new THREE.ConeGeometry(0.34, 1.1, 5).rotateX(Math.PI), dark, Math.cos(a) * (r + 0.5), h - 1.0, Math.sin(a) * (r + 0.5));
+  }
+  p.add(new THREE.CylinderGeometry(r + 1.8, r + 1.8, 0.5, 20), wood, 0, ARCHER_FLOOR - 0.28, 0);
+  for (let i = 0; i < 22; i++) {
+    const a = (i / 22) * Math.PI * 2;
+    p.add(new THREE.BoxGeometry(0.62, 1.6, 0.18), wood, Math.cos(a) * (r + 1.7), ARCHER_FLOOR + 0.8, Math.sin(a) * (r + 1.7), 0, -a + Math.PI / 2);
+  }
+  p.add(new THREE.TorusGeometry(r + 1.7, 0.1, 5, 22).rotateX(Math.PI / 2), woodDark, 0, ARCHER_FLOOR + 1.65, 0);
+  // Posts and the conical roof.
+  const roofY = ARCHER_FLOOR + 5.2;
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2 + Math.PI / 6;
+    p.add(new THREE.CylinderGeometry(0.2, 0.24, 5.2, 6), woodDark, Math.cos(a) * (r + 1.5), ARCHER_FLOOR + 2.6, Math.sin(a) * (r + 1.5));
+  }
+  p.add(new THREE.CylinderGeometry(r + 2.3, r + 2.3, 0.4, 20), woodDark, 0, roofY, 0);
+  p.add(new THREE.ConeGeometry(r + 2.6, 5, 20), army, 0, roofY + 2.7, 0);
+  p.add(new THREE.CylinderGeometry(0.06, 0.08, 2.4, 6), woodDark, 0, roofY + 6.4, 0);
+  p.add(new THREE.BoxGeometry(1.8, 0.9, 0.05), army, 0.9, roofY + 7.3, 0);
+  // A ladder of rungs hanging down the front, and arrow barrels up top.
+  for (let i = 0; i < 10; i++) p.add(new THREE.BoxGeometry(1, 0.1, 0.1), woodDark, 0, 3 + i * 1.6, r + 0.9);
+  for (const s of [-1, 1]) p.add(new THREE.BoxGeometry(0.1, 17, 0.1), woodDark, s * 0.5, 11.2, r + 0.9);
+  for (const a of [0.8, 2.4, 4.0]) p.add(new THREE.CylinderGeometry(0.4, 0.4, 0.9, 8), wood, Math.cos(a) * (r + 0.5), ARCHER_FLOOR + 0.45, Math.sin(a) * (r + 0.5));
+  const shapes = p.buildGeometries();
+  shapeCache.set(key, shapes);
+  return shapes;
+}
+
 /** A little ballista on the swivel: bow arms, a string, a bolt and a crank, pointing along -Z. */
 function buildBallista(pivot: THREE.Group): void {
   const wood = plastic(WOOD);
@@ -218,7 +289,33 @@ function buildBunkerMesh(trim: number, medieval = false): { root: THREE.Group; g
   return { root, gunPivot };
 }
 
-/** A destructible pillbox whose machine gun fires bursts at the other side within its front arc. */
+function buildArcherMesh(trim: number): { root: THREE.Group; gunPivot: THREE.Group } {
+  const root = new THREE.Group();
+  for (const [mat, geo] of archerTowerShapes(trim)) {
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    root.add(mesh);
+  }
+  // The archers standing round the platform, each looking outward until there's something to shoot at.
+  const gunPivot = new THREE.Group();
+  gunPivot.position.y = ARCHER_FLOOR;
+  root.add(gunPivot);
+  for (let i = 0; i < ARCHER_COUNT; i++) {
+    const a = (i / ARCHER_COUNT) * Math.PI * 2 + 0.4;
+    const archer = createArcherMesh(trim);
+    archer.position.set(Math.cos(a) * 3.3, 0, Math.sin(a) * 3.3);
+    archer.rotation.y = -a - Math.PI / 2;
+    gunPivot.add(archer);
+  }
+  return { root, gunPivot };
+}
+
+/**
+ * A destructible pillbox whose machine gun fires bursts at the other side within its front arc.
+ * On the siege level there's also a tall archer tower, built the same way: it shoots all round
+ * from the top, in volleys, much further, and takes more to knock down.
+ */
 export class Bunker {
   readonly building: Building;
   private readonly gunPivot: THREE.Group;
@@ -230,6 +327,8 @@ export class Bunker {
   private losTimer = Math.random() * LOS_INTERVAL;
   private seesTarget = false;
   private readonly root: THREE.Group;
+  /** A tall archer tower rather than a pillbox. */
+  readonly archer: boolean;
 
   constructor(
     world: RAPIER.World,
@@ -241,8 +340,11 @@ export class Bunker {
     readonly faction: Faction = 'enemy',
     /** Army colour of the sandbags. */
     trim: number = ARMY_TAN,
+    /** `archer`: a tall tower with archers on top (siege level). */
+    kind: 'pillbox' | 'archer' = 'pillbox',
   ) {
-    const { root, gunPivot } = buildBunkerMesh(trim, KNIGHTS && faction === 'enemy');
+    this.archer = kind === 'archer';
+    const { root, gunPivot } = this.archer ? buildArcherMesh(trim) : buildBunkerMesh(trim, KNIGHTS && faction === 'enemy');
     this.gunPivot = gunPivot;
     this.root = root;
     this.facing = facing;
@@ -258,10 +360,14 @@ export class Bunker {
       root,
       box.getSize(new THREE.Vector3()).multiplyScalar(0.5),
       box.getCenter(new THREE.Vector3()),
-      BUNKER_HEALTH,
+      this.archer ? ARCHER_HEALTH : BUNKER_HEALTH,
       BUNKER_COLOR,
     );
     this.building.faction = faction;
+    if (this.archer) {
+      this.building.explosionSize = 3.4;
+      return; // no gun slit: the whole tower is the target
+    }
     // Weak point: a shell through the firing slit (local -Z face, around slit height).
     // The shell has to be travelling into the slit (from the front, not dropping onto the roof).
     const local = new THREE.Vector3();
@@ -297,6 +403,45 @@ export class Bunker {
     return false;
   }
 
+  /** An archer tower: every archer turns to face the target, and they loose a volley now and then. */
+  private updateArchers(dt: number, world: RAPIER.World, target: THREE.Vector3): Shot | null {
+    const muzzle = this.root.localToWorld(new THREE.Vector3(0, ARCHER_MUZZLE_Y, 0));
+    const toTarget = target.clone().setY(target.y + 0.6).sub(muzzle);
+    const dist = toTarget.length();
+    if (dist > ARCHER_RANGE * 1.5) return null;
+    this.losTimer -= dt;
+    if (this.losTimer <= 0) {
+      this.losTimer = LOS_INTERVAL;
+      const exclude = this.building.physicsCollider ?? undefined;
+      this.seesTarget = dist < ARCHER_RANGE && world.castRay(new RAPIER.Ray(muzzle, toTarget.clone().normalize()), Math.max(0, dist - 3), true, undefined, undefined, exclude) === null;
+    }
+    if (this.seesTarget) {
+      const yaw = Math.atan2(-toTarget.x, -toTarget.z) - this.facing;
+      for (const archer of this.gunPivot.children) {
+        const turn = Math.atan2(Math.sin(yaw - archer.rotation.y), Math.cos(yaw - archer.rotation.y));
+        archer.rotation.y += THREE.MathUtils.clamp(turn, -3 * dt, 3 * dt);
+      }
+    }
+    this.cooldown -= dt;
+    if (this.seesTarget && this.burstLeft === 0 && this.cooldown <= 0) {
+      this.burstLeft = ARCHER_VOLLEY;
+      this.burstTimer = 0;
+    }
+    if (this.burstLeft === 0) return null;
+    this.burstTimer -= dt;
+    if (this.burstTimer > 0) return null;
+    this.burstTimer = ARCHER_GAP;
+    this.burstLeft--;
+    if (this.burstLeft === 0) this.cooldown = ARCHER_COOLDOWN;
+    // A little loft, since the arrow's coming down from a long way up.
+    const dir = toTarget.normalize();
+    dir.x += (Math.random() - 0.5) * 0.06;
+    dir.y += (Math.random() - 0.5) * 0.04;
+    dir.z += (Math.random() - 0.5) * 0.06;
+    dir.normalize();
+    return { origin: muzzle.clone().addScaledVector(dir, 3.2), direction: dir };
+  }
+
   get alive(): boolean {
     return !this.building.destroyed;
   }
@@ -308,6 +453,7 @@ export class Bunker {
   /** 	arget: the nearest thing on the other side, or null when there's nothing to shoot at. */
   update(dt: number, world: RAPIER.World, target: THREE.Vector3 | null): Shot | null {
     if (!this.alive || !target) return null;
+    if (this.archer) return this.updateArchers(dt, world, target);
 
     const muzzle = this.gunPivot.localToWorld(new THREE.Vector3(0, 0, -1.5));
     const toPlayer = target.clone().setY(target.y + 0.6).sub(muzzle);

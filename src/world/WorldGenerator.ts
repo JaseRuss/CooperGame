@@ -120,7 +120,7 @@ export function generateWorld(
     ...fortress.buildings.filter((b) => !fortress.bunkers.some((k) => k.building === b)),
   ];
   // On the zombie mission there are no enemy pillboxes, and the Fortress's own are on our side (the Game has them).
-  const bunkers = ZOMBIES ? [] : [...placeBunkers(world, scene, hitRegistry, highways), ...enemyBases.map((b) => b.bunker), ...fortress.bunkers];
+  const bunkers = ZOMBIES ? [] : [...placeBunkers(world, scene, hitRegistry, highways), ...enemyBases.map((b) => b.bunker), ...enemyBases.flatMap((b) => b.archerTowers), ...fortress.bunkers];
   const forests = planForests(highways, bunkers);
   // Everything that topples when a tank drives into it: trees and lamp posts.
   const trees = [...placeTrees(world, scene, hitRegistry, assets, highways, bunkers, forests), ...town.lamps, ...landmarks.lampPosts];

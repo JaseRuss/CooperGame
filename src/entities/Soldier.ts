@@ -478,6 +478,15 @@ export function createFigureMesh(pose: 0 | 1, color: number): THREE.Mesh {
 
 let cheering: THREE.BufferGeometry | null = null;
 
+let archerFigure: THREE.BufferGeometry | null = null;
+
+/** A knight drawing a longbow (the same figure as the fire-arrow troopers), in the given plastic colour: an archer on a tower (siege level). */
+export function createArcherMesh(color: number): THREE.Mesh {
+  const mesh = new THREE.Mesh((archerFigure ??= standingKnight(true)), plastic(color));
+  mesh.castShadow = true;
+  return mesh;
+}
+
 /** A knight with his hands up and his crossbow at his feet, in the given plastic colour: a prisoner (siege level). */
 export function createSurrenderedKnightMesh(color: number): THREE.Mesh {
   const mesh = new THREE.Mesh((surrenderFigure ??= standingKnight(false, true)), plastic(color));
