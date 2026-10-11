@@ -30,7 +30,7 @@ const box = (w: number, h: number, d: number) => new THREE.BoxGeometry(w, h, d);
 const shapeCache = new Map<string, Map<THREE.Material, THREE.BufferGeometry>>();
 
 /** A fresh group of meshes over the shared geometry for `key`, building it the first time. */
-function model(key: string, build: (p: PartBuilder) => void): THREE.Group {
+export function model(key: string, build: (p: PartBuilder) => void): THREE.Group {
   let geos = shapeCache.get(key);
   if (!geos) {
     const p = new PartBuilder();
@@ -49,7 +49,7 @@ function model(key: string, build: (p: PartBuilder) => void): THREE.Group {
 }
 
 /** A triangular prism `w` wide and `h` tall, running `d` along Z (a gable end or a roof core). */
-function prism(w: number, h: number, d: number): THREE.BufferGeometry {
+export function prism(w: number, h: number, d: number): THREE.BufferGeometry {
   const shape = new THREE.Shape([new THREE.Vector2(-w / 2, 0), new THREE.Vector2(w / 2, 0), new THREE.Vector2(0, h)]);
   return new THREE.ExtrudeGeometry(shape, { depth: d, bevelEnabled: false }).translate(0, 0, -d / 2);
 }
@@ -58,7 +58,7 @@ function prism(w: number, h: number, d: number): THREE.BufferGeometry {
  * A pitched roof with its ridge along Z: a prism for the gable ends and two thick slabs over it
  * that overhang the walls. `y` is the eaves height.
  */
-function gableRoof(p: PartBuilder, w: number, d: number, h: number, y: number, gable: THREE.Material, roof: THREE.Material, overhang = 0.7, thick = 0.35): void {
+export function gableRoof(p: PartBuilder, w: number, d: number, h: number, y: number, gable: THREE.Material, roof: THREE.Material, overhang = 0.7, thick = 0.35): void {
   p.add(prism(w, h, d), gable, 0, y, 0);
   const run = Math.hypot(w / 2, h);
   const slope = Math.atan2(h, w / 2);
@@ -72,7 +72,7 @@ function gableRoof(p: PartBuilder, w: number, d: number, h: number, y: number, g
 }
 
 /** Merlons along a run from (x0, z0) to (x1, z1) at height y, every `gap` metres. */
-function merlons(p: PartBuilder, mat: THREE.Material, x0: number, z0: number, x1: number, z1: number, y: number, size = 1.2, gap = 2.4): void {
+export function merlons(p: PartBuilder, mat: THREE.Material, x0: number, z0: number, x1: number, z1: number, y: number, size = 1.2, gap = 2.4): void {
   const len = Math.hypot(x1 - x0, z1 - z0);
   const n = Math.max(1, Math.floor(len / gap));
   const along = Math.atan2(x1 - x0, z1 - z0);
@@ -83,7 +83,7 @@ function merlons(p: PartBuilder, mat: THREE.Material, x0: number, z0: number, x1
 }
 
 /** A ring of merlons round a round tower's top. */
-function merlonRing(p: PartBuilder, mat: THREE.Material, r: number, y: number, count: number, size = 1.1): void {
+export function merlonRing(p: PartBuilder, mat: THREE.Material, r: number, y: number, count: number, size = 1.1): void {
   for (let i = 0; i < count; i++) {
     const a = (i / count) * Math.PI * 2;
     p.add(box(size, size, size * 0.6), mat, Math.cos(a) * r, y + size / 2, Math.sin(a) * r, 0, -a + Math.PI / 2);
@@ -91,14 +91,14 @@ function merlonRing(p: PartBuilder, mat: THREE.Material, r: number, y: number, c
 }
 
 /** A dark arched opening (window or slit) on a face whose outward normal is +Z, rotated by `ry`. */
-function archedOpening(p: PartBuilder, w: number, h: number, x: number, y: number, z: number, ry = 0): void {
+export function archedOpening(p: PartBuilder, w: number, h: number, x: number, y: number, z: number, ry = 0): void {
   const q = new THREE.Vector3(x, y, z);
   p.add(box(w, h, 0.2), gloom(), q.x, q.y, q.z, 0, ry);
   p.add(new THREE.CylinderGeometry(w / 2, w / 2, 0.2, 10, 1, false, 0, Math.PI).rotateX(Math.PI / 2).rotateZ(Math.PI / 2).rotateY(ry), gloom(), q.x, q.y + h / 2, q.z);
 }
 
 /** A pennant on a pole above `y`. */
-function pennant(p: PartBuilder, color: number, x: number, y: number, z: number, pole = 3): void {
+export function pennant(p: PartBuilder, color: number, x: number, y: number, z: number, pole = 3): void {
   p.add(new THREE.CylinderGeometry(0.07, 0.09, pole, 6), woodDark(), x, y + pole / 2, z);
   const flag = new THREE.BufferGeometry();
   flag.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0, 2.2, -0.45, 0, 0, -0.9, 0, 0, 0, 0, 0, -0.9, 0, 2.2, -0.45, 0], 3));
@@ -553,7 +553,7 @@ export function buildCottage(variant: number, roof: Roof, shutter: number): THRE
 }
 
 /** A gable roof with its ridge along X (for cottages whose long side faces the street). */
-function gableRoofAlongX(p: PartBuilder, w: number, d: number, h: number, y: number, roof: THREE.Material, overhang: number, thick: number): void {
+export function gableRoofAlongX(p: PartBuilder, w: number, d: number, h: number, y: number, roof: THREE.Material, overhang: number, thick: number): void {
   const run = Math.hypot(d / 2, h);
   const slope = Math.atan2(h, d / 2);
   for (const s of [-1, 1]) {

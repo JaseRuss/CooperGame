@@ -463,6 +463,14 @@ prisoners. Single player (there is no co-op on this level).
   through it, and you start again from the gate. You can't disguise while you're being watched,
   and firing a shot drops it. Right behind a jailer, the fire button is a quiet **takedown**.
   Press **R** to go back to the gate. Walk out of the gate to finish.
+- **The Great Castle.** On this level the final castle is modelled on Stirling Castle: a Palace
+  with statues in niches, a dormered slate roof and a carved doorway under the Royal Standard
+  (the red lion rampant); a Great Hall in "Stirling gold" with crow-stepped gables, buttresses,
+  tall windows, a polygonal bay and a stair turret; a Chapel Royal with a belfry; the King's Old
+  Building and the Great Kitchens with their tall chimneys; the Elphinstone Tower with its
+  corbelled parapet; a Grand Battery of guns each side of the gate; knot gardens; and round
+  towers with bartizans and conical slate roofs round the wall and on the Forework gatehouse.
+  Mission 3's Great Castle is unchanged.
 - **The wave.** Back in the tank, the freed soldiers run for the nearest friendly base with the
   jailers chasing them. Covering their escape is optional. Once they make it they regroup, march
   on the nearest enemy castle, take it themselves, and hold it. A castle they take counts as one
