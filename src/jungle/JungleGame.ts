@@ -17,6 +17,7 @@ import { ARMY_GREEN, ARMY_TAN, ARMY_BLUE } from '../utils/plastic';
 import { mulberry32 } from '../utils/rng';
 import { Forest, type Clearing } from './Forest';
 import { Terrain, type Zone } from './Terrain';
+import { Roads } from './Roads';
 import { Weather } from './Weather';
 import { Trooper } from './Trooper';
 import { Enemies } from './Enemies';
@@ -24,12 +25,27 @@ import { Squad } from './Squad';
 import type { Battle } from './Battle';
 import { Explosives, type Blast } from './Explosives';
 import { Drops } from './Drops';
+import { CookOff } from './CookOff';
 import { JungleMap } from './JungleMap';
-import { Solids, Lookout, Target, buildOutpost, buildAirbase, type Outpost, type Airbase } from './Props';
+import { Solids, Lookout, Target, buildOutpost, buildAirbase, buildCamp, type Outpost, type Airbase, type Camp } from './Props';
 
 /** The jungle is a square this many metres either side of the middle. */
 const HALF = 230;
-const START = { x: 0, z: 205, yaw: 0 };
+/** He starts a few steps off the road, facing across it (yaw -90 degrees: east). */
+const START = { x: -10, z: 205, yaw: -Math.PI / 2 };
+/** The dirt road: from the south edge over the main bridge and north to the North outpost, with tracks off it to the West and East outposts. */
+const ROADS: [number, number][][] = [
+  [[22, 238], [8, 214], [2, 180], [0, 146], [0, 110], [0, 76], [-8, 40], [8, 8], [10, -30], [-4, -66], [-8, -108], [-10, -146]],
+  [[-8, 40], [-40, 38], [-70, 37], [-90, 36]],
+  [[10, -10], [50, -12], [88, -9]],
+];
+/** Small camps dotted along the road. */
+const CAMPS: { x: number; z: number; army: 'tan' | 'blue' }[] = [
+  { x: -15, z: 150, army: 'tan' },
+  { x: 16, z: 56, army: 'blue' },
+  { x: 26, z: -34, army: 'tan' },
+  { x: 12, z: -90, army: 'blue' },
+];
 const AIRBASE_AT = { x: -104, z: 172 };
 /** A river crosses the middle of the jungle; these are the x positions of its bridges. */
 const BRIDGES = [0, 172];
@@ -44,7 +60,6 @@ const OUTPOSTS: { name: string; army: 'tan' | 'blue'; x: number; z: number }[] =
   { name: 'North outpost', army: 'tan', x: -10, z: -170 },
 ];
 const PATROLS = [
-  { x: -50, z: 135 },
   { x: 74, z: 128 },
   { x: 60, z: -62 },
 ];
@@ -152,10 +167,15 @@ export class JungleGame {
   private jam!: JamCannon;
   private forest!: Forest;
   private terrain!: Terrain;
+  private roads!: Roads;
+  private camps: Camp[] = [];
   private weather!: Weather;
   private solids!: Solids;
   private explosives!: Explosives;
   private drops!: Drops;
+  private cookOff!: CookOff;
+  /** The cutscene of an ammo dump going up, while it runs. */
+  private cut: { t: number; outpost: Outpost; angle: number } | null = null;
   private player!: PlayerSoldier;
   private cam!: ShoulderCam;
   private squad = new Squad();
@@ -242,6 +262,21 @@ export class JungleGame {
     const assets = new AssetLibrary();
     await assets.load((n, total) => (this.loadingLabel.textContent = `Loading jungle… ${n}/${total}`), ['jungleTree', 'undergrowth', 'hut', 'bigHut']);
     this.solids = new Solids(this.world);
+    this.cookOff = new CookOff(
+      this.scene,
+      {
+        explode: (at, size) => this.impacts.explode(at, size),
+        boom: (at, volume, rate) => this.sound.play('boom', { at, volume, rate, minGap: 0.05 }),
+        shake: (n) => this.cam.addShake(n),
+        kill: (at, radius) => {
+          for (const e of this.enemies.list) if (!e.t.down && Math.hypot(e.t.pos.x - at.x, e.t.pos.z - at.z) < radius && e.t.hurt(99)) this.stats.enemiesDown++;
+          this.enemies.hear(at, 90);
+        },
+        fell: (at, radius) => this.forest.fell(at, new THREE.Vector3(1, 0, 0), radius),
+        smoke: (at, radius, seconds) => this.impacts.addSmokeSource(at, radius, seconds),
+      },
+      (c) => this.solids.remove(c),
+    );
 
     // The ground, and the edge of the map.
     const floor = new THREE.Mesh(new THREE.PlaneGeometry(900, 900).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0x3c5a2c, roughness: 1 }));
@@ -254,7 +289,14 @@ export class JungleGame {
     this.lookouts = LOOKOUTS.map((l) => new Lookout(this.solids, this.scene, l.x, l.z));
     this.outposts = OUTPOSTS.map((o) => buildOutpost(assets, this.scene, this.solids, o.name, o.army, o.army === 'tan' ? ARMY_TAN : ARMY_BLUE, o.x, o.z));
     this.airbase = buildAirbase(this.scene, this.solids, AIRBASE_AT.x, AIRBASE_AT.z, ARMY_TAN);
+    this.roads = new Roads(this.scene, ROADS);
+    this.camps = CAMPS.map((c) => {
+      const road = this.roads.nearest(c.x, c.z);
+      return buildCamp(this.scene, this.solids, c.x, c.z, new THREE.Vector2(road.x - c.x, road.y - c.z).normalize(), c.army === 'tan' ? ARMY_TAN : ARMY_BLUE);
+    });
     const avoid: Zone[] = [
+      ...this.camps.map((c) => ({ x: c.x, z: c.z, r: c.r + 3 })),
+      ...this.roads.paths.flatMap((path) => path.filter((_, i) => i % 4 === 0).map((p) => ({ x: p.x, z: p.y, r: 7 }))),
       { x: START.x, z: START.z, r: 22 },
       { x: AIRBASE_AT.x, z: AIRBASE_AT.z, r: 58 },
       ...this.lookouts.map((l) => ({ x: l.x, z: l.z, r: 12 })),
@@ -262,9 +304,11 @@ export class JungleGame {
     ];
     this.terrain = new Terrain(this.world, this.scene, HALF, BRIDGES, avoid, 5150);
     Trooper.route = (fx, fz, tx, tz) => this.terrain.route(fx, fz, tx, tz);
-    this.map.setTerrain({ isWater: (x, z) => this.terrain.isWater(x, z), bridges: this.terrain.bridges });
+    this.map.setTerrain({ isWater: (x, z) => this.terrain.isWater(x, z), bridges: this.terrain.bridges, roads: this.roads.paths });
     const clearings: Clearing[] = [
       ...this.terrain.clearings,
+      ...this.roads.clearings,
+      ...this.camps.map((c) => ({ x: c.x, z: c.z, r: c.r })),
       { x: START.x, z: START.z, r: 17 },
       ...this.lookouts.map((l) => ({ x: l.x, z: l.z + 1, r: 9 })),
       ...this.outposts.map((o) => ({ x: o.x, z: o.z, r: o.r })),
@@ -280,7 +324,7 @@ export class JungleGame {
     this.scene.add(this.player.root);
     this.cam = new ShoulderCam(this.camera, this.world);
     const names = this.settings.buddyNames;
-    for (let i = 0; i < SQUAD_SIZE; i++) this.addSquadMate(START.x + (i - 1.5) * 1.6, START.z + 2.4, names[i] ?? `Buddy ${i + 1}`);
+    for (let i = 0; i < SQUAD_SIZE; i++) this.addSquadMate(START.x + 0.4, START.z + (i < 2 ? -2.2 - i * 1.7 : 2.2 + (i - 2) * 1.7), names[i] ?? `Buddy ${i + 1}`);
 
     // The enemy: six at each outpost, four guarding the airbase, two patrols out in the trees.
     const rng = mulberry32(777);
@@ -291,12 +335,21 @@ export class JungleGame {
         this.addEnemy(o.x + Math.cos(a) * r, o.z + Math.sin(a) * r, o.army === 'tan' ? ARMY_TAN : ARMY_BLUE, 9);
       }
     }
+    // The camps along the road: a couple round the fire, one behind each gun, one wandering among the tents.
+    CAMPS.forEach((cfg, k) => {
+      const camp = this.camps[k];
+      const color = cfg.army === 'tan' ? ARMY_TAN : ARMY_BLUE;
+      for (let i = 0; i < 2; i++) this.addEnemy(camp.fire.x + (i ? 1.8 : -1.8), camp.fire.z + (i ? 0.8 : -0.4), color, 6);
+      for (const g of camp.guns) this.addEnemy(g.x + (rng() - 0.5), g.z + 1.2 + rng(), color, 1.5);
+      this.addEnemy(camp.x + (rng() - 0.5) * 6, camp.z + (rng() - 0.5) * 6, color, 9);
+    });
     // A few at the north end of the main bridge.
     const gate = this.terrain.bridges[0];
     for (let i = 0; i < 3; i++) this.addEnemy(gate.north.x - 6 + i * 6, gate.north.y - 14 - (i % 2) * 5, ARMY_TAN, 7);
     for (let i = 0; i < 4; i++) this.addEnemy(AIRBASE_AT.x - 18 + i * 14, AIRBASE_AT.z - 6 + (i % 2) * 14, ARMY_TAN, 8);
     for (const p of PATROLS) for (let i = 0; i < 3; i++) this.addEnemy(p.x + (rng() - 0.5) * 8, p.z + (rng() - 0.5) * 8, i % 2 ? ARMY_BLUE : ARMY_TAN, 18);
 
+    for (const c of this.camps) this.impacts.addSmokeSource(c.fire.clone().setY(1.2), 0.35, 1e7);
     this.battle = this.makeBattle();
     this.map.reveal(START.x, START.z, START_REVEAL);
     this.hud.setWorldMap(this.map.asWorldMap());
@@ -612,12 +665,19 @@ export class JungleGame {
     return [...this.outposts.map((o) => o.dump), ...this.airbase.jets];
   }
 
+  /** The dump goes up as a cutscene (`stepCutscene`); the banner and any victory come when it ends. */
   private onDumpDestroyed(o: Outpost): void {
     o.beacon.visible = false;
     o.flagMaterial.color.setHex(ARMY_GREEN);
-    this.impacts.explode(o.dump.pos, 4);
-    const left = this.outposts.filter((x) => x.dump.alive).length;
     this.checkpoint = { x: o.x + 3, z: o.z + 15, yaw: 0 };
+    const p = this.player.position;
+    const angle = Math.atan2(p.z - o.z, p.x - o.x);
+    this.cut = { t: 0, outpost: o, angle: Math.hypot(p.x - o.x, p.z - o.z) < 3 ? 0.8 : angle };
+    this.cookOff.start(o);
+  }
+
+  private finishDump(o: Outpost): void {
+    const left = this.outposts.filter((x) => x.dump.alive).length;
     this.sound.music.stinger();
     if (left === 0) {
       this.victoryAt = this.time;
@@ -786,6 +846,11 @@ export class JungleGame {
     if (input.mapTogglePressed) this.hud.toggleBigMap();
     this.time += dt;
     this.updateWeather(dt);
+    if (this.cut) {
+      this.stepCutscene(dt);
+      return;
+    }
+    this.cookOff.update(dt);
     if (this.victoryAt !== null && this.time - this.victoryAt > VICTORY_DELAY) {
       const next = MISSIONS.find((m) => m.mission === MISSION + 1 && !m.bonus);
       if (next) startMission(next.mission);
@@ -820,6 +885,8 @@ export class JungleGame {
         }
       }
     }
+    // Off the platform somehow (a fall, a jam knock): he's on the ground, so he's not "on the tower".
+    if (this.onTower && !this.climb && this.player.position.y < this.onTower.top - 3) this.onTower = null;
     if (!this.onTower) this.recordTrail();
     if (this.reload > 0) {
       this.reload -= dt;
@@ -882,6 +949,55 @@ export class JungleGame {
 
   // ---------- HUD ----------
 
+  /** The camera for the dump cutscene: high and wide, swinging slowly round the blast. */
+  private cutscenePose(c: { t: number; outpost: Outpost; angle: number }): { pos: THREE.Vector3; look: THREE.Vector3 } {
+    const k = Math.min(1, c.t / (CookOff.DURATION + 1));
+    const a = c.angle + 0.35 + k * 0.9;
+    const dist = 50 - k * 8;
+    const at = c.outpost.dump.pos;
+    const shake = 0.45 * Math.max(0, 1 - c.t / 1.6) + 0.12 * Math.max(0, Math.sin(c.t * 9)) * (c.t < CookOff.DURATION ? 1 : 0);
+    const jitter = () => (Math.random() - 0.5) * 2 * shake;
+    return {
+      pos: new THREE.Vector3(at.x + Math.cos(a) * dist + jitter(), 24 + k * 5 + jitter(), at.z + Math.sin(a) * dist + jitter()),
+      look: new THREE.Vector3(at.x, 3 + k * 4, at.z),
+    };
+  }
+
+  /** The world carries on without the soldiers: blasts, flying planks, trees going over. */
+  private stepCutscene(dt: number): void {
+    const c = this.cut as NonNullable<typeof this.cut>;
+    c.t += dt;
+    this.cookOff.update(dt);
+    this.explosives.update(dt, (b) => this.onBlast(b), (pt) => this.impacts.trailPuff(pt));
+    this.drops.update(dt);
+    this.forest.update(dt);
+    this.world.step();
+    // The camera lands back on the player over the last moments.
+    this.cam.update(this.player, dt);
+    const back = { pos: this.camera.position.clone(), quat: this.camera.quaternion.clone() };
+    const pose = this.cutscenePose(c);
+    this.camera.position.copy(pose.pos);
+    this.camera.lookAt(pose.look);
+    const end = CookOff.DURATION + 1;
+    const blend = Math.max(0, (c.t - (end - 0.8)) / 0.8);
+    if (blend > 0) {
+      const k = blend * blend * (3 - 2 * blend);
+      this.camera.position.lerp(back.pos, k);
+      this.camera.quaternion.slerp(back.quat, k);
+    }
+    this.impacts.update(dt);
+    this.updateTracers(dt);
+    this.mapAge += dt;
+    if (this.mapAge > 0.15) {
+      this.mapAge = 0;
+      this.refreshMap();
+    }
+    if (c.t >= end) {
+      this.cut = null;
+      this.finishDump(c.outpost);
+    }
+  }
+
   private waypointTo(point: THREE.Vector3, label: string): HUDState['waypoint'] {
     const view = point.clone().applyMatrix4(this.camera.matrixWorldInverse);
     let x = view.x;
@@ -905,7 +1021,7 @@ export class JungleGame {
 
   /** The way to go next: the nearest dump we've found, else the nearest lookout. */
   private waypoint(): HUDState['waypoint'] {
-    if (this.hud.paused || this.victoryAt !== null) return null;
+    if (this.hud.paused || this.victoryAt !== null || this.cut) return null;
     const p = this.player.position;
     const known = this.outposts.filter((o) => o.dump.alive && this.map.known(o.x, o.z));
     if (known.length) {
@@ -992,8 +1108,8 @@ export class JungleGame {
       buddyRoster: [],
       buddyOut: [],
       buddyMax: 0,
-      cinematic: false,
-      cinematicLabel: '',
+      cinematic: this.cut !== null,
+      cinematicLabel: this.cut ? '● AMMO DUMP' : '',
       waypoint: this.waypoint(),
       enemyBasesLeft: 0,
       enemyBasesTotal: 0,
@@ -1069,6 +1185,8 @@ export class JungleGame {
       world: this.world,
       forest: this.forest,
       terrain: this.terrain,
+      camps: this.camps,
+      roads: this.roads,
       weather: this.weather,
       squad: this.squad,
       enemies: this.enemies,

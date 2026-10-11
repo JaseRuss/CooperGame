@@ -116,6 +116,8 @@ export class Lookout {
     solids.box(x + 3.7, LOOKOUT_TOP + 0.7, z, 0.15, 0.7, 3.8);
     solids.box(x - 2.4, LOOKOUT_TOP + 0.7, z + 3.7, 1.4, 0.7, 0.15);
     solids.box(x + 2.4, LOOKOUT_TOP + 0.7, z + 3.7, 1.4, 0.7, 0.15);
+    // The ladder's gap is open to the eye but shut to feet: the way down is the hatch spot just inside it.
+    solids.box(x, LOOKOUT_TOP + 0.7, z + 3.75, 1.1, 0.7, 0.1);
     // Roof.
     p.add(new THREE.ConeGeometry(6.2, 3.2, 4).rotateY(Math.PI / 4), plastic(0x8a6a3a), x, LOOKOUT_TOP + 6.6, z);
     // The ladder up the south face.
@@ -180,6 +182,9 @@ export interface Outpost {
   /** The clearing's radius. */
   readonly r: number;
   readonly dump: Target;
+  /** The outbuildings round the dump, and the stacks of crates beside it (for when it goes up). */
+  readonly huts: { obj: THREE.Object3D; colliders: RAPIER.Collider[]; center: THREE.Vector3; height: number }[];
+  readonly crates: { meshes: THREE.Mesh[]; colliders: RAPIER.Collider[]; points: THREE.Vector3[] };
   readonly beacon: THREE.Mesh;
   readonly flagMaterial: THREE.MeshStandardMaterial;
 }
@@ -196,19 +201,22 @@ export function buildOutpost(assets: AssetLibrary, scene: THREE.Scene, solids: S
     ['hut-walled', -9, 12, 2.4, 6.5],
     ['shack-open', 13, 11, -2.2, 6],
   ];
-  for (const [model, dx, dz, yaw, w] of huts) placeHut(assets, 'hut', model, scene, solids, x + dx, z + dz, yaw, w);
+  const outbuildings = huts.map(([model, dx, dz, yaw, w]) => placeHut(assets, 'hut', model, scene, solids, x + dx, z + dz, yaw, w));
   const dumpHut = placeHut(assets, 'bigHut', 'storage-hut', scene, solids, x, z, 0.3, 7.5);
   // Crates and barrels stacked about the dump.
   const p = new PartBuilder();
   const wood = plastic(WOOD);
+  const crateColliders: RAPIER.Collider[] = [];
+  const cratePoints: THREE.Vector3[] = [];
   for (const [dx, dz, s, yaw] of [[4.8, 3.6, 1.2, 0.3], [5.4, 5.2, 0.9, -0.2], [-5.2, 4.2, 1.1, 0.5], [-5.6, -3.8, 1.0, 0.1], [3.8, -5.4, 1.1, -0.4]] as [number, number, number, number][]) {
     p.add(new THREE.BoxGeometry(2 * s, 1.6 * s, 2 * s), wood, x + dx, 0.8 * s, z + dz, 0, yaw);
-    solids.box(x + dx, 0.8 * s, z + dz, s, 0.8 * s, s, yaw);
+    crateColliders.push(solids.box(x + dx, 0.8 * s, z + dz, s, 0.8 * s, s, yaw));
+    cratePoints.push(new THREE.Vector3(x + dx, 0, z + dz));
   }
-  p.buildInto(scene as unknown as THREE.Object3D);
+  const crateMeshes = p.buildInto(scene as unknown as THREE.Object3D);
   const flagMaterial = flag(scene, x - 3, z - 9, color);
   const dump = new Target(`${name} ammo dump`, dumpHut.obj, new THREE.Vector3(x, 1.5, z), 4.5, 8, dumpHut.colliders, solids);
-  return { name, army, x, z, r, dump, beacon: beacon(scene, x, z), flagMaterial };
+  return { name, army, x, z, r, dump, huts: outbuildings, crates: { meshes: crateMeshes, colliders: crateColliders, points: cratePoints }, beacon: beacon(scene, x, z), flagMaterial };
 }
 
 // ---------- the airbase ----------
@@ -288,4 +296,96 @@ export function buildAirbase(scene: THREE.Scene, solids: Solids, x: number, z: n
     jets.push(new Target(`jet ${i + 1}`, jet, new THREE.Vector3(x + dx, 1.6, z + 4.5), 5, 3, [c], solids));
   });
   return { x, z, jets, clearing: { x0: x - 62, x1: x + 70, z0: z - 15, z1: z + 18 } };
+}
+
+// ---------- roadside camps ----------
+
+export interface Camp {
+  readonly x: number;
+  readonly z: number;
+  /** The clearing's radius. */
+  readonly r: number;
+  /** Where the fire burns, and where the gun emplacements are (a soldier or two stands behind each). */
+  readonly fire: THREE.Vector3;
+  readonly guns: THREE.Vector3[];
+}
+
+/**
+ * A small enemy camp beside the road: a fire, a couple of tents, crates and barrels, and two sandbag
+ * gun emplacements facing the road. The guns are for show: whoever stands behind them is a soldier
+ * like any other, and he's caught napping when you walk up.
+ */
+export function buildCamp(scene: THREE.Scene, solids: Solids, x: number, z: number, facing: THREE.Vector2, color: number): Camp {
+  const yaw = Math.atan2(-facing.x, -facing.y);
+  const c = Math.cos(yaw);
+  const s = Math.sin(yaw);
+  const at = (lx: number, lz: number) => new THREE.Vector3(x + lx * c + lz * s, 0, z - lx * s + lz * c);
+  const bag = plastic(0xb8a574);
+  const bagDark = plastic(0x9a8a5c);
+  const canvas = plastic(color);
+  const wood = plastic(WOOD);
+  const iron = plastic(0x4a4d52);
+  const stone = plastic(0x8a8d90);
+  const p = new PartBuilder();
+
+  // Fire pit.
+  const fire = at(0, 2.5);
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2;
+    p.add(new THREE.DodecahedronGeometry(0.3, 0), stone, fire.x + Math.cos(a) * 0.8, 0.2, fire.z + Math.sin(a) * 0.8);
+  }
+  p.add(new THREE.CylinderGeometry(0.1, 0.1, 1.3, 5).rotateZ(Math.PI / 2), plastic(WOOD_DARK), fire.x, 0.25, fire.z, 0, 0.6);
+  p.add(new THREE.CylinderGeometry(0.1, 0.1, 1.3, 5).rotateZ(Math.PI / 2), plastic(WOOD_DARK), fire.x, 0.25, fire.z, 0, -0.6);
+  const flame = new THREE.Mesh(new THREE.ConeGeometry(0.45, 1.3, 6), new THREE.MeshBasicMaterial({ color: 0xff8a2a, fog: false }));
+  flame.position.set(fire.x, 0.9, fire.z);
+  scene.add(flame);
+
+  // Two tents.
+  for (const [lx, lz, ry] of [[-6.2, 3.8, 0.3], [6.0, 4.6, -0.4]] as [number, number, number][]) {
+    const t = at(lx, lz);
+    p.add(new THREE.ConeGeometry(2.3, 2.3, 4).rotateY(Math.PI / 4), canvas, t.x, 1.15, t.z, 0, yaw + ry, 0, 1, 1, 1.35);
+    p.add(new THREE.BoxGeometry(0.1, 2.4, 0.1), wood, t.x, 1.2, t.z);
+    solids.box(t.x, 0.7, t.z, 1.4, 0.7, 1.7, yaw + ry);
+  }
+
+  // Crates and barrels.
+  for (const [lx, lz, size] of [[-3, 6.6, 1.1], [-1.4, 7.2, 0.9], [3.6, 6.8, 1.2]] as [number, number, number][]) {
+    const t = at(lx, lz);
+    p.add(new THREE.BoxGeometry(2 * size, 1.5 * size, 2 * size), wood, t.x, 0.75 * size, t.z, 0, yaw + lx);
+    solids.box(t.x, 0.75 * size, t.z, size, 0.75 * size, size, yaw + lx);
+  }
+  for (const [lx, lz] of [[1.2, 7], [2.2, 7.4]] as [number, number][]) {
+    const t = at(lx, lz);
+    p.add(new THREE.CylinderGeometry(0.45, 0.45, 1.1, 10), iron, t.x, 0.55, t.z);
+  }
+
+  // Sandbag gun emplacements, one either side, a toy gun behind each.
+  const guns: THREE.Vector3[] = [];
+  for (const side of [-1, 1]) {
+    const gun = at(side * 5.4, -3.8);
+    guns.push(gun.clone());
+    for (let layer = 0; layer < 2; layer++) {
+      for (let i = -4; i <= 4; i++) {
+        const a = (i / 4) * 1.15;
+        // An arc round the front of the gun, each bag along the tangent.
+        const lx = side * 5.4 + Math.sin(a) * 3.1;
+        const lz = -3.8 - Math.cos(a) * 3.1 + layer * 0;
+        const w = at(lx, lz);
+        const ang = yaw - a;
+        p.add(new THREE.BoxGeometry(1.15, 0.42, 0.55), (i + layer) % 2 ? bag : bagDark, w.x, 0.21 + layer * 0.42, w.z, 0, ang);
+        if (layer === 0) solids.box(w.x, 0.42, w.z, 0.6, 0.42, 0.3, ang);
+      }
+    }
+    // The gun: a barrel on a carriage with wheels and a shield.
+    p.add(tubeZ(0.14, 0.2, 2.6, 8), iron, gun.x, 1.05, gun.z, 0, yaw);
+    for (const w of [-1, 1]) {
+      const wp = at(side * 5.4 + w * 0.8, -3.2);
+      p.add(new THREE.CylinderGeometry(0.55, 0.55, 0.16, 12).rotateZ(Math.PI / 2), plastic(WOOD_DARK), wp.x, 0.55, wp.z, 0, yaw);
+    }
+    const sh = at(side * 5.4, -4.8);
+    p.add(new THREE.BoxGeometry(1.8, 1.2, 0.1), iron, sh.x, 1.0, sh.z, 0, yaw);
+    solids.box(gun.x, 0.6, gun.z, 0.5, 0.6, 0.9, yaw);
+  }
+  p.buildInto(scene as unknown as THREE.Object3D);
+  return { x, z, r: 13, fire, guns };
 }

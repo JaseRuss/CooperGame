@@ -323,12 +323,18 @@ very dense patch of jungle (about 4,800 trees) with a **river** across the middl
 follow you, shoot at what they can see, and get back up after being knocked down. Press **X** to
 make them hold their ground or follow you again.
 
+- **A dirt road** runs from where you start (you begin a few steps off it, facing across) over the main bridge
+  and north to the North outpost, with tracks off it to the West and East outposts. Four small **camps** are dotted
+  along it: a fire, tents, crates and two sandbag gun emplacements (just for show). The soldiers there mill about,
+  and if you walk up on them they stand gaping for a second ("WHAT?!") before they react, so you get the first shot.
 - **A river with two bridges.** You can't wade it, so cross at a bridge (soldiers, yours and theirs, use them too).
   Water doesn't stop bullets, so expect to get shot at from the far bank. The enemy keeps a guard on the north end
   of the main bridge. Rock outcrops make good cover.
 - **Three enemy outposts** (the tan and blue armies' hut camps), each with an ammo dump in a storage hut. Blow
   all three up to win. Get within about a dozen metres of a dump and press **Q** (RB on a controller) to plant a
   **bomb** (you start with three and can carry five). It goes off after seven seconds, so run, and your squad runs too.
+  When a dump goes up it's a short cutscene: a huge blast that flattens the trees, the crates round it cooking off,
+  and each outbuilding blown apart in turn, leaving burning wreckage.
 - **An enemy airbase right by where you start.** It's optional: wreck its three jets and **paratroopers** drop in to
   join your squad, along with a supply crate that refills your grenades and gives you another bomb.
 - **Lookout towers.** Walk up to the foot of the ladder to climb. From the top you can see over the trees, and the

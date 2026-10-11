@@ -36,6 +36,7 @@ export class Trooper {
   private readonly figure: THREE.Mesh;
   private readonly baseMaterial: THREE.Material;
   private readonly tag: THREE.Sprite;
+  private readonly startledTag: THREE.Sprite;
   private hop = Math.random() * 6;
   private tip = 0;
   private sink = 0;
@@ -60,7 +61,10 @@ export class Trooper {
     this.tag = createJammedTag(1.8, 'STUCK!');
     this.tag.position.y = 2.4;
     this.tag.visible = false;
-    this.root.add(this.figure, this.tag);
+    this.startledTag = createJammedTag(1.3, 'WHAT?!');
+    this.startledTag.position.y = 2.4;
+    this.startledTag.visible = false;
+    this.root.add(this.figure, this.tag, this.startledTag);
     this.pos.set(x, 0, z);
     this.body = world.createRigidBody(RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(x, 0.9, z));
     this.collider = world.createCollider(RAPIER.ColliderDesc.capsule(HALF_HEIGHT, RADIUS).setCollisionGroups(side === 'friend' ? FRIEND_GROUPS : ENEMY_GROUPS), this.body);
@@ -148,6 +152,7 @@ export class Trooper {
     this.collider.setEnabled(false);
     this.figure.material = this.baseMaterial;
     this.tag.visible = false;
+    this.startledTag.visible = false;
   }
 
   /** Splattered by jam: stuck fast, then he slips over. */
@@ -158,6 +163,11 @@ export class Trooper {
     this.figure.material = JAM_MATERIAL;
     this.tag.visible = true;
     return true;
+  }
+
+  /** Caught by surprise: a "WHAT?!" over his head while he gapes. */
+  surprise(on: boolean): void {
+    this.startledTag.visible = on && this.state === 'active';
   }
 
   /** Jumps him to (x, z), clear of whatever he was stuck on. */
