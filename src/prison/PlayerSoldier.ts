@@ -4,7 +4,7 @@ import { createFigureMesh } from '../entities/Soldier';
 import { ARMY_GREEN, ARMY_TAN, plastic, shade } from '../utils/plastic';
 import { clamp } from '../utils/math';
 import type { InputState } from '../input/InputManager';
-import { FRIEND_GROUPS, WALLS_ONLY } from './groups';
+import { FRIEND_GROUPS, WALK_ONLY } from './groups';
 
 /** The capsule round the army man: 1.8 m from the bottom of the stand to the top of the helmet. */
 const RADIUS = 0.35;
@@ -250,7 +250,7 @@ export class PlayerSoldier {
    */
   private move(desired: { x: number; y: number; z: number }): { x: number; y: number; z: number } {
     const run = (d: { x: number; y: number; z: number }) => {
-      this.controller.computeColliderMovement(this.collider, d, undefined, WALLS_ONLY); // walks through his own side
+      this.controller.computeColliderMovement(this.collider, d, undefined, WALK_ONLY); // walks through his own side
       const m = this.controller.computedMovement();
       return { x: m.x, y: m.y, z: m.z };
     };
@@ -265,7 +265,7 @@ export class PlayerSoldier {
     const open = (side: number, off: number) =>
       [-0.6, 0.3].every((dy) => { // a hand above the floor, and chest high
         const origin = { x: t.x - fz * side * off, y: t.y + dy, z: t.z + fx * side * off };
-        return !this.world.castRay(new RAPIER.Ray(origin, { x: fx, y: 0, z: fz }), RADIUS + SKIN + 0.5, true, undefined, WALLS_ONLY, this.collider);
+        return !this.world.castRay(new RAPIER.Ray(origin, { x: fx, y: 0, z: fz }), RADIUS + SKIN + 0.5, true, undefined, WALK_ONLY, this.collider);
       });
     for (const off of SIDESTEP) {
       const left = open(1, off);

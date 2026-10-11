@@ -1,6 +1,10 @@
 import type { WorldMap, MapView, MapDrawOptions } from '../ui/WorldMap';
 
 const CELL = 5;
+export interface MapTerrain {
+  isWater(x: number, z: number): boolean;
+  bridges: { x: number; z: number }[];
+}
 /** How many metres across the little corner map shows. */
 const MINI_METERS = 230;
 
@@ -25,10 +29,19 @@ export class JungleMap {
   readonly data: MapData = { player: { x: 0, z: 0, yaw: 0 }, squad: [], enemies: [], outposts: [], towers: [], airbase: null, bombs: [] };
   private readonly n: number;
   private readonly seen: Uint8Array;
+  private water: Uint8Array | null = null;
+  private bridges: { x: number; z: number }[] = [];
 
   constructor(private readonly half: number) {
     this.n = Math.ceil((half * 2) / CELL);
     this.seen = new Uint8Array(this.n * this.n);
+  }
+
+  /** Tells the map where the water is, so scouted rivers and ponds show up. */
+  setTerrain(t: MapTerrain): void {
+    this.water = new Uint8Array(this.n * this.n);
+    for (let gz = 0; gz < this.n; gz++) for (let gx = 0; gx < this.n; gx++) if (t.isWater((gx + 0.5) * CELL - this.half, (gz + 0.5) * CELL - this.half)) this.water[gz * this.n + gx] = 1;
+    this.bridges = t.bridges;
   }
 
   private index(x: number, z: number): number {
@@ -83,7 +96,7 @@ export class JungleMap {
       for (let gx = lo(centreX); gx <= hi(centreX); gx++) {
         if (!this.seen[gz * this.n + gx]) continue;
         const shade = 0x2f + ((gx * 7 + gz * 13) % 5) * 3;
-        ctx.fillStyle = `rgb(${Math.round(shade * 0.55)},${shade + 24},${Math.round(shade * 0.5)})`;
+        ctx.fillStyle = this.water?.[gz * this.n + gx] ? `rgb(${shade},${shade + 50},${shade + 110})` : `rgb(${Math.round(shade * 0.55)},${shade + 24},${Math.round(shade * 0.5)})`;
         ctx.fillRect(sx(gx * CELL - this.half), sy(gz * CELL - this.half), CELL * s + 0.6, CELL * s + 0.6);
       }
     }
@@ -98,6 +111,11 @@ export class JungleMap {
       ctx.stroke();
     };
     const r = big ? 6 : 4;
+    for (const b of this.bridges) {
+      if (!this.known(b.x, b.z)) continue;
+      ctx.fillStyle = '#c89a5a';
+      ctx.fillRect(sx(b.x) - 2.4 * s - 1, sy(b.z) - 9 * s, 4.8 * s + 2, 18 * s);
+    }
     for (const t of d.towers) {
       if (!this.known(t.x, t.z)) continue;
       ctx.fillStyle = '#e8c070';

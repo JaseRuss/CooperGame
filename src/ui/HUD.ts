@@ -63,6 +63,10 @@ export interface PrisonHUD {
   stealth?: { level: number; label: string; color: string } | null;
   /** Extra lines under the checklist (the raft's distance and hull, say). */
   status?: string[];
+  /** A grenade launcher: rounds left, the magazine, and the reload (seconds left, and how long it takes). Shown in the weapon card. */
+  launcher?: { shots: number; max: number; reloadLeft: number; reloadTime: number };
+  /** Plantable bombs, shown in the weapon card. */
+  bombs?: { count: number; max: number };
 }
 
 /** A marker pointing the way to somewhere: on screen over it, or pinned to the edge toward it. */
@@ -404,6 +408,7 @@ export class HUD {
   private readonly buddyFill: HTMLDivElement;
   private readonly jamText: HTMLSpanElement;
   private readonly aaSlot: HTMLDivElement;
+  private readonly aaName: HTMLSpanElement;
   private readonly aaText: HTMLSpanElement;
   private readonly aaPips: HTMLDivElement;
   private readonly aaLockMarker: HTMLDivElement;
@@ -514,7 +519,7 @@ export class HUD {
     const aaBody = el('div', 'body', this.aaSlot);
     const aaLabel = el('div', 'row-label', aaBody);
     aaLabel.style.marginTop = '0';
-    el('span', '', aaLabel, 'AA MISSILES');
+    this.aaName = el('span', '', aaLabel, 'AA MISSILES');
     this.aaText = el('span', '', aaLabel);
     this.aaPips = el('div', 'pips', aaBody);
 
@@ -1203,8 +1208,17 @@ export class HUD {
     this.jamSlot.style.display = bike ? 'none' : ''; // the bike has no jam cannon
     const prison = state.prison;
     this.hullName.textContent = prison ? 'HEALTH' : 'HULL';
-    this.rocketSlot.style.display = prison ? 'none' : '';
+    this.rocketSlot.style.display = prison && !prison.launcher ? 'none' : '';
     this.buddySlot.style.display = prison ? 'none' : '';
+    const launcher = prison?.launcher;
+    if (launcher) {
+      const reloading = launcher.reloadLeft > 0;
+      this.rocketName.textContent = 'GRENADE LAUNCHER';
+      this.rocketFill.style.width = `${Math.round((reloading ? 1 - launcher.reloadLeft / launcher.reloadTime : launcher.shots / launcher.max) * 100)}%`;
+      this.rocketText.textContent = reloading ? `RELOADING · ${Math.ceil(launcher.reloadLeft)}s` : `${launcher.shots} / ${launcher.max} · ${state.usingGamepad ? 'LB' : 'F'}`;
+      this.rocketText.style.color = reloading ? '#ff8a7a' : '#ff9a5a';
+      this.rocketSlot.classList.toggle('ready', !reloading);
+    }
     if (prison) {
       this.jamName.textContent = 'JAM RIOT CANNON';
       this.jamHint.textContent = 'Sticks guards fast, then they slip over';
@@ -1228,10 +1242,17 @@ export class HUD {
             : `${state.aaLoaded} · NO LOCK`;
     this.aaText.style.color = state.aaLoaded === 0 ? '#ff8a7a' : aaLocked ? '#8fd3ff' : '#eef3f8';
     this.aaSlot.classList.toggle('ready', aaLocked);
-    this.aaSlot.style.display = bike || prison ? 'none' : '';
+    const bombs = prison?.bombs;
+    this.aaSlot.style.display = bombs ? '' : bike || prison ? 'none' : '';
+    this.aaName.textContent = bombs ? 'BOMBS' : 'AA MISSILES';
+    if (bombs) {
+      this.aaText.textContent = bombs.count > 0 ? `${state.usingGamepad ? 'RB' : 'Q'} · PLANT AT A DUMP` : 'NONE LEFT';
+      this.aaText.style.color = bombs.count > 0 ? '#eef3f8' : '#ff8a7a';
+      this.aaSlot.classList.toggle('ready', false);
+    }
     this.setHTML(
       this.aaPips,
-      Array.from({ length: state.aaMax }, (_, i) => `<div class="pip${i < state.aaLoaded ? ' on' : ''}"></div>`).join(''),
+      Array.from({ length: bombs ? bombs.max : state.aaMax }, (_, i) => `<div class="pip${i < (bombs ? bombs.count : state.aaLoaded) ? ' on' : ''}"></div>`).join(''),
     );
     if (state.aaLockScreen) {
       this.aaLockMarker.style.display = 'block';
@@ -1266,10 +1287,10 @@ export class HUD {
       this.keys,
       (prison
         ? state.usingGamepad
-          ? `${k('LS', 'move')}${k('RS', 'aim')}${k('RB', 'creep')}${k('RT', 'fire')}${k('LT', 'jam')}${k('X', 'squad')}${k('Y', 'camera')}${k('Start', 'pause · options')}${k('Back', 'checkpoint')}`
+          ? `${k('LS', 'move')}${k('RS', 'aim')}${k('RB', 'creep')}${k('RT', 'fire')}${k('LT', 'jam')}${prison.launcher ? `${k('LB', 'grenade')}${k('RB', 'bomb')}` : ''}${k('X', 'squad')}${k('Y', 'camera')}${k('Start', 'pause · options')}${k('Back', 'checkpoint')}`
           : this.secondary
             ? `${k('Arrows', 'move')}${k('Mouse', 'aim')}${k('Shift', 'creep')}${k('Num 0', 'fire')}${k('Num 1', 'jam')}${k('Num 7', 'squad')}${k('Num 9', 'camera')}${k('Num ↵', 'pause · options')}${k('Num .', 'checkpoint')}`
-            : `${k('WASD', 'move')}${k('Mouse', 'aim')}${k('Shift', 'creep')}${k('Click', 'fire')}${k('E', 'jam')}${k('X', 'squad')}${k('C', 'camera')}${k('M', 'pause · options')}${k('R', 'checkpoint')}` +
+            : `${k('WASD', 'move')}${k('Mouse', 'aim')}${k('Shift', 'creep')}${k('Click', 'fire')}${k('E', 'jam')}${prison.launcher ? `${k('F', 'grenade')}${k('Q', 'bomb')}` : ''}${k('X', 'squad')}${k('C', 'camera')}${k('M', 'pause · options')}${k('R', 'checkpoint')}` +
             (state.mouseCaptureHint ? '<br><span style="color:#ffd24a">Click the game to capture the mouse for aiming</span>' : '')
         : state.usingGamepad
         ? `${k('LS', drive)}${k('RS', 'aim')}${k('RT', fire)}${bike ? '' : k('LT', 'jam')}${k('LB', rocket)}${bike ? '' : k('RB', 'AA')}<br>${bike ? '' : k('X', 'mega jam')}${k('Y', 'camera')}${k('Start', 'pause · options')}${k('Back', 'home')}`

@@ -7,6 +7,7 @@
 const WORLD = 0x1;
 const FRIEND = 0x2;
 const ENEMY = 0x4;
+const WATER = 0x8;
 const groups = (membership: number, filter: number) => ((membership << 16) | filter) >>> 0;
 
 /** The player's and the prisoners' capsules. */
@@ -14,8 +15,12 @@ export const FRIEND_GROUPS = groups(FRIEND, 0xffff);
 /** The guards' capsules. */
 export const ENEMY_GROUPS = groups(ENEMY, 0xffff);
 /** Queries that only see walls and props: movement, the camera, "can he walk (or see) straight there?". */
-export const WALLS_ONLY = groups(WORLD, 0xffff & ~FRIEND & ~ENEMY);
+export const WALLS_ONLY = groups(WORLD, 0xffff & ~FRIEND & ~ENEMY & ~WATER);
+/** Rivers and ponds: soldiers can't wade them, but you can see and shoot across. Only walking queries notice them. */
+export const WATER_GROUPS = groups(WATER, 0xffff);
+/** What stops a soldier walking: walls and props, and water. */
+export const WALK_ONLY = groups(WORLD, 0xffff & ~FRIEND & ~ENEMY);
 /** The player's and the prisoners' shots (and jam): walls and guards. */
-export const FRIEND_SHOTS = groups(WORLD, 0xffff & ~FRIEND);
+export const FRIEND_SHOTS = groups(WORLD, 0xffff & ~FRIEND & ~WATER);
 /** The guards' shots: walls, the player and the prisoners. */
-export const ENEMY_SHOTS = groups(WORLD, 0xffff & ~ENEMY);
+export const ENEMY_SHOTS = groups(WORLD, 0xffff & ~ENEMY & ~WATER);

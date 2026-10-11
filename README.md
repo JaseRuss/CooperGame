@@ -316,14 +316,17 @@ rocket down each side.
 
 ## Mission 2: Jungle Strike
 
-Win the first mission and the jungle is next, and this one is **entirely on foot**: a small,
-very dense patch of jungle (about 3,400 trees), you, and a **squad** of four green soldiers who
+Win the first mission and the jungle is next, and this one is **entirely on foot**: a
+very dense patch of jungle (about 4,800 trees) with a **river** across the middle, ponds and rock outcrops, you, and a **squad** of four green soldiers who
 follow you, shoot at what they can see, and get back up after being knocked down. Press **X** to
 make them hold their ground or follow you again.
 
+- **A river with two bridges.** You can't wade it, so cross at a bridge (soldiers, yours and theirs, use them too).
+  Water doesn't stop bullets, so expect to get shot at from the far bank. The enemy keeps a guard on the north end
+  of the main bridge. Rock outcrops make good cover.
 - **Three enemy outposts** (the tan and blue armies' hut camps), each with an ammo dump in a storage hut. Blow
-  all three up to win. Stand next to a dump for two seconds and you plant a **bomb** (you start with three and can
-  carry five). It goes off after seven seconds, so run, and your squad runs too.
+  all three up to win. Get within about a dozen metres of a dump and press **Q** (RB on a controller) to plant a
+  **bomb** (you start with three and can carry five). It goes off after seven seconds, so run, and your squad runs too.
 - **An enemy airbase right by where you start.** It's optional: wreck its three jets and **paratroopers** drop in to
   join your squad, along with a supply crate that refills your grenades and gives you another bomb.
 - **Lookout towers.** Walk up to the foot of the ladder to climb. From the top you can see over the trees, and the
@@ -331,6 +334,7 @@ make them hold their ground or follow you again.
 - **The jam gun** (hold **E**) is a short-range handheld cannon that sticks soldiers and **knocks trees flat**, so you
   can clear a way or a line of sight.
 - **The grenade launcher** (**F**, right click or LB) fires four lobbed grenades, then needs a 20 second reload.
+  Its ammo, the bombs and the jam gun all show in the weapon card at the bottom left.
 - **Rain storms** roll in every minute or two: the sky darkens, the rain pours, and everyone (you and the enemy)
   can only see a short way until it clears. Creeping (Shift) makes you harder to spot.
 - You can also use the rifle (click) and the checkpoint (R). The enemy shoots back and calls for help

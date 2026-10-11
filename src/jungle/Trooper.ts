@@ -3,7 +3,7 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import { createFigureMesh, JAM_MATERIAL } from '../entities/Soldier';
 import { plastic } from '../utils/plastic';
 import { createJammedTag } from '../combat/JamCannon';
-import { FRIEND_GROUPS, ENEMY_GROUPS, WALLS_ONLY } from '../prison/groups';
+import { FRIEND_GROUPS, ENEMY_GROUPS, WALK_ONLY } from '../prison/groups';
 
 const RADIUS = 0.3;
 const HALF_HEIGHT = 0.9 - RADIUS;
@@ -19,6 +19,8 @@ export type TrooperState = 'active' | 'jammed' | 'down';
  * soldier shares: standing, stuck in jam (can't move or shoot), and flat on his back.
  */
 export class Trooper {
+  /** Where to head from (fx, fz) to get to (tx, tz): the target itself, or the end of a bridge if there's a river between. */
+  static route: ((fx: number, fz: number, tx: number, tz: number) => { x: number; z: number }) | null = null;
   readonly root = new THREE.Group();
   readonly pos = new THREE.Vector3();
   readonly collider: RAPIER.Collider;
@@ -38,6 +40,10 @@ export class Trooper {
   private tip = 0;
   private sink = 0;
   private moving = false;
+  /** Jammed against a trunk: how long, and a short sidestep to get round it (seconds left, and which way). */
+  private stuck = 0;
+  private detour = 0;
+  private detourTurn = 0;
 
   constructor(
     private readonly world: RAPIER.World,
@@ -82,20 +88,39 @@ export class Trooper {
 
   /** Walks `speed` m/s toward (x, z), sliding along trunks, turning to face the way he goes. */
   stepToward(x: number, z: number, speed: number, dt: number, face = true): number {
-    const dx = x - this.pos.x;
-    const dz = z - this.pos.z;
+    // Across a river, he heads for the bridge first.
+    const go = Trooper.route ? Trooper.route(this.pos.x, this.pos.z, x, z) : { x, z };
+    const dx = go.x - this.pos.x;
+    const dz = go.z - this.pos.z;
     const d = Math.hypot(dx, dz);
     if (d < 1e-3 || this.state !== 'active') {
       this.moving = false;
       return 0;
     }
     const step = Math.min(d, speed * dt);
-    this.controller.computeColliderMovement(this.collider, { x: (dx / d) * step, y: -dt, z: (dz / d) * step }, undefined, WALLS_ONLY);
+    let ux = dx / d;
+    let uz = dz / d;
+    if (this.detour > 0) {
+      this.detour -= dt;
+      const c = Math.cos(this.detourTurn);
+      const n = Math.sin(this.detourTurn);
+      [ux, uz] = [ux * c - uz * n, ux * n + uz * c];
+    }
+    this.controller.computeColliderMovement(this.collider, { x: ux * step, y: -dt, z: uz * step }, undefined, WALK_ONLY);
     const m = this.controller.computedMovement();
     const t = this.body.translation();
     this.body.setNextKinematicTranslation({ x: t.x + m.x, y: 0.9, z: t.z + m.z });
     this.pos.set(t.x + m.x, 0, t.z + m.z);
-    if (face) this.faceToward(x, z, dt);
+    // Head-on into a trunk gets nowhere: after a moment, step off to one side.
+    if (Math.hypot(m.x, m.z) < step * 0.3 && step > 0.01) {
+      this.stuck += dt;
+      if (this.stuck > 0.4) {
+        this.stuck = 0;
+        this.detour = 0.8;
+        this.detourTurn = (Math.random() < 0.5 ? -1 : 1) * (0.9 + Math.random() * 0.5);
+      }
+    } else this.stuck = Math.max(0, this.stuck - dt * 2);
+    if (face) this.faceToward(go.x, go.z, dt);
     this.moving = true;
     return Math.hypot(m.x, m.z);
   }
