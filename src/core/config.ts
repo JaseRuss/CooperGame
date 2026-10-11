@@ -18,9 +18,11 @@ export const TERRAIN_HEIGHT = 18;
  * at night under flares, tracer and explosions; mission 2 is a steamy jungle of thick trees and
  * villages of wooden huts; mission 3 is a land of knights and castles; mission 4 is the last
  * stand, every army together against waves of zombies. Mission 5 is a bonus level: a prison
- * break on foot: a night-time stealth escape by raft (see `src/prison/`).
+ * break on foot: a night-time stealth escape by raft (see `src/prison/`). Mission 6 is the other
+ * bonus level, "Under Siege": the castle mission with surrendering knights, prisons and a wagon
+ * that ferries prisoners (see `docs/plans/under-siege.md`).
  */
-export type Mission = 1 | 2 | 3 | 4 | 5;
+export type Mission = 1 | 2 | 3 | 4 | 5 | 6;
 
 /** Every mission in play order, as the level select lists them. */
 export const MISSIONS: { mission: Mission; title: string; blurb: string; bonus?: true }[] = [
@@ -29,6 +31,7 @@ export const MISSIONS: { mission: Mission; title: string; blurb: string; bonus?:
   { mission: 3, title: 'Castle Siege', blurb: 'Knights, cannons and dragons! Knock down five enemy castles, then the Great Castle.' },
   { mission: 4, title: 'Zombie Attack', blurb: 'Every army together at the Fortress against wave after wave of zombies. How long can you hold out?' },
   { mission: 5, title: 'Bonus: Prison Break', blurb: "On foot, at night! Break out of the tan army's prison, steal the gear for a raft, slip past the search helicopters across the sea and sneak home as the dawn breaks.", bonus: true },
+  { mission: 6, title: 'Bonus: Under Siege', blurb: 'Castles with villages and archer towers. Beaten knights surrender: a wagon takes them to our prisons, while ours are locked up in theirs.', bonus: true },
 ];
 
 const missionParam = Number(new URLSearchParams(window.location.search).get('mission'));
@@ -36,12 +39,14 @@ export const MISSION: Mission = MISSIONS.find((m) => m.mission === missionParam)
 /** The day darkens into night as bases fall (it starts in full daylight). */
 export const NIGHT = MISSION === 1;
 export const JUNGLE = MISSION === 2;
-export const KNIGHTS = MISSION === 3;
+/** The bonus castle level with surrender, prisons and the prisoner wagon (it also has all of the castle mission's look). */
+export const SIEGE = MISSION === 6;
+export const KNIGHTS = MISSION === 3 || SIEGE;
 export const ZOMBIES = MISSION === 4;
 /** The bonus level: on foot, breaking out of the tan army's prison. */
 export const PRISON = MISSION === 5;
 
-const SEEDS: Record<Mission, number> = { 1: 1337, 2: 3579, 3: 4680, 4: 5791, 5: 6802 };
+const SEEDS: Record<Mission, number> = { 1: 1337, 2: 3579, 3: 4680, 4: 5791, 5: 6802, 6: 7913 };
 export const WORLD_SEED = SEEDS[MISSION];
 
 /** Reloads the page into another mission (a fresh world, from the start). */

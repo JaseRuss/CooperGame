@@ -58,6 +58,9 @@ export interface MapView {
   fortress: MapBase & { title: string; locked: boolean; destroyed: boolean; friendly: boolean };
   /** Changing stations that turn the tank into a jeep or a chopper. */
   stations: { x: number; z: number; kind: 'jeep' | 'chopper' | 'motorbike' }[];
+  /** The siege level's prisons (ours and theirs, with how many are locked up in each) and the wagons between them. */
+  prisons: { x: number; z: number; friendly: boolean; held: number }[];
+  wagons: { x: number; z: number }[];
   /** The bomb tanker on the first mission: the parts still to find (numbered by part) and where the rig stands. */
   tanker: { parts: { x: number; z: number; index: number }[]; rig: { x: number; z: number } } | null;
   /** The enemy airbase: destroy every jet and allied paratroopers drop in when you attack a base. Null where there's none. */
@@ -297,6 +300,40 @@ export class WorldMap {
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(jeep ? 'J' : bike ? 'M' : 'H', st.x, st.z + r * 0.1);
+    }
+
+    // Prisons: a square with a P (green for ours, red for theirs), the count of those locked up beside it; wagons are small green diamonds.
+    for (const pr of view.prisons) {
+      const r = Math.max(15, 6.5 / s);
+      ctx.fillStyle = pr.friendly ? '#4b9e2e' : '#c4402e';
+      ctx.strokeStyle = '#1b1b14';
+      ctx.lineWidth = 2.5 / s;
+      ctx.fillRect(pr.x - r, pr.z - r, r * 2, r * 2);
+      ctx.strokeRect(pr.x - r, pr.z - r, r * 2, r * 2);
+      ctx.fillStyle = '#ffffff';
+      ctx.font = `900 ${r * 1.5}px "Segoe UI", sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('P', pr.x, pr.z + r * 0.08);
+      if (opts.labels) {
+        ctx.font = `900 ${r * 1.2}px "Segoe UI", sans-serif`;
+        ctx.fillStyle = '#fff6d0';
+        ctx.fillText(String(pr.held), pr.x + r * 2.1, pr.z);
+      }
+    }
+    for (const w of view.wagons) {
+      const r = Math.max(10, 4.2 / s);
+      ctx.fillStyle = '#9be27a';
+      ctx.strokeStyle = '#1b1b14';
+      ctx.lineWidth = 2 / s;
+      ctx.beginPath();
+      ctx.moveTo(w.x, w.z - r);
+      ctx.lineTo(w.x + r, w.z);
+      ctx.lineTo(w.x, w.z + r);
+      ctx.lineTo(w.x - r, w.z);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
     }
 
     // The bomb tanker: a gold disc with a number for each part still to find, and the rig itself as a striped square.

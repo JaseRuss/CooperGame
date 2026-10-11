@@ -134,6 +134,8 @@ export interface HUDState {
   airSupport: { total: number; left: number; ready: boolean } | null;
   /** The bomb tanker objective on the first mission, or null on the others. */
   tanker: TankerHUD | null;
+  /** The siege level's prisoners (knights locked up, ours still held), or null on the other missions. */
+  siege: { captives: number; ours: number; surrendered: number; carrying: number } | null;
   /** Set on the bonus prison level, where the player is on foot. */
   prison: PrisonHUD | null;
   driveStyle: Settings['driveStyle'];
@@ -1426,7 +1428,7 @@ export class HUD {
     }
     this.setHTML(
       this.baseCounter,
-      `<div class="stencil title">${title}</div><div class="flags">${flags}${fortFlag}</div>${this.airSupportLine(state)}${tanker && fort.locked ? this.tankerPanel(tanker) : ''}${ARMY_KEY}`,
+      `<div class="stencil title">${title}</div><div class="flags">${flags}${fortFlag}</div>${this.airSupportLine(state)}${this.siegeLine(state)}${tanker && fort.locked ? this.tankerPanel(tanker) : ''}${ARMY_KEY}`,
     );
     this.updateChecklist(state);
   }
@@ -1495,6 +1497,17 @@ export class HUD {
     return `<div class="airsupport" style="font-size:${compact ? 11 : 12}px; margin-top:4px; opacity:0.95">${text}</div>`;
   }
 
+  /** "⛓ KNIGHTS LOCKED UP 6 · OURS STILL HELD 8 · 3 SURRENDERED WAITING FOR THE WAGON". */
+  private siegeLine(state: HUDState, compact = false): string {
+    const siege = state.siege;
+    if (!siege) return '';
+    const waiting = siege.surrendered > 0 ? ` · <b style="color:#ffd24a">${siege.surrendered}</b> surrendered waiting for the wagon` : '';
+    return (
+      `<div class="siege" style="font-size:${compact ? 11 : 12}px; margin-top:4px; opacity:0.95">` +
+      `⛓ KNIGHTS LOCKED UP <b style="color:#9be27a">${siege.captives}</b> · OURS STILL HELD <b style="color:#ff8a7a">${siege.ours}</b>${waiting}</div>`
+    );
+  }
+
   private updateChecklist(state: HUDState): void {
     const base = state.nearbyBase;
     if (!base) {
@@ -1509,7 +1522,8 @@ export class HUD {
         `<div style="font-size:11px; opacity:0.9">${Math.round(base.distance)} m · ${left} target${left === 1 ? '' : 's'} left</div></div>` +
         `<div style="height:6px"></div>` +
         base.objectives.map((o) => `<div class="line${o.done ? ' done' : ''}">${o.done ? '☑' : '☐'} ${o.label}</div>`).join('') +
-        this.airSupportLine(state, true),
+        this.airSupportLine(state, true) +
+        this.siegeLine(state, true),
     );
   }
 }

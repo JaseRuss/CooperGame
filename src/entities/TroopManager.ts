@@ -57,6 +57,8 @@ export class TroopManager {
   zombiesDowned = 0;
   /** Called once for each zombie as it's knocked over. */
   onZombieDown: ((zombie: Soldier) => void) | null = null;
+  /** Called once for each ordinary soldier (not a zombie) the moment he lies flat. */
+  onSoldierDown: ((soldier: Soldier) => void) | null = null;
 
   constructor(
     private readonly scene: THREE.Scene,
@@ -158,6 +160,10 @@ export class TroopManager {
           this.zombiesDowned++;
           this.onZombieDown?.(s);
         }
+        if (!s.zombie && s.isDown && !s.counted) {
+          s.counted = true;
+          this.onSoldierDown?.(s);
+        }
         if (s.expired) {
           this.scene.remove(s.mesh);
           squad.soldiers.splice(i, 1);
@@ -192,6 +198,26 @@ export class TroopManager {
     anchor.set(anchor.x + dx, anchor.y + dz);
     for (const s of squad.soldiers) s.march(dx, dz);
     if (d - step < 0.01 && ++march.next >= march.route.length) march.arrived = true;
+  }
+
+  /** Soldiers with their hands up, waiting to be collected (siege level). */
+  surrendered(): Soldier[] {
+    const out: Soldier[] = [];
+    for (const squad of this.squads) for (const s of squad.soldiers) if (s.isSurrendered) out.push(s);
+    return out;
+  }
+
+  /** Takes a soldier out of the game for good (a prisoner who has climbed into the wagon, or a downed one carried off). */
+  take(soldier: Soldier): void {
+    for (const squad of this.squads) {
+      const i = squad.soldiers.indexOf(soldier);
+      if (i < 0) continue;
+      squad.soldiers.splice(i, 1);
+      soldier.dispose();
+      this.scene.remove(soldier.mesh);
+      if (squad.soldiers.length === 0) squad.respawnTimer = RESPAWN_DELAY;
+      return;
+    }
   }
 
   /** The standing soldiers of the squad started from `spawn` (none once it's gone). */

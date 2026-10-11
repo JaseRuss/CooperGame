@@ -126,6 +126,8 @@ const NO_MAP: MapView = {
   home: null,
   fortress: { x: 0, z: 0, name: '', title: '', locked: false, destroyed: false, friendly: true },
   stations: [],
+  prisons: [],
+  wagons: [],
   tanker: null,
   airbase: null,
 };
@@ -1575,6 +1577,7 @@ export class PrisonGame {
       nearbyBase: null,
       airSupport: null,
       tanker: null,
+      siege: null,
       prison: this.prisonHUD(),
       driveStyle: this.settings.driveStyle,
       mouseCaptureHint: !input.usingGamepad && !input.pointerLocked && input.pointerLockAvailable,
