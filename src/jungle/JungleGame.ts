@@ -389,6 +389,10 @@ export class JungleGame {
       fireAt: (shooter, aim) => this.troopFire(shooter, aim),
       squad: () => this.squad.list.filter((b) => b.t.active).map((b) => b.t),
       enemies: () => this.enemies.list.filter((b) => b.t.active).map((b) => b.t),
+      unseen: (p) => {
+        const ndc = p.clone().project(this.camera);
+        return ndc.z > 1 || Math.abs(ndc.x) > 1.15 || Math.abs(ndc.y) > 1.15;
+      },
       bombs: () => this.explosives.armed(),
     };
   }
@@ -1022,7 +1026,7 @@ export class JungleGame {
     this.input.textEntry = this.hud.editingText;
     this.input.beginFrame();
     const pads = Array.from(navigator.getGamepads?.() ?? []);
-    const input = this.input.update(dt, this.settings.player1Controller, 1, this.settings.splitOrientation, false, pads, 1);
+    const input = this.input.update(dt, -2, 1, this.settings.splitOrientation, false, pads, 1);
     const kbMenu = this.input.keyboardMenu();
     input.mapTogglePressed ||= kbMenu.mapTogglePressed;
     if (this.hud.paused) {

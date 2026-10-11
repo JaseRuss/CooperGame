@@ -14,6 +14,8 @@ export interface Battle {
   /** Who's about: the squad (standing ones) and the enemy (standing ones). */
   squad(): Trooper[];
   enemies(): Trooper[];
+  /** Whether a point is out of the player's view (behind him or off the edge of the screen). */
+  unseen(p: THREE.Vector3): boolean;
   /** Where bombs are armed and ticking. */
   bombs(): THREE.Vector3[];
 }

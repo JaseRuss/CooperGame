@@ -1594,11 +1594,12 @@ export class PrisonGame {
     const p2Index = this.player2 ? this.settings.player2Controller : -3;
     const p2KeyboardFirst = this.player2 !== null && p2Index === -1;
     const pads = Array.from(navigator.getGamepads?.() ?? []);
-    const p1Index = this.settings.player1Controller !== -2
-      ? this.settings.player1Controller
-      : this.player2
-        ? pads.find((pad) => pad && pad.index !== p2Index)?.index ?? -1
-        : -2;
+    // Playing solo, any controller (or the keyboard) drives; the Player 1 assignment only matters in co-op.
+    const p1Index = !this.player2
+      ? -2
+      : this.settings.player1Controller !== -2
+        ? this.settings.player1Controller
+        : pads.find((pad) => pad && pad.index !== p2Index)?.index ?? -1;
     const lockedMousePlayer: 1 | 2 = this.player2 && p2Index === -1 ? 2 : 1;
     const p2Raw = this.player2 && p2KeyboardFirst
       ? this.input.update(dt, p2Index, 2, this.settings.splitOrientation, false, pads, lockedMousePlayer)
