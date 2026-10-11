@@ -10,6 +10,7 @@ import { HomeBase, isInsideBase } from '../world/Base';
 import { distanceToPolyline, HIGHWAY_WIDTH, type Polyline } from '../world/RoadNetwork';
 import { JeepStation } from '../world/JeepStation';
 import { ChopperStation } from '../world/ChopperStation';
+import { SiegeWar } from '../world/SiegeWar';
 import { MotorbikeRamp } from '../world/MotorbikeRamp';
 import type { Building } from '../world/Building';
 import { Bunker } from '../world/Bunker';
@@ -50,7 +51,7 @@ import { CameraRig } from '../camera/CameraRig';
 import { HUD, type HUDState } from '../ui/HUD';
 import { WorldMap, type MapMarker, type MapView } from '../ui/WorldMap';
 import { AimGuide, type AimTarget } from '../ui/AimGuide';
-import { FRIENDLY_BASES, FORTRESS_HALF, nearestFriendlyBase, BASE_RADIUS, MISSION, MISSIONS, NIGHT, JUNGLE, KNIGHTS, ZOMBIES, startMission, type FriendlyBase, type Mission } from '../core/config';
+import { FRIENDLY_BASES, FORTRESS_HALF, nearestFriendlyBase, BASE_RADIUS, MISSION, MISSIONS, NIGHT, JUNGLE, KNIGHTS, ZOMBIES, SIEGE, startMission, type FriendlyBase, type Mission } from '../core/config';
 import { ZombieWaves } from '../world/ZombieWaves';
 import { OverrunTowns } from '../world/OverrunTowns';
 import { FlamePit, FLAME_RANGE, FLAME_HALF_ANGLE } from '../world/FlamePit';
@@ -492,6 +493,8 @@ export class Game {
   private fortressWarning = 0;
   /** Raids and marches between the bases (missions 1 to 4), and how long till the next "repairs stopped" warning. */
   private warfront: Warfront | null = null;
+  /** The siege bonus level's prisons and prisoner wagons (null on the other missions). */
+  private siege: SiegeWar | null = null;
   private siegeWarning = 0;
   /** The vehicle to swap to once the smoke puff has thickened, and how long until then. */
   private pendingSwap: { to: Vehicle; delay: number } | null = null;
@@ -676,6 +679,7 @@ export class Game {
     // The Fortress's garrison lounging in the moat: tan and blue, or on the zombie mission ours.
     this.moat = new Moat(this.scene, ZOMBIES ? [ARMY_GREEN, ARMY_RED] : [ARMY_TAN, ARMY_BLUE]);
     if (!ZOMBIES) this.warfront = new Warfront(this.troops, this.enemyBases, Math.random);
+    if (SIEGE) this.siege = new SiegeWar(this.world, this.scene, this.troops, this.enemyBases, this.fortress, content.highways);
     this.troops.shielded = (p) => this.sealedInFortress(p);
     this.troops.onZombieDown = (z) => {
       if (z.zombie !== 'brute') return;
@@ -758,6 +762,7 @@ export class Game {
     this.loadingLabel.remove();
     this.ready = true;
     if (MISSION === 2) this.hud.showBanner('MISSION 2: JUNGLE STRIKE', 'The enemy is hiding in the jungle. Drive or blast through the trees to find their bases!');
+    else if (MISSION === 6) this.hud.showBanner('BONUS: UNDER SIEGE', 'Beaten knights surrender. Our wagons take them to our prisons; free ours from theirs!');
     else if (MISSION === 3) this.hud.showBanner('MISSION 3: CASTLE SIEGE', 'Knights, cannons and dragons! Knock down their castles, then the Great Castle');
     else if (MISSION === 4) this.hud.showBanner('MISSION 4: ZOMBIE ATTACK!', 'Every army together! Keep the zombies away from the Fortress wall');
     else this.hud.showBanner('GREEN & RED ARE FRIENDS', 'Tan and blue are the enemy. Knock out their bases before the sun goes down, or find the parts to build a bomb tanker!');
@@ -1016,7 +1021,7 @@ export class Game {
   }
 
   private syncPlayer2(): void {
-    const enabled = this.settings.player2Controller !== -2;
+    const enabled = this.settings.player2Controller !== -2 && !SIEGE; // no co-op on the siege bonus level
     this.hud.setCoopLayout(enabled);
     if (enabled && !this.player2) {
       const offset = new THREE.Vector3(5, 0, 0).applyAxisAngle(new THREE.Vector3(0, 1, 0), this.player.yaw);
@@ -2175,6 +2180,7 @@ export class Game {
         3: 'The Great Castle has fallen! Every knight is bowled over and every dragon is down.',
         4: '',
         5: '',
+        6: 'The Great Castle has fallen! The siege is over and the prisoners are free.',
       };
       const bombed = MISSION === 1 && this.tanker?.active;
       this.hud.showVictory(bombed ? 'The bomb tanker blew the Fortress sky-high! The toy box is saved!' : message[MISSION], nextMission ? '' : 'Keep driving around and enjoy it!');
@@ -2783,6 +2789,8 @@ export class Game {
       })(),
       fortress: { x: f.center.x, z: f.center.z, name: f.name, title: f.title, locked: f.locked, destroyed: f.isDestroyed, friendly: ZOMBIES },
       stations: this.stations.map((s) => ({ x: s.center.x, z: s.center.z, kind: s.kind })),
+      prisons: (this.siege?.prisons ?? []).map((p) => ({ x: p.center.x, z: p.center.z, friendly: p.side === 'friendly', held: p.held })),
+      wagons: (this.siege?.wagons ?? []).map((w) => ({ x: w.position.x, z: w.position.z })),
       airbase: (() => {
         const air = this.airSupport();
         const site = SITES.find((t) => t.kind === 'airport');
@@ -2916,6 +2924,7 @@ export class Game {
       nearbyBase: checklist,
       airSupport: this.airSupport(),
       tanker: this.tanker?.hud() ?? null,
+      siege: this.siege ? { captives: this.siege.captives, ours: this.siege.ours, surrendered: this.troops.surrendered().length, carrying: this.siege.wagons.reduce((n, w) => n + w.carrying, 0) } : null,
       prison: null,
     };
   }
@@ -3374,6 +3383,9 @@ export class Game {
         if (n.banner) this.hud.showBanner(n.text, n.sub ?? '');
         else this.hud.showCallout(n.text, n.color ?? '#ffd24a');
       }
+    }
+    if (this.siege) {
+      for (const n of this.siege.update(dt)) this.hud.showCallout(n.text, n.color ?? '#ffd24a');
     }
     // A family base with raiders in it can't repair you until they're cleared out.
     const home = nearestFriendlyBase(this.player.position.x, this.player.position.z);

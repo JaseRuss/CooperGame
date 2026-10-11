@@ -5,7 +5,7 @@ import { surfaceHeightAt } from '../world/Terrain';
 import { plastic } from '../utils/plastic';
 import type { Faction } from './Tank';
 import { createJammedTag, createMuzzleGlob } from '../combat/JamCannon';
-import { KNIGHTS } from '../core/config';
+import { KNIGHTS, SIEGE } from '../core/config';
 import { AA_ROCKET_SPEED, AA_TROOPER_RANGE, leadPoint } from '../combat/AntiAir';
 
 const UP = new THREE.Vector3(0, 1, 0);
@@ -13,6 +13,13 @@ const ENGAGE_RANGE = 120;
 const WALK_SPEED = 1.8;
 const LOS_CHECK_INTERVAL = 0.5;
 const DOWN_LINGER = 14;
+/** The siege level: an enemy soldier who's hit but not blasted flat gives up this often. */
+const SURRENDER_CHANCE = 0.6;
+/** A blast (or hit) harder than this still sends him flying. */
+const SURRENDER_MAX_STRENGTH = 0.7;
+/** Seconds the "WE SURRENDER!" tag stays over his head, and how fast a prisoner walks to the wagon. */
+const SURRENDER_TAG_TIME = 3.5;
+const CAPTIVE_WALK = 3.2;
 
 /**
  * A shot fired: from `origin` along `direction`. A zombie's bite or swipe is a `melee` shot instead:
@@ -286,7 +293,7 @@ function crossbow(x: number, y: number, z: number): THREE.BufferGeometry[] {
  * A toy knight from the hips up (hips at height y): mail shirt under a tabard, a great helm with a
  * crest, a sword at the hip, a kite shield slung on the back and a crossbow at the shoulder.
  */
-function knightUpperBody(y: number, longbow = false): THREE.BufferGeometry[] {
+function knightUpperBody(y: number, longbow = false, handsUp = false): THREE.BufferGeometry[] {
   const v = (x: number, yy: number, z: number) => v3(x, y + yy, z);
   return [
     box(0.4, 0.18, 0.25, 0, y, 0), // hips
@@ -313,7 +320,7 @@ function knightUpperBody(y: number, longbow = false): THREE.BufferGeometry[] {
     ball(0.02, v(-0.07, 0.63, -0.16)),
     ball(0.02, v(0.07, 0.63, -0.16)),
     box(0.045, 0.15, 0.36, 0, y + 0.96, 0.02), // crest
-    ...(longbow ? longbowArms(y) : [
+    ...(handsUp ? surrenderArms(y) : longbow ? longbowArms(y) : [
       // Arms bent to hold the crossbow.
       ...jointed(v(0.25, 0.53, 0.01), v(0.33, 0.36, -0.05), v(0.14, 0.44, -0.2), 0.065),
       ...jointed(v(-0.25, 0.53, 0.01), v(-0.18, 0.37, -0.34), v(0.1, 0.46, -0.58), 0.065),
@@ -321,6 +328,17 @@ function knightUpperBody(y: number, longbow = false): THREE.BufferGeometry[] {
       ball(0.065, v(0.1, 0.46, -0.58)),
       ...crossbow(0.12, y + 0.52, 0),
     ]),
+  ];
+}
+
+/** Both arms thrown up, empty hands open: "we surrender!" */
+function surrenderArms(y: number): THREE.BufferGeometry[] {
+  const v = (x: number, yy: number, z: number) => v3(x, y + yy, z);
+  return [
+    ...jointed(v(0.25, 0.53, 0.01), v(0.42, 0.82, -0.06), v(0.38, 1.12, -0.1), 0.065),
+    ...jointed(v(-0.25, 0.53, 0.01), v(-0.42, 0.82, -0.06), v(-0.38, 1.12, -0.1), 0.065),
+    ball(0.075, v(0.38, 1.16, -0.1)),
+    ball(0.075, v(-0.38, 1.16, -0.1)),
   ];
 }
 
@@ -355,7 +373,7 @@ function longbowArms(y: number): THREE.BufferGeometry[] {
   ];
 }
 
-function standingKnight(longbow = false): THREE.BufferGeometry {
+function standingKnight(longbow = false, handsUp = false): THREE.BufferGeometry {
   const frontAnkle = v3(-0.12, 0.13, -0.24);
   const backAnkle = v3(0.12, 0.13, 0.22);
   return mergeGeometries([
@@ -366,7 +384,9 @@ function standingKnight(longbow = false): THREE.BufferGeometry {
     ...jointed(backAnkle, v3(0.11, 0.53, 0.14), v3(0.1, 0.93, 0.02), 0.095),
     ball(0.1, v3(-0.12, 0.52, -0.17), 1, 0.8, 1), // knee cops
     ball(0.1, v3(0.11, 0.53, 0.12), 1, 0.8, 1),
-    ...knightUpperBody(0.95, longbow),
+    ...knightUpperBody(0.95, longbow, handsUp),
+    // A surrendering knight has dropped his crossbow on the ground beside him.
+    ...(handsUp ? crossbow(0.68, 0.07, 0.15).map((g) => g.rotateY(0.5)) : []),
   ]);
 }
 
@@ -436,6 +456,8 @@ const FIGURES = [standingFigure(), kneelingFigure()];
 /** The knights mission's enemy crossbowmen, standing and kneeling. */
 const KNIGHT_FIGURES = KNIGHTS ? [standingKnight(), kneelingKnight()] : FIGURES;
 const ZOMBIE_FIGURES = [zombieFigure(false), zombieFigure(true)];
+/** A knight with his hands up and his crossbow on the floor (built the first time a siege knight gives up). */
+let surrenderFigure: THREE.BufferGeometry | null = null;
 const MUZZLE_HEIGHT = [1.49, 1.14];
 /**
  * The enemy's anti-aircraft troopers: a bazooka man, or a longbowman with fire arrows on the
@@ -455,6 +477,13 @@ export function createFigureMesh(pose: 0 | 1, color: number): THREE.Mesh {
 }
 
 let cheering: THREE.BufferGeometry | null = null;
+
+/** A knight with his hands up and his crossbow at his feet, in the given plastic colour: a prisoner (siege level). */
+export function createSurrenderedKnightMesh(color: number): THREE.Mesh {
+  const mesh = new THREE.Mesh((surrenderFigure ??= standingKnight(false, true)), plastic(color));
+  mesh.castShadow = true;
+  return mesh;
+}
 
 /** A cheering army man (arms up, rifle overhead) in the given plastic colour, standing on his stand at y 0. */
 export function createCheeringFigure(color: number): THREE.Mesh {
@@ -491,7 +520,11 @@ export class Soldier {
   counted = false;
   /** A zombie's glow; it goes out when it's knocked over. */
   private halo: THREE.Sprite | null = null;
-  private state: 'active' | 'flying' | 'down' = 'active';
+  private state: 'active' | 'flying' | 'down' | 'surrendered' = 'active';
+  /** A surrendered soldier's tag, how long it has left, and the spot he's walking to (the prisoner wagon). */
+  private tag: THREE.Sprite | null = null;
+  private tagTime = 0;
+  private escort: THREE.Vector3 | null = null;
   private readonly pos = new THREE.Vector3();
   private heading: number;
   private readonly pose: number;
@@ -553,6 +586,11 @@ export class Soldier {
 
   get isActive(): boolean {
     return this.state === 'active';
+  }
+
+  /** Knocked flat (not just flying through the air). */
+  get isDown(): boolean {
+    return this.state === 'down';
   }
 
   /** Standing and shooting at something it can see (a marching squad waits while anyone is). */
@@ -620,6 +658,10 @@ export class Soldier {
   /** Blast or run over: fly away from `from` and land flat on the ground. */
   knockDown(from: THREE.Vector3, strength: number): void {
     if (this.state !== 'active') return;
+    if (SIEGE && this.faction === 'enemy' && !this.zombie && strength < SURRENDER_MAX_STRENGTH && this.rng() < SURRENDER_CHANCE) {
+      this.surrender();
+      return;
+    }
     if (this.hp > 1) {
       // A brute takes it on the chin: staggers back a step, shakes off any jam, and keeps coming.
       this.hp--;
@@ -641,6 +683,67 @@ export class Soldier {
     this.tipAxis.crossVectors(UP, away).normalize();
     this.tipTarget = Math.PI / 2 + (this.rng() - 0.5) * 0.3;
     this.pos.y += 0.05;
+  }
+
+  /** Beaten but not blasted flat: drops the crossbow, throws his hands up and shouts. */
+  private surrender(): void {
+    this.jamTime = 0;
+    this.clearGunJam();
+    this.state = 'surrendered';
+    this.mesh.geometry = surrenderFigure ??= standingKnight(false, true);
+    this.mesh.material = this.baseMaterial;
+    this.tipAngle = 0;
+    this.tag = createJammedTag(2.8, 'WE SURRENDER!');
+    this.tag.position.y = 2.7;
+    this.tagTime = SURRENDER_TAG_TIME;
+    this.mesh.add(this.tag);
+    this.applyTransform(0);
+  }
+
+  /** Standing with his hands up, waiting for the prisoner wagon. */
+  get isSurrendered(): boolean {
+    return this.state === 'surrendered';
+  }
+
+  /** Where a surrendered soldier walks to (the wagon that's collecting him), or null to stand still. */
+  escortTo(target: THREE.Vector3 | null): void {
+    this.escort = target;
+  }
+
+  /** Taken away: his figure is cleaned up (the caller removes the mesh). */
+  dispose(): void {
+    this.tag?.removeFromParent();
+    this.tag = null;
+  }
+
+  private updateSurrendered(dt: number): void {
+    if (this.tag) {
+      this.tagTime -= dt;
+      if (this.tagTime <= 0) {
+        this.tag.removeFromParent();
+        this.tag = null;
+      }
+    }
+    let hop = 0;
+    if (this.escort) {
+      const dx = this.escort.x - this.pos.x;
+      const dz = this.escort.z - this.pos.z;
+      const d = Math.hypot(dx, dz);
+      if (d > 0.4) {
+        const step = Math.min(d, CAPTIVE_WALK * dt);
+        this.pos.x += (dx / d) * step;
+        this.pos.z += (dz / d) * step;
+        this.heading = Math.atan2(-dx, -dz);
+        this.hopPhase += dt * 8;
+        hop = Math.abs(Math.sin(this.hopPhase)) * 0.18;
+      }
+    } else {
+      this.hopPhase += dt * 3;
+      this.tipAxis.set(Math.cos(this.heading), 0, -Math.sin(this.heading));
+      this.tipAngle = Math.sin(this.hopPhase) * 0.04; // trembling
+    }
+    this.pos.y = surfaceHeightAt(this.pos.x, this.pos.z);
+    this.applyTransform(hop);
   }
 
   /** `target`: the nearest thing on the other side worth shooting at, or null to just wander. */
@@ -670,6 +773,10 @@ export class Soldier {
         this.state = 'down';
       }
       this.applyTransform(0);
+      return null;
+    }
+    if (this.state === 'surrendered') {
+      this.updateSurrendered(dt);
       return null;
     }
     if (this.state === 'down') {

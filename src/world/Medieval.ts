@@ -566,3 +566,161 @@ function gableRoofAlongX(p: PartBuilder, w: number, d: number, h: number, y: num
 
 export const COTTAGE_ROOFS: Roof[] = ['thatch', 'thatch', 'tile', 'slate'];
 export const SHUTTER_COLORS = [0x3d7a4a, 0x3d6fc4, 0xb8392e, 0xd9a520, 0x7a4a8a];
+
+// ---------- prisons and the prisoner wagon (the siege bonus level) ----------
+
+/** Where the prison's yard sits in front of the tower (local Z), and its half width. */
+export const PRISON_PEN = { halfWidth: 11, z0: 6, z1: 20 };
+/** The tower's half size, and how tall it stands. */
+export const PRISON_TOWER_HALF = 6;
+const PRISON_HEIGHT = 11;
+
+/** Iron bars across a window whose outward normal is +Z turned by `ry`. */
+function windowBars(p: PartBuilder, x: number, y: number, z: number, ry: number, w: number, h: number): void {
+  const along = new THREE.Vector3(Math.cos(ry), 0, -Math.sin(ry));
+  for (let i = -2; i <= 2; i++) {
+    const o = (i / 2) * (w / 2 - 0.05);
+    p.add(box(0.07, h + 0.1, 0.14), plastic(IRON), x + along.x * o, y, z + along.z * o, 0, ry);
+  }
+  p.add(box(w + 0.2, 0.09, 0.18), plastic(IRON), x, y + 0.2, z, 0, ry);
+}
+
+/**
+ * A prison: a squat stone tower with four corner turrets, barred windows, a studded door at the
+ * front (+Z), and a pennant in the garrison's colour. Stands on y = 0 on a deep plinth, so it sits
+ * square on a slope.
+ */
+export function buildPrisonTower(color: number): THREE.Group {
+  return model(`prison-${color}`, (p) => {
+    const h = PRISON_HEIGHT;
+    const w = PRISON_TOWER_HALF * 2;
+    p.add(box(w + 2, 4, w + 2), stoneDark(), 0, -1.6, 0); // plinth, buried in the hill
+    p.add(box(w, h, w), stone(), 0, h / 2, 0);
+    p.add(box(w + 0.8, 0.8, w + 0.8), stoneDark(), 0, 0.4, 0);
+    p.add(box(w + 0.9, 0.7, w + 0.9), stoneDark(), 0, h, 0);
+    for (let row = 1; row <= 4; row++) p.add(box(w + 0.04, 0.08, w + 0.04), stoneDark(), 0, row * 2.2, 0);
+    for (const [ax, az, bx, bz] of [[-1, -1, 1, -1], [1, -1, 1, 1], [1, 1, -1, 1], [-1, 1, -1, -1]]) {
+      merlons(p, stone(), (ax * w) / 2, (az * w) / 2, (bx * w) / 2, (bz * w) / 2, h + 0.35, 1.2, 2.2);
+    }
+    // Corner turrets, taller than the roof, with caps in the garrison's colour.
+    for (const cx of [-1, 1]) {
+      for (const cz of [-1, 1]) {
+        const x = cx * (w / 2);
+        const z = cz * (w / 2);
+        p.add(new THREE.CylinderGeometry(1.7, 1.9, h + 4, 14), stone(), x, (h + 4) / 2, z);
+        p.add(new THREE.CylinderGeometry(2.1, 2.1, 0.6, 14), stoneDark(), x, h + 4.2, z);
+        p.add(new THREE.ConeGeometry(2.2, 3.2, 14), plastic(color), x, h + 6, z);
+      }
+    }
+    // Barred windows: two on the front, two on each side, one at the back.
+    for (const x of [-3, 3]) {
+      archedOpening(p, 1.1, 2, x, 7, w / 2 + 0.02);
+      windowBars(p, x, 7, w / 2 + 0.09, 0, 1.1, 2.6);
+    }
+    for (const side of [-1, 1]) {
+      for (const z of [-2, 2]) {
+        archedOpening(p, 1.1, 2, side * (w / 2 + 0.02), 6.5, z, (side * Math.PI) / 2);
+        windowBars(p, side * (w / 2 + 0.09), 6.5, z, (side * Math.PI) / 2, 1.1, 2.6);
+      }
+    }
+    // The door: heavy planks with iron straps and a studded arch, up two steps.
+    p.add(box(4.6, 0.4, 1.6), stoneDark(), 0, 0.2, w / 2 + 0.8);
+    p.add(box(4, 0.4, 1), stoneDark(), 0, 0.6, w / 2 + 0.5);
+    p.add(box(3.4, 4.6, 0.3), woodDark(), 0, 2.8, w / 2 + 0.1);
+    p.add(new THREE.CylinderGeometry(1.7, 1.7, 0.3, 14, 1, false, 0, Math.PI).rotateX(Math.PI / 2).rotateZ(Math.PI / 2), woodDark(), 0, 5.1, w / 2 + 0.1);
+    for (const y of [1.3, 2.9, 4.4]) p.add(box(3.5, 0.22, 0.34), plastic(IRON), 0, y, w / 2 + 0.12);
+    p.add(box(0.12, 4.9, 0.36), plastic(IRON), 0, 2.9, w / 2 + 0.13);
+    p.add(new THREE.SphereGeometry(0.22, 8, 6), plastic(0xd9a520), 0.7, 2.6, w / 2 + 0.36); // ring-pull knob
+    pennant(p, color, 0, h + 0.6, 0, 4);
+  });
+}
+
+/**
+ * The prison yard: low stone walls round three sides of a pen in front of the tower (open
+ * toward +Z at the far end by a gate between two posts), with the gate leaves swung open.
+ */
+export function buildPrisonPen(): THREE.Group {
+  return model('prison-pen', (p) => {
+    const { halfWidth, z0, z1 } = PRISON_PEN;
+    const wallH = 2.8;
+    const gap = 2.8;
+    const len = z1 - z0;
+    for (const s of [-1, 1]) {
+      p.add(box(0.9, wallH, len), stone(), s * halfWidth, wallH / 2, (z0 + z1) / 2);
+      p.add(box(1.2, 0.35, len + 0.4), stoneDark(), s * halfWidth, wallH + 0.17, (z0 + z1) / 2);
+      merlons(p, stone(), s * halfWidth, z0 + 0.8, s * halfWidth, z1 - 0.8, wallH + 0.35, 0.9, 2.2);
+      // The front wall, with a gap for the gate.
+      const frontLen = halfWidth - gap;
+      p.add(box(frontLen, wallH, 0.9), stone(), s * (gap + frontLen / 2), wallH / 2, z1);
+      p.add(box(frontLen, 0.35, 1.2), stoneDark(), s * (gap + frontLen / 2), wallH + 0.17, z1);
+      // Gate post, taller than the wall, with a cap.
+      p.add(box(1.6, 4.6, 1.6), stoneDark(), s * gap, 2.3, z1);
+      p.add(box(2, 0.5, 2), stone(), s * gap, 4.85, z1);
+      p.add(new THREE.ConeGeometry(1.2, 1.4, 4).rotateY(Math.PI / 4), stoneDark(), s * gap, 5.8, z1);
+      // The gate leaf swung open inward, iron bars on a wooden frame.
+      const hinge = new THREE.Vector3(s * (gap - 0.5), 0, z1 - 0.2);
+      const tip = new THREE.Vector3(s * (gap - 0.5), 0, z1 - 0.2 - (gap - 0.4));
+      p.beam(hinge.clone().setY(0.15), tip.clone().setY(0.15), 0.18, woodDark());
+      p.beam(hinge.clone().setY(2.9), tip.clone().setY(2.9), 0.18, woodDark());
+      for (let i = 1; i <= 5; i++) {
+        const t = i / 6;
+        const b = hinge.clone().lerp(tip, t);
+        p.add(box(0.1, 2.9, 0.1), plastic(IRON), b.x, 1.5, b.z);
+      }
+    }
+    p.add(box(halfWidth * 2 + 0.9, 0.3, len + 0.9), stoneDark(), 0, -0.1, (z0 + z1) / 2); // paving under the whole yard
+  });
+}
+
+/** Spokes, tyre and hub of a cart wheel, round the X axis. */
+function cartWheel(radius: number): THREE.Group {
+  return model(`cartwheel-${radius}`, (p) => {
+    p.add(new THREE.TorusGeometry(radius, 0.09, 6, 22).rotateY(Math.PI / 2), plastic(IRON));
+    p.add(tubeX(0.2, 0.34, 8), woodDark());
+    for (let i = 0; i < 4; i++) p.add(box(0.1, radius * 2, 0.1), wood(), 0, 0, 0, (i / 4) * Math.PI);
+  });
+}
+
+/**
+ * The prisoner wagon: a wooden cart with an iron-barred cage on the bed, a bench up front, a
+ * long shaft with a yoke to pull it by (toward -Z) and a pennant in the army's colour. Its four
+ * wheels come separately so they can turn.
+ */
+export function buildPrisonWagon(color: number): { group: THREE.Group; wheels: THREE.Group[] } {
+  const group = model(`prisonwagon-${color}`, (p) => {
+    p.add(box(3, 0.3, 5.6), wood(), 0, 1.2, 0.2);
+    p.add(box(3.2, 0.2, 5.8), woodDark(), 0, 1.05, 0.2);
+    for (const s of [-1, 1]) p.add(tubeX(0.1, 0.4, 8), plastic(IRON), s * 1.6, 0.95, -1.6), p.add(tubeX(0.1, 0.4, 8), plastic(IRON), s * 1.6, 0.95, 2.1);
+    // The cage: bars all the way round and a lattice roof, with a door in the back.
+    const cageZ0 = -0.4;
+    const cageZ1 = 2.9;
+    for (const s of [-1, 1]) {
+      for (let z = cageZ0; z <= cageZ1 + 0.01; z += 0.55) p.add(box(0.08, 2.1, 0.08), plastic(IRON), s * 1.4, 2.35, z);
+    }
+    for (let x = -1.4; x <= 1.41; x += 0.56) {
+      p.add(box(0.08, 2.1, 0.08), plastic(IRON), x, 2.35, cageZ0);
+      p.add(box(0.08, 2.1, 0.08), plastic(IRON), x, 2.35, cageZ1);
+    }
+    for (const y of [1.4, 2.35, 3.4]) {
+      for (const s of [-1, 1]) p.add(box(0.1, 0.1, cageZ1 - cageZ0 + 0.1), plastic(IRON), s * 1.4, y, (cageZ0 + cageZ1) / 2);
+      for (const z of [cageZ0, cageZ1]) p.add(box(2.9, 0.1, 0.1), plastic(IRON), 0, y, z);
+    }
+    for (let z = cageZ0 + 0.3; z < cageZ1; z += 0.7) p.add(box(2.9, 0.07, 0.07), plastic(IRON), 0, 3.42, z);
+    // Driver's bench up front, a tailboard, and the shaft with its yoke.
+    p.add(box(2.6, 0.2, 0.9), woodDark(), 0, 1.9, -1.2);
+    p.add(box(2.6, 0.8, 0.12), woodDark(), 0, 2.3, -1.6);
+    p.add(box(0.18, 0.18, 4.8), woodDark(), -0.7, 1.1, -3.6);
+    p.add(box(0.18, 0.18, 4.8), woodDark(), 0.7, 1.1, -3.6);
+    p.add(tubeX(0.12, 3.4, 8), woodDark(), 0, 1.1, -6);
+    // A pennant at the back of the roof.
+    pennant(p, color, 1.2, 3.45, cageZ1 - 0.2, 2.6);
+  });
+  const wheels: THREE.Group[] = [];
+  for (const [x, z] of [[-1.7, -0.7], [1.7, -0.7], [-1.7, 2.1], [1.7, 2.1]]) {
+    const wheel = cartWheel(0.95);
+    wheel.position.set(x, 0.95, z);
+    group.add(wheel);
+    wheels.push(wheel);
+  }
+  return { group, wheels };
+}

@@ -61,7 +61,7 @@ const NIGHT_SONG: Song = {
   seed: 29,
 };
 
-const SONGS: Record<Mission, Song> = {
+const BASE_SONGS: Record<Exclude<Mission, 6>, Song> = {
   // Day Battle: a jaunty toy-soldier march in C major, with a bugle playing the tune.
   1: {
     bpm: 112,
@@ -157,6 +157,9 @@ const SONGS: Record<Mission, Song> = {
     seed: 97,
   },
 };
+
+/** The siege bonus level plays the castle jig. */
+const SONGS: Record<Mission, Song> = { ...BASE_SONGS, 6: BASE_SONGS[3] };
 
 const LOOKAHEAD = 0.15; // seconds of notes scheduled ahead
 /** The band's overall level, leaving headroom for the sound effects on top. */

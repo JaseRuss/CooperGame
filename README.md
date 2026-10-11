@@ -440,11 +440,24 @@ click, creep with RB / Shift, Y / C swaps to first person and Back / R goes back
 checkpoint. It's in the level select as **5 · Bonus: Prison Break**. The plan is in
 `docs/plans/prison-break.md`.
 
+## Bonus: Under Siege
+
+A second bonus level, in the level select as **6 · Bonus: Under Siege**: the castle mission with
+prisoners. Single player (there is no co-op on this level). Knights who are beaten but not
+blasted flat often **surrender**: they drop their crossbows, throw their hands up and shout "WE
+SURRENDER!". A green **prisoner wagon**, pulled by two army men, drives out to collect any
+surrendered knights it can reach (not ones still inside a castle that's standing), takes up to
+eight at a time, and locks them in the nearer of our two **prisons** (squares with a **P** on the
+map; the wagons are green diamonds). The enemy locks ours up too: two **enemy prisons** by the
+front-line castles start with eight of our soldiers each, and get more when enemy squads beat ours.
+The map and the objective panel count both. Freeing your soldiers on foot is still to come; the
+plan is in `docs/plans/under-siege.md`.
+
 ## Level select
 
 Pause, open **Options** and pick a level under **Level select** at the bottom,
 then press A or Enter (or click it). It starts that mission from the beginning.
-You can also open the game with `?mission=2` up to `?mission=5`.
+You can also open the game with `?mission=2` up to `?mission=6`.
 
 ## Credits
 

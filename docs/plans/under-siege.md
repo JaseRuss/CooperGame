@@ -1,5 +1,8 @@
 # Plan: Bonus level "Under Siege" (mission 6)
 
+Status: milestones 0, 3 (basic) and 4 are built (see the end of this file). Owner decisions are
+in "Decisions" below.
+
 Source: the gamedev meeting notes, then the owner's follow-up (no co-op; an on-foot prison break
 at each enemy prison; two prisons per side; a wagon that ferries surrendered troops; a break
 releases a wave that takes the nearest base and then stops). Starting point: mission 3 (Castle
@@ -123,16 +126,38 @@ Cut from the earlier version: the co-op truck intro and all co-op support in `Ja
   anything is visible.
 - Asset deletions and loader changes in the same commit.
 
-## Open questions for the owner
+## Decisions (from the owner)
 
-1. Which two enemy castles get the prisons: the two nearest the front, or one regular castle and
-   one inside the Great Castle?
-2. Does taking a castle with the released wave count as one of the five required castles?
-   (Plan assumes yes, so a break is a valid route.)
-3. What ends the mission: five castles taken plus the Great Castle, as in mission 3 (plan's
-   assumption), or both prison breaks done?
-4. "Release a wave at the nearest base": plan reads it as the wave heading for the nearest
-   **enemy** castle to that prison. If you meant the nearest friendly base, say so.
-5. Mission 6 as a second bonus after Prison Break, as assumed?
-6. Jungle: the world is one theme per page load, so the staging area gets a forest band, not
+- The two enemy prisons are beside the two **front-line castles**: the ones nearest Cooper's Base.
+- A castle taken by the released wave counts as one of the five required castles.
+- The mission ends as in mission 3: five castles taken, then the Great Castle.
+- The released wave: the freed soldiers make for the nearest **friendly base**, and the player
+  gets an **optional objective to cover their escape**. Once they get there they regroup and
+  march on the nearest enemy castle, take it themselves, then stop (no repeating raids). This
+  merges the two readings of "release a wave at the nearest base"; if the owner meant only one
+  of them, drop the other leg in M6.
+- No co-op on this mission (player 2 is forced off).
+
+## Built so far
+
+- **M0 plumbing:** mission 6 in `config.ts` (`SIEGE`, `KNIGHTS` now covers both castle levels),
+  level select, castle music, banner, co-op forced off. The options menu still lists the player 2
+  controls; they just have no effect on this level.
+- **M3 surrender (basic):** in `Soldier.knockDown`, an enemy soldier who isn't blasted hard
+  surrenders 60% of the time: hands up, crossbow dropped, "WE SURRENDER!" tag. Tank crews do
+  not bail out yet.
+- **M4 prisons and wagon:** `Prison.ts` (+ `buildPrisonTower`, `buildPrisonPen`,
+  `buildPrisonWagon` in `Medieval.ts`), `PrisonWagon.ts`, `SiegeWar.ts`. Two enemy prisons by
+  the front-line castles start with 8 of our soldiers each, and more get marched there when
+  our soldiers are beaten near one; two friendly prisons by the bottom corner bases. One wagon
+  per friendly prison drives to the nearest surrendered knights it can reach (not inside a
+  castle that's still standing), loads up to 8, and locks them in the nearer friendly prison.
+  Map icons, HUD line and callouts included.
+- Not built: tall archer towers, villages inside castles, garrison counters, the dismount, the
+  on-foot jailbreak, the released wave, the snapshot and restore.
+
+## Still open
+
+1. Mission 6 as a second bonus after Prison Break (assumed yes).
+2. Jungle: the world is one theme per page load, so the staging area gets a forest band, not
    mission 2's full jungle.
