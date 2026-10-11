@@ -13,6 +13,9 @@ const FIRE_EVERY = 1.35;
 /** An alerted soldier closes to this far from what he's shooting at, then stands and fires. */
 const ENGAGE = 17;
 const FIRE_RANGE = 34;
+/** Caught off guard: how long he gapes before he reacts (longer the closer you are when you're spotted). */
+const STARTLE_FAR = 0.7;
+const STARTLE_NEAR = 1.5;
 
 interface Brain {
   t: Trooper;
@@ -26,6 +29,8 @@ interface Brain {
   fire: number;
   wander: THREE.Vector2 | null;
   wait: number;
+  /** Seconds left of being startled: he stands and stares, and doesn't shoot or move. */
+  startle: number;
 }
 
 /**
@@ -50,6 +55,7 @@ export class Enemies {
       fire: 0.6 + Math.random() * FIRE_EVERY,
       wander: null,
       wait: Math.random() * 3,
+      startle: 0,
     });
   }
 
@@ -59,6 +65,7 @@ export class Enemies {
       if (!b.t.active || b.alert > 0) continue;
       if (Math.hypot(b.t.pos.x - at.x, b.t.pos.z - at.z) < radius) {
         b.alert = ALERT_TIME * 0.7;
+        b.startle = 0.5;
         b.last = at.clone();
       }
     }
@@ -93,6 +100,13 @@ export class Enemies {
     b.fire -= dt;
     if (b.alert > 0) {
       b.alert -= dt;
+      if (b.startle > 0) {
+        b.startle -= dt;
+        t.surprise(true);
+        if (b.last) t.faceToward(b.last.x, b.last.z, dt, 14);
+        return;
+      }
+      t.surprise(false);
       if (b.seen) {
         const d = Math.hypot(b.aim.x - t.pos.x, b.aim.z - t.pos.z);
         if (d > ENGAGE) t.stepToward(b.aim.x, b.aim.z, RUN, dt);
@@ -147,11 +161,14 @@ export class Enemies {
     const wasCalm = b.alert <= 0;
     b.alert = ALERT_TIME;
     if (!wasCalm) return;
+    // Spotted at ease: he's caught flat-footed, more so the nearer you are.
+    b.startle = found.d < 14 ? STARTLE_NEAR : STARTLE_FAR;
     // He shouts, and the men near him come running.
     for (const o of this.list) {
       if (o === b || !o.t.active || o.alert > ALERT_TIME * 0.5) continue;
       if (Math.hypot(o.t.pos.x - t.pos.x, o.t.pos.z - t.pos.z) < CALL_RADIUS) {
         o.alert = ALERT_TIME * 0.8;
+        o.startle = 0.6 + Math.random() * 0.4;
         o.last = found.at.clone();
       }
     }

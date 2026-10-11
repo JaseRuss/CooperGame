@@ -4,6 +4,7 @@ const CELL = 5;
 export interface MapTerrain {
   isWater(x: number, z: number): boolean;
   bridges: { x: number; z: number }[];
+  roads: { x: number; y: number }[][];
 }
 /** How many metres across the little corner map shows. */
 const MINI_METERS = 230;
@@ -31,6 +32,7 @@ export class JungleMap {
   private readonly seen: Uint8Array;
   private water: Uint8Array | null = null;
   private bridges: { x: number; z: number }[] = [];
+  private roads: { x: number; y: number }[][] = [];
 
   constructor(private readonly half: number) {
     this.n = Math.ceil((half * 2) / CELL);
@@ -42,6 +44,7 @@ export class JungleMap {
     this.water = new Uint8Array(this.n * this.n);
     for (let gz = 0; gz < this.n; gz++) for (let gx = 0; gx < this.n; gx++) if (t.isWater((gx + 0.5) * CELL - this.half, (gz + 0.5) * CELL - this.half)) this.water[gz * this.n + gx] = 1;
     this.bridges = t.bridges;
+    this.roads = t.roads;
   }
 
   private index(x: number, z: number): number {
@@ -99,6 +102,22 @@ export class JungleMap {
         ctx.fillStyle = this.water?.[gz * this.n + gx] ? `rgb(${shade},${shade + 50},${shade + 110})` : `rgb(${Math.round(shade * 0.55)},${shade + 24},${Math.round(shade * 0.5)})`;
         ctx.fillRect(sx(gx * CELL - this.half), sy(gz * CELL - this.half), CELL * s + 0.6, CELL * s + 0.6);
       }
+    }
+    // Dirt roads, where they've been scouted.
+    ctx.strokeStyle = '#b09a6a';
+    ctx.lineCap = 'round';
+    ctx.lineWidth = Math.max(1.6, 4 * s);
+    for (const path of this.roads) {
+      ctx.beginPath();
+      let pen = false;
+      for (const p of path) {
+        if (this.known(p.x, p.y)) {
+          if (pen) ctx.lineTo(sx(p.x), sy(p.y));
+          else ctx.moveTo(sx(p.x), sy(p.y));
+          pen = true;
+        } else pen = false;
+      }
+      ctx.stroke();
     }
     const d = this.data;
     const dot = (x: number, z: number, r: number, color: string, stroke = '#000') => {
