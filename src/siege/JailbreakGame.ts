@@ -189,7 +189,7 @@ export class JailbreakGame {
     this.jam = new JamCannon(this.scene, () => 0, FRIEND_SHOTS);
     // As many cells as it takes at two prisoners to a cell; each figure in a cell stands for a share of those held.
     const cells = Math.min(6, Math.max(1, Math.ceil(this.request.held / 2)));
-    this.dungeon = new Dungeon(this.world, cells, 0xc4a468);
+    this.dungeon = new Dungeon(this.world, cells, 0xc4a468, !!this.request.royal);
     this.scene.add(this.dungeon.group);
     this.weights = Array.from({ length: cells }, (_, i) => Math.floor(this.request.held / cells) + (i < this.request.held % cells ? 1 : 0));
     this.dungeon.layout.cells.forEach((cell, i) => this.dungeon.fillCell(cell, Math.min(2, this.weights[i])));
@@ -218,7 +218,7 @@ export class JailbreakGame {
     this.sound.music.setNight(true);
     this.sound.music.start();
     this.clock.start();
-    this.hud.showBanner('BREAK THEM OUT!', 'Open the cell doors, then lead everyone out of the gate. Creep past the jailers, or press X to put on a jailer disguise');
+    this.hud.showBanner(this.request.royal ? 'THE ROYAL DUNGEON' : 'BREAK THEM OUT!', 'Open the cell doors, then lead everyone out of the gate. Creep past the jailers, or press X to put on a jailer disguise');
     if (import.meta.env.DEV) (window as unknown as { jailbreak: JailbreakGame }).jailbreak = this;
     requestAnimationFrame(this.animate);
   }
@@ -654,7 +654,7 @@ export class JailbreakGame {
     const downed = this.guards.list.filter((g) => g.state === 'down').length;
     if (downed > 0) status.push(`${downed} jailer${downed === 1 ? '' : 's'} knocked out`);
     return {
-      title: 'JAILBREAK',
+      title: this.request.royal ? 'ROYAL DUNGEON' : 'JAILBREAK',
       objectives: [
         { label: `Open the cells (${this.opened}/${cells.length})`, done: this.opened === cells.length },
         { label: `Lead them out of the gate (${this.freedCount} of ${this.request.held} free)`, done: this.done !== null && this.freedCount > 0 },
