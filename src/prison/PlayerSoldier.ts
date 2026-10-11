@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { createFigureMesh } from '../entities/Soldier';
-import { ARMY_GREEN } from '../utils/plastic';
+import { ARMY_GREEN, ARMY_TAN, plastic, shade } from '../utils/plastic';
 import { clamp } from '../utils/math';
 import type { InputState } from '../input/InputManager';
 import { FRIEND_GROUPS, WALLS_ONLY } from './groups';
@@ -54,6 +54,9 @@ export class PlayerSoldier {
   private readonly body: RAPIER.RigidBody;
   private readonly controller: RAPIER.KinematicCharacterController;
   private readonly figure: THREE.Mesh;
+  /** In a jailer's tabard and hat (the siege level's disguise). */
+  private wearing = false;
+  private hat: THREE.Group | null = null;
   private readonly velocity = new THREE.Vector3();
   private fallSpeed = 0;
   private settling = false;
@@ -95,6 +98,29 @@ export class PlayerSoldier {
   /** Where the rifle's muzzle is right now. */
   muzzle(out = new THREE.Vector3()): THREE.Vector3 {
     return out.copy(MUZZLE).applyAxisAngle(new THREE.Vector3(0, 1, 0), this.yaw).add(this.pos);
+  }
+
+  get disguised(): boolean {
+    return this.wearing;
+  }
+
+  /** Puts on (or takes off) a jailer's colours and tall hat. */
+  setDisguised(on: boolean): void {
+    if (on === this.wearing) return;
+    this.wearing = on;
+    this.figure.material = plastic(on ? ARMY_TAN : ARMY_GREEN);
+    if (on && !this.hat) {
+      const hat = new THREE.Group();
+      const dark = plastic(shade(ARMY_TAN, 0.55));
+      const crown = new THREE.Mesh(new THREE.CylinderGeometry(0.17, 0.2, 0.3, 12), dark);
+      crown.position.y = 1.98;
+      const brim = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 0.05, 14), dark);
+      brim.position.y = 1.83;
+      hat.add(crown, brim);
+      this.hat = hat;
+      this.figure.add(hat);
+    }
+    if (this.hat) this.hat.visible = on;
   }
 
   setVisible(visible: boolean): void {

@@ -432,7 +432,14 @@ export class Building {
     this.bar = null;
   }
 
-  private collapse(): void {
+  /** Flattens it on the spot, with no debris or show: a castle that had already fallen before this page loaded. */
+  ruin(): void {
+    if (this.destroyed) return;
+    this.health = 0;
+    this.collapse(true);
+  }
+
+  private collapse(quiet = false): void {
     this.destroyed = true;
     this.removeHealthBar();
     // (The materials and the fallback square are shared; each decal has its own geometry to dispose.)
@@ -451,8 +458,12 @@ export class Building {
       this.body = null;
       this.collider = null;
     }
-    this.spawnDebris();
+    if (!quiet) this.spawnDebris();
     this.spawnRubblePile();
+    if (quiet) {
+      this.collapseT = COLLAPSE_DURATION;
+      this.mesh.removeFromParent();
+    }
   }
 
   /** A low, permanent heap of broken blocks left where the building stood. */

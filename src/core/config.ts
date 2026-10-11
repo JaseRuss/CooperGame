@@ -42,6 +42,8 @@ export const JUNGLE = MISSION === 2;
 /** The bonus castle level with surrender, prisons and the prisoner wagon (it also has all of the castle mission's look). */
 export const SIEGE = MISSION === 6;
 export const KNIGHTS = MISSION === 3 || SIEGE;
+/** The siege level's on-foot jailbreak page (`?mission=6&stage=foot`), instead of the tank game. */
+export const JAILBREAK = SIEGE && new URLSearchParams(window.location.search).get('stage') === 'foot';
 export const ZOMBIES = MISSION === 4;
 /** The bonus level: on foot, breaking out of the tan army's prison. */
 export const PRISON = MISSION === 5;

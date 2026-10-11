@@ -11,6 +11,8 @@ import { distanceToPolyline, HIGHWAY_WIDTH, type Polyline } from '../world/RoadN
 import { JeepStation } from '../world/JeepStation';
 import { ChopperStation } from '../world/ChopperStation';
 import { SiegeWar } from '../world/SiegeWar';
+import type { Prison } from '../world/Prison';
+import { loadSnapshot, saveSnapshot, saveRequest, loadResult, saveResult, RESUME, type SiegeSnapshot } from './SiegeSave';
 import { MotorbikeRamp } from '../world/MotorbikeRamp';
 import type { Building } from '../world/Building';
 import { Bunker } from '../world/Bunker';
@@ -193,6 +195,8 @@ const BUDDY_ARRIVAL: Record<BuddyVehicle, string> = { tank: 'IS ROLLING IN', jee
 // Enemy base objectives.
 const CHECKLIST_RANGE = 350; // show the target list when this close to an enemy base
 const VICTORY_SCREEN_TIME = 9;
+/** The siege level: how close to an enemy prison's yard gate the player can get out and go in on foot. */
+const JAILBREAK_REACH = 30;
 const NEXT_MISSION_DELAY = 12; // after winning a mission, the next one starts this long after the victory screen
 /** The mission that follows this one, if any (the bonus level is only picked from the level select). */
 const nextMission = MISSIONS.find((m) => m.mission === MISSION + 1 && !m.bonus);
@@ -428,6 +432,10 @@ export class Game {
   private highways: Polyline[] = [];
   private enemyBases: EnemyBase[] = [];
   private announcedBases = new Set<EnemyBase>();
+  /** How a jailbreak on foot ended, until the level has dealt with it (siege level). */
+  /** The enemy prison the player is at the gate of, and could get out to break into (siege level). */
+  private jailbreakPrison: Prison | null = null;
+  private pendingJailbreak: { prison: number; freed: number } | null = null;
   private paratroopers!: Paratroopers;
   private paraTimer = PARA_FIRST_DROP;
   private paraWaves = new Map<object, number>();
@@ -727,6 +735,7 @@ export class Game {
     this.scene.add(this.player.root);
     this.hitRegistry.register(this.player.physicsCollider, { kind: 'tank', tank: this.player });
     if (MISSION === 1) this.setupTanker();
+    if (SIEGE) this.restoreSiege();
     this.hud.setSettings(this.settings, (s) => {
       this.settings = s;
       saveSettings(s);
@@ -2292,6 +2301,83 @@ export class Game {
 
   // ---------- the zombie mission ----------
 
+  // ---------- the siege level: saving and resuming ----------
+
+  /** Where the level stands, to carry across a reload (the on-foot jailbreak is its own page). */
+  captureSiege(): SiegeSnapshot {
+    const siege = this.siege as SiegeWar;
+    return {
+      castles: this.enemyBases.flatMap((b, i) => (this.announcedBases.has(b) ? [i] : [])),
+      prisons: siege.heldCounts(),
+      freed: [...siege.freed],
+      player: { x: this.player.position.x, z: this.player.position.z, yaw: this.player.yaw, health: this.player.health },
+      rocketCharge: this.rocketCharge,
+    };
+  }
+
+  /**
+   * With `?resume=1` and a saved game, puts the level back as it was: castles already taken are
+   * flattened (and garrisoned by our troops), prisons hold what they held, and the tank is where
+   * it was. Without it any old save is thrown away and the level starts fresh.
+   */
+  private restoreSiege(): void {
+    const snap = RESUME ? loadSnapshot() : null;
+    if (!snap) {
+      saveSnapshot(null);
+      saveResult(null);
+      return;
+    }
+    const siege = this.siege as SiegeWar;
+    for (const i of snap.castles) {
+      const base = this.enemyBases[i];
+      if (!base || this.announcedBases.has(base)) continue;
+      base.ruin();
+      this.announcedBases.add(base);
+      this.garrison(base);
+      this.addBaseStation(base);
+    }
+    siege.restore(snap.prisons, snap.freed);
+    this.rocketCharge = snap.rocketCharge;
+    this.player.teleport(snap.player.x, snap.player.z, snap.player.yaw);
+    this.player.health = Math.max(1, snap.player.health);
+    if (this.announcedBases.size === this.enemyBases.length) this.startFinalAssault();
+    this.pendingJailbreak = loadResult();
+    saveResult(null);
+    saveSnapshot(null);
+    this.applyJailbreak();
+  }
+
+  /** The enemy prison whose gate the player's at (in anything that drives), if there's anyone left locked up in it. */
+  private findJailbreak(): Prison | null {
+    const siege = this.siege;
+    if (!siege || this.player.isChopper || this.hud.paused || this.victoryTimer > 0) return null;
+    return siege.enemyPrisons.find((p) => p.held > 0 && p.nearGate(this.player.position, JAILBREAK_REACH)) ?? null;
+  }
+
+  /** Gets out of the tank and goes into the prison on foot: the level is saved, and the on-foot page takes over. */
+  private startJailbreak(prison: Prison): void {
+    const siege = this.siege as SiegeWar;
+    saveSnapshot(this.captureSiege());
+    saveRequest({ prison: siege.prisons.indexOf(prison), held: prison.held });
+    saveResult(null);
+    const url = new URL(window.location.href);
+    url.searchParams.set('mission', '6');
+    url.searchParams.set('stage', 'foot');
+    url.searchParams.delete('resume');
+    window.location.href = url.toString();
+  }
+
+  /** Back from a jailbreak: if prisoners were freed, they run for the nearest friendly base. */
+  private applyJailbreak(): void {
+    const result = this.pendingJailbreak;
+    this.pendingJailbreak = null;
+    const siege = this.siege as SiegeWar;
+    if (!result) return;
+    const prison = siege.prisons[result.prison];
+    if (prison && result.freed > 0) siege.release(prison, result.freed);
+    else this.hud.showCallout('BACK FROM THE PRISON: NO ONE WAS FREED', '#ffd24a');
+  }
+
   /** Somewhere the tank is repaired and rearmed: a family base, or on the zombie mission the Fortress. */
   private atHome(p: THREE.Vector3): boolean {
     return isInsideBase(p) || (ZOMBIES && this.fortress.contains(p.x, p.z));
@@ -2924,7 +3010,16 @@ export class Game {
       nearbyBase: checklist,
       airSupport: this.airSupport(),
       tanker: this.tanker?.hud() ?? null,
-      siege: this.siege ? { captives: this.siege.captives, ours: this.siege.ours, surrendered: this.troops.surrendered().length, carrying: this.siege.wagons.reduce((n, w) => n + w.carrying, 0) } : null,
+      siege: this.siege
+        ? {
+            captives: this.siege.captives,
+            ours: this.siege.ours,
+            surrendered: this.troops.surrendered().length,
+            carrying: this.siege.wagons.reduce((n, w) => n + w.carrying, 0),
+            wave: this.siege.waveStatus(),
+            prompt: this.jailbreakPrison ? `${input.usingGamepad ? 'Y' : 'C'}: get out and break the ${this.jailbreakPrison.held} prisoners out on foot` : null,
+          }
+        : null,
       prison: null,
     };
   }
@@ -3128,7 +3223,11 @@ export class Game {
     }
 
     if (!inSequence) {
-      if (input.cameraTogglePressed) this.cameraRig.toggle();
+      if (input.cameraTogglePressed) {
+        // At an enemy prison's gate the same button gets out and goes in on foot.
+        if (this.jailbreakPrison) this.startJailbreak(this.jailbreakPrison);
+        else this.cameraRig.toggle();
+      }
       if (input.resetPressed) {
         const base = this.familyBases.find((b) => b.info === nearestFriendlyBase(this.player.position.x, this.player.position.z));
         if (this.fortHome) this.player.teleport(this.fortHome.x, this.fortHome.z, this.fortHome.yaw);
@@ -3385,7 +3484,11 @@ export class Game {
       }
     }
     if (this.siege) {
-      for (const n of this.siege.update(dt)) this.hud.showCallout(n.text, n.color ?? '#ffd24a');
+      for (const n of this.siege.update(dt)) {
+        if (n.banner) this.hud.showBanner(n.text, n.sub ?? '');
+        else this.hud.showCallout(n.text, n.color ?? '#ffd24a');
+      }
+      this.jailbreakPrison = this.findJailbreak();
     }
     // A family base with raiders in it can't repair you until they're cleared out.
     const home = nearestFriendlyBase(this.player.position.x, this.player.position.z);
