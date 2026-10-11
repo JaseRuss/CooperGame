@@ -1,6 +1,6 @@
 # Plan: Bonus level "Under Siege" (mission 6)
 
-Status: milestones 0, 3 (basic) and 4 are built (see the end of this file). Owner decisions are
+Status: milestones 0, 1, 3 (basic), 4, 5 and 6 are built (see "Built so far"). Owner decisions are
 in "Decisions" below.
 
 Source: the gamedev meeting notes, then the owner's follow-up (no co-op; an on-foot prison break
@@ -153,8 +153,26 @@ Cut from the earlier version: the co-op truck intro and all co-op support in `Ja
   per friendly prison drives to the nearest surrendered knights it can reach (not inside a
   castle that's still standing), loads up to 8, and locks them in the nearer friendly prison.
   Map icons, HUD line and callouts included.
-- Not built: tall archer towers, villages inside castles, garrison counters, the dismount, the
-  on-foot jailbreak, the released wave, the snapshot and restore.
+- **M1 snapshot and restore:** `SiegeSave.ts` keeps the level in `sessionStorage` across the reload
+  into the on-foot page and back (`?mission=6&resume=1`). Taken castles come back flattened and
+  garrisoned (`Building.ruin`, `EnemyBase.ruin`), prisons keep their counts, the tank is where it
+  was with the same health and rocket charge. Without `resume=1` any old save is thrown away.
+- **M4 dismount:** at an enemy prison's yard gate Y (C on keyboard) saves and loads
+  `?mission=6&stage=foot`.
+- **M5 jailbreak on foot:** `src/siege/JailbreakGame.ts` and `Dungeon.ts`: a castle courtyard at
+  night, a block of cells (two soldiers to a cell, up to six cells), three patrolling jailers and
+  three on posts, built on the prison break's `Guards`, `VisionCones`, `PlayerSoldier` and
+  `ShoulderCam`. Disguise (X), quiet takedown from behind, unlocking by standing at the door, freed
+  soldiers following the player's trail, out of the gate to finish, the jam riot cannon. Caught
+  disguised: the page reloads and you start again. Knocked down: back to the gate.
+- **M6 the released wave:** `SiegeWar.release`: freed soldiers run for the nearest friendly base
+  with six jailers chasing (optional "cover their escape"), regroup, march on the nearest standing
+  enemy castle and take it (`EnemyBase.ruin` once the garrison's beaten on screen, or settled by
+  numbers after 50 seconds if the player is too far to see it). They hold it; no repeating raids
+  are added for them.
+- Not built: tall archer towers, villages inside castles, garrison counters, tank crews that bail
+  out and surrender, a second dungeon layout (both enemy prisons use the same courtyard), and the
+  final Great Castle jailbreak.
 
 ## Still open
 

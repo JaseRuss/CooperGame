@@ -412,6 +412,15 @@ export class EnemyBase {
     };
   }
 
+  /** Flattens every target without any show: this castle fell on an earlier visit to the level. */
+  ruin(): void {
+    this.bunker.building.ruin();
+    for (const o of this.objectives) {
+      const b = this.buildings.find((x) => x.center === o.position);
+      b?.ruin();
+    }
+  }
+
   get remaining(): number {
     return this.objectives.filter((o) => !o.isDestroyed()).length;
   }

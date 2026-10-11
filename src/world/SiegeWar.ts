@@ -1,17 +1,18 @@
 import * as THREE from 'three';
 import type RAPIER from '@dimforge/rapier3d-compat';
-import { FRIENDLY_BASES, FORTRESS_HALF, WORLD_HALF } from '../core/config';
+import { FRIENDLY_BASES, FORTRESS_HALF, WORLD_HALF, nearestFriendlyBase, type FriendlyBase } from '../core/config';
 import { ARMY_GREEN, ENEMY_ARMY_COLOR, ENEMY_ARMY_NAME } from '../utils/plastic';
 import { heightAt } from './Terrain';
 import { isInLandmark, ENEMY_BASE_HALF } from './Landmarks';
 import { isInAnyTown } from './TownPlan';
 import { inMoat } from './MoatShape';
 import { distanceToPolyline, type Polyline } from './RoadNetwork';
+import { routeRoundMoat } from './MoatShape';
 import { Prison } from './Prison';
 import { PrisonWagon, type WagonContext } from './PrisonWagon';
 import type { EnemyBase } from './EnemyBase';
 import type { Fortress } from './Fortress';
-import type { TroopManager } from '../entities/TroopManager';
+import type { SquadSpawn, TroopManager } from '../entities/TroopManager';
 import type { Soldier } from '../entities/Soldier';
 
 /** A message for the HUD, in the same shape the war front uses. */
@@ -24,6 +25,8 @@ export interface SiegeNotice {
 
 /** Our soldiers locked up in each enemy prison at the start. */
 const STARTING_PRISONERS = 8;
+/** How far inside a family base's wall the freed soldiers make for. */
+const BASE_INSIDE = 40;
 /** Enemy prisons will hold no more than this. */
 const PRISON_LIMIT = 30;
 /** A fallen soldier of ours within this of an enemy prison may be marched off to it. */
@@ -40,6 +43,36 @@ const WAGON_GROUP_RADIUS = 28;
 /** Quiet time between "the enemy took a prisoner" messages. */
 const CAPTURE_NOTICE_GAP = 45;
 
+/** The freed soldiers' march: metres a second, how many of them are shown (the rest are too many to fight with), and how tough each is. */
+const WAVE_SPEED = 7;
+const WAVE_MAX = 14;
+const WAVE_HP = 2;
+/** The guards who chase them out of the prison, and how fast they go. */
+const CHASERS = 6;
+const CHASER_SPEED = 5.5;
+/** Seconds they regroup at the friendly base before setting off for a castle. */
+const REGROUP_TIME = 10;
+/** Seconds at the castle before the assault is settled by numbers if the garrison hasn't been beaten on screen. */
+const ASSAULT_TIME = 50;
+/** Enemy soldiers within this of a castle's middle are still defending it. */
+const GARRISON_RADIUS = 95;
+/** Fewest survivors that can still take a castle. */
+const MIN_TO_TAKE = 3;
+
+interface Wave {
+  spawn: SquadSpawn;
+  size: number;
+  base: FriendlyBase;
+  prison: Prison;
+  phase: 'escape' | 'regroup' | 'assault';
+  timer: number;
+  target: EnemyBase | null;
+  /** The chasers, whose squad is checked for the optional "cover their escape" objective. */
+  chasers: SquadSpawn;
+  /** Every freed soldier who gets to the friendly base is counted once. */
+  covered: boolean;
+}
+
 interface Site {
   x: number;
   z: number;
@@ -55,6 +88,7 @@ interface Site {
 export class SiegeWar {
   readonly prisons: Prison[] = [];
   readonly wagons: PrisonWagon[] = [];
+  private readonly waves: Wave[] = [];
   private readonly pendingCapture: { soldier: Soldier; delay: number }[] = [];
   private captureNoticeTimer = 0;
   private readonly notices: SiegeNotice[] = [];
@@ -105,6 +139,20 @@ export class SiegeWar {
     troops.onSoldierDown = (s) => this.soldierDown(s);
   }
 
+  /** Enemy prisons whose prisoners have already been freed (by index into `prisons`). */
+  readonly freed = new Set<number>();
+
+  /** How many are locked up in each prison, in order, for saving. */
+  heldCounts(): number[] {
+    return this.prisons.map((p) => p.held);
+  }
+
+  /** Picks up where a saved game left off. */
+  restore(held: number[], freed: number[]): void {
+    this.prisons.forEach((p, i) => p.setHeld(held[i] ?? p.held));
+    for (const i of freed) this.freed.add(i);
+  }
+
   get friendlyPrisons(): Prison[] {
     return this.prisons.filter((p) => p.side === 'friendly');
   }
@@ -123,7 +171,116 @@ export class SiegeWar {
     return this.enemyPrisons.reduce((n, p) => n + p.held, 0);
   }
 
+  /** The freed soldiers' wave now, for the HUD: what it's doing and how many are left, or null. */
+  waveStatus(): { text: string; left: number } | null {
+    const w = this.waves[0];
+    if (!w) return null;
+    const left = this.troops.soldiersOf(w.spawn).length;
+    const chasing = this.troops.soldiersOf(w.chasers).length;
+    if (w.phase === 'escape') return { text: chasing > 0 ? `COVER THEIR ESCAPE to ${w.base.name} (${chasing} chasers)` : `Escorting them to ${w.base.name}`, left };
+    if (w.phase === 'regroup') return { text: `Regrouping at ${w.base.name}`, left };
+    return { text: `Taking ${w.target?.title ?? 'the castle'}`, left };
+  }
+
+  /**
+   * A break-out succeeded: `freed` of our soldiers run out of `prison` for the nearest friendly
+   * base with guards at their heels (cover their escape, if you like). Once they've made it they
+   * regroup, march on the nearest enemy castle, take it themselves, and stay there.
+   */
+  release(prison: Prison, freed: number): void {
+    this.freed.add(this.prisons.indexOf(prison));
+    prison.setHeld(Math.max(0, prison.held - freed));
+    const base = nearestFriendlyBase(prison.door.x, prison.door.z);
+    const size = Math.max(1, Math.min(WAVE_MAX, freed));
+    const from = new THREE.Vector3(prison.door.x, 0, prison.door.z);
+    const into = new THREE.Vector3(base.x, 0, base.z).sub(from).setY(0).normalize().multiplyScalar(-(BASE_INSIDE));
+    const to = new THREE.Vector3(base.x, 0, base.z).add(into);
+    const route = (a: THREE.Vector3, b: THREE.Vector3) => routeRoundMoat({ x: a.x, z: a.z }, { x: b.x, z: b.z }).map((q) => new THREE.Vector2(q.x, q.z));
+    const spawn: SquadSpawn = {
+      anchor: new THREE.Vector2(from.x, from.z),
+      count: size,
+      wanderRadius: 8,
+      faction: 'player',
+      color: ARMY_GREEN,
+      holdWhile: null,
+      march: { route: route(from, to), speed: WAVE_SPEED, next: 0, arrived: false },
+      once: true,
+      hp: WAVE_HP,
+    };
+    this.troops.addSquad(spawn);
+    // The jailers chase them out, a little way behind.
+    const behind = from.clone().addScaledVector(new THREE.Vector3(Math.sin(prison.yaw), 0, Math.cos(prison.yaw)), -26);
+    const chasers: SquadSpawn = {
+      anchor: new THREE.Vector2(behind.x, behind.z),
+      count: CHASERS,
+      wanderRadius: 6,
+      faction: 'enemy',
+      color: prison.color,
+      holdWhile: null,
+      march: { route: route(behind, to), speed: CHASER_SPEED, next: 0, arrived: false },
+      once: true,
+    };
+    this.troops.addSquad(chasers);
+    this.waves.push({ spawn, size, base, prison, phase: 'escape', timer: 0, target: null, chasers, covered: false });
+    this.notices.push({ text: `${size} SOLDIERS ARE RUNNING FOR ${base.name.toUpperCase()}! COVER THEIR ESCAPE`, banner: true, sub: 'Optional: the jailers are chasing them. Keep them alive and they will take a castle for you' });
+  }
+
+  private updateWaves(dt: number): void {
+    for (let i = this.waves.length - 1; i >= 0; i--) {
+      const w = this.waves[i];
+      const left = this.troops.soldiersOf(w.spawn).length;
+      if (left === 0) {
+        this.notices.push({ text: w.phase === 'assault' ? 'THE FREED SOLDIERS WERE BEATEN AT THE CASTLE' : 'THE FREED SOLDIERS WERE CAUGHT', color: '#ff8a7a' });
+        this.waves.splice(i, 1);
+        continue;
+      }
+      if (w.phase === 'escape' && w.spawn.march?.arrived) {
+        w.phase = 'regroup';
+        w.timer = REGROUP_TIME;
+        this.notices.push(
+          left * 2 >= w.size
+            ? { text: `COVERED THEIR ESCAPE! ${left} MADE IT TO ${w.base.name.toUpperCase()}`, color: '#9be27a' }
+            : { text: `ONLY ${left} MADE IT TO ${w.base.name.toUpperCase()}`, color: '#ffd24a' },
+        );
+      } else if (w.phase === 'regroup') {
+        w.timer -= dt;
+        if (w.timer > 0) continue;
+        const standing = this.enemyBases.filter((b) => !b.isDestroyed);
+        const here = new THREE.Vector3(w.base.x, 0, w.base.z);
+        const target = standing.sort((a, b) => a.center.distanceTo(here) - b.center.distanceTo(here))[0];
+        if (!target) {
+          this.waves.splice(i, 1);
+          continue;
+        }
+        w.target = target;
+        w.phase = 'assault';
+        w.timer = ASSAULT_TIME;
+        // Into the castle from the side they come from.
+        const toward = here.clone().sub(target.center).setY(0).normalize();
+        const end = target.center.clone().addScaledVector(toward, 30);
+        const anchor = w.spawn.anchor;
+        w.spawn.march = { route: routeRoundMoat({ x: anchor.x, z: anchor.y }, { x: end.x, z: end.z }).map((q) => new THREE.Vector2(q.x, q.z)), speed: WAVE_SPEED, next: 0, arrived: false };
+        this.notices.push({ text: `THE FREED SOLDIERS ARE MARCHING ON ${target.title.toUpperCase()}! GO HELP THEM`, color: '#9be27a' });
+      } else if (w.phase === 'assault' && w.spawn.march?.arrived && w.target) {
+        w.timer -= dt;
+        const target = w.target;
+        const defenders = this.troops.activeSoldiers('enemy').filter((s) => Math.hypot(s.position.x - target.center.x, s.position.z - target.center.z) < GARRISON_RADIUS).length;
+        // The garrison beaten on screen, or (too far from the player to see) settled by numbers.
+        if ((defenders === 0 && ASSAULT_TIME - w.timer > 6) || w.timer <= 0) {
+          if (left >= MIN_TO_TAKE) {
+            target.ruin();
+            this.notices.push({ text: `THE FREED SOLDIERS TOOK ${target.title.toUpperCase()}!`, banner: true, sub: 'They are holding it for you' });
+          } else {
+            this.notices.push({ text: 'THE FREED SOLDIERS WERE TOO FEW TO TAKE THE CASTLE', color: '#ff8a7a' });
+          }
+          this.waves.splice(i, 1);
+        }
+      }
+    }
+  }
+
   update(dt: number): SiegeNotice[] {
+    this.updateWaves(dt);
     this.captureNoticeTimer = Math.max(0, this.captureNoticeTimer - dt);
     for (const wagon of this.wagons) wagon.update(dt, this.context);
     for (let i = this.pendingCapture.length - 1; i >= 0; i--) {

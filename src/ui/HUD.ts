@@ -135,7 +135,7 @@ export interface HUDState {
   /** The bomb tanker objective on the first mission, or null on the others. */
   tanker: TankerHUD | null;
   /** The siege level's prisoners (knights locked up, ours still held), or null on the other missions. */
-  siege: { captives: number; ours: number; surrendered: number; carrying: number } | null;
+  siege: { captives: number; ours: number; surrendered: number; carrying: number; wave: { text: string; left: number } | null; prompt: string | null } | null;
   /** Set on the bonus prison level, where the player is on foot. */
   prison: PrisonHUD | null;
   driveStyle: Settings['driveStyle'];
@@ -1360,6 +1360,10 @@ export class HUD {
       this.promptLabel.style.display = prison.prompt ? 'block' : 'none';
       this.promptLabel.style.color = prison.downFor > 0 ? '#ff9a8a' : '#eef3f8';
       this.promptLabel.textContent = prison.prompt ?? '';
+    } else if (state.siege?.prompt) {
+      this.promptLabel.style.display = 'block';
+      this.promptLabel.style.color = '#ffd24a';
+      this.promptLabel.textContent = state.siege.prompt;
     } else if (state.insideBase) {
       this.promptLabel.style.display = 'block';
       this.promptLabel.style.color = '#eef3f8';
@@ -1502,9 +1506,10 @@ export class HUD {
     const siege = state.siege;
     if (!siege) return '';
     const waiting = siege.surrendered > 0 ? ` · <b style="color:#ffd24a">${siege.surrendered}</b> surrendered waiting for the wagon` : '';
+    const wave = siege.wave ? `<br>➜ ${siege.wave.text} · <b style="color:#9be27a">${siege.wave.left}</b> soldiers` : '';
     return (
       `<div class="siege" style="font-size:${compact ? 11 : 12}px; margin-top:4px; opacity:0.95">` +
-      `⛓ KNIGHTS LOCKED UP <b style="color:#9be27a">${siege.captives}</b> · OURS STILL HELD <b style="color:#ff8a7a">${siege.ours}</b>${waiting}</div>`
+      `⛓ KNIGHTS LOCKED UP <b style="color:#9be27a">${siege.captives}</b> · OURS STILL HELD <b style="color:#ff8a7a">${siege.ours}</b>${waiting}${wave}</div>`
     );
   }
 

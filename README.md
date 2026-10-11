@@ -443,15 +443,32 @@ checkpoint. It's in the level select as **5 · Bonus: Prison Break**. The plan i
 ## Bonus: Under Siege
 
 A second bonus level, in the level select as **6 · Bonus: Under Siege**: the castle mission with
-prisoners. Single player (there is no co-op on this level). Knights who are beaten but not
-blasted flat often **surrender**: they drop their crossbows, throw their hands up and shout "WE
-SURRENDER!". A green **prisoner wagon**, pulled by two army men, drives out to collect any
-surrendered knights it can reach (not ones still inside a castle that's standing), takes up to
-eight at a time, and locks them in the nearer of our two **prisons** (squares with a **P** on the
-map; the wagons are green diamonds). The enemy locks ours up too: two **enemy prisons** by the
-front-line castles start with eight of our soldiers each, and get more when enemy squads beat ours.
-The map and the objective panel count both. Freeing your soldiers on foot is still to come; the
-plan is in `docs/plans/under-siege.md`.
+prisoners. Single player (there is no co-op on this level).
+
+- **Surrender.** Knights who are beaten but not blasted flat often surrender: they drop their
+  crossbows, throw their hands up and shout "WE SURRENDER!".
+- **Prisoner wagons.** A green wagon, pulled by two army men, drives out to collect any surrendered
+  knights it can reach (not ones still inside a castle that's standing), takes up to eight at a
+  time, and locks them in the nearer of our two **prisons** (squares with a **P** on the map; the
+  wagons are green diamonds).
+- **Their prisons.** Two enemy prisons stand by the front-line castles and start with eight of our
+  soldiers each; more are added when enemy squads beat ours. The map and the objective panel
+  count both.
+- **The jailbreak.** Drive to an enemy prison's yard gate and a prompt appears: press **Y** (**C**
+  on the keyboard) to get out and go in on foot. The level is saved and the on-foot section
+  loads (it is its own page, like the prison break). You're in a castle dungeon courtyard at night
+  with jailers who have vision cones. Stand at a cell door to unlock it; the freed soldiers follow
+  you. Creep (Shift) past the jailers, or press **X** to put on a **jailer disguise**: they won't
+  notice you from a distance, but a jailer who looks you over up close, or sees you run, sees
+  through it, and you start again from the gate. You can't disguise while you're being watched,
+  and firing a shot drops it. Right behind a jailer, the fire button is a quiet **takedown**.
+  Press **R** to go back to the gate. Walk out of the gate to finish.
+- **The wave.** Back in the tank, the freed soldiers run for the nearest friendly base with the
+  jailers chasing them. Covering their escape is optional. Once they make it they regroup, march
+  on the nearest enemy castle, take it themselves, and hold it. A castle they take counts as one
+  of the five.
+
+The plan is in `docs/plans/under-siege.md`.
 
 ## Level select
 

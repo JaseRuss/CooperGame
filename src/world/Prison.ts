@@ -56,6 +56,8 @@ export class Prison {
   readonly side: PrisonSide;
   readonly name: string;
   readonly yaw: number;
+  /** The garrison's colour (the army that holds it). */
+  readonly color: number;
   readonly center: THREE.Vector3;
   /** The spot outside the yard gate where a wagon pulls up. */
   readonly door = new THREE.Vector3();
@@ -72,6 +74,7 @@ export class Prison {
     this.side = opts.side;
     this.name = opts.name;
     this.yaw = opts.yaw;
+    this.color = opts.color;
     this.count = opts.held;
     this.cosYaw = Math.cos(opts.yaw);
     this.sinYaw = Math.sin(opts.yaw);
@@ -153,6 +156,12 @@ export class Prison {
   /** Locks up `n` more prisoners. */
   admit(n: number): void {
     this.count += n;
+    this.refresh();
+  }
+
+  /** Sets the number locked up (when picking a game up again). */
+  setHeld(n: number): void {
+    this.count = n;
     this.refresh();
   }
 
