@@ -23,6 +23,8 @@ export interface JailbreakRequest {
   held: number;
   /** The Great Castle's dungeon, dressed like Stirling Castle. */
   royal?: boolean;
+  /** Which army holds the prison (its courtyard is dressed Welsh or German). */
+  army?: 'tan' | 'blue';
 }
 
 /** How it ended: the prisoners freed (0 if the player gave up). */

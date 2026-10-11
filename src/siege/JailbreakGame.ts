@@ -189,7 +189,7 @@ export class JailbreakGame {
     this.jam = new JamCannon(this.scene, () => 0, FRIEND_SHOTS);
     // As many cells as it takes at two prisoners to a cell; each figure in a cell stands for a share of those held.
     const cells = Math.min(6, Math.max(1, Math.ceil(this.request.held / 2)));
-    this.dungeon = new Dungeon(this.world, cells, 0xc4a468, !!this.request.royal);
+    this.dungeon = new Dungeon(this.world, cells, this.request.army === 'blue' ? 0x3d6fc4 : 0xc4a468, this.request.royal ? 'royal' : this.request.army === 'blue' ? 'german' : 'welsh');
     this.scene.add(this.dungeon.group);
     this.weights = Array.from({ length: cells }, (_, i) => Math.floor(this.request.held / cells) + (i < this.request.held % cells ? 1 : 0));
     this.dungeon.layout.cells.forEach((cell, i) => this.dungeon.fillCell(cell, Math.min(2, this.weights[i])));

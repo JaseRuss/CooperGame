@@ -74,10 +74,93 @@ type Box = { x: number; y: number; z: number; hx: number; hy: number; hz: number
  * in the default (walls) collision group, so the guards' sight lines and the player's moves treat
  * it as walls.
  */
+function flagTexture(draw: (ctx: CanvasRenderingContext2D) => void): THREE.MeshStandardMaterial {
+  const c = document.createElement('canvas');
+  c.width = 192;
+  c.height = 128;
+  draw(c.getContext('2d') as CanvasRenderingContext2D);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return new THREE.MeshStandardMaterial({ map: tex, side: THREE.DoubleSide });
+}
+
+/** Y Ddraig Goch: a red dragon on a white and green field. */
+function welshDragon(): THREE.MeshStandardMaterial {
+  return flagTexture((ctx) => {
+    ctx.fillStyle = '#f4f4ee';
+    ctx.fillRect(0, 0, 192, 64);
+    ctx.fillStyle = '#2d7a3a';
+    ctx.fillRect(0, 64, 192, 64);
+    ctx.fillStyle = '#c8202b';
+    ctx.strokeStyle = '#c8202b';
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.ellipse(94, 66, 36, 17, -0.15, 0, Math.PI * 2); // body
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(138, 44, 11, 0, Math.PI * 2); // head
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(150, 42); ctx.lineTo(166, 38); ctx.lineTo(152, 50); // snout and flame
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(80, 52); ctx.lineTo(60, 14); ctx.lineTo(104, 40); ctx.lineTo(112, 10); ctx.lineTo(116, 54); // wings
+    ctx.fill();
+    ctx.lineWidth = 7;
+    ctx.beginPath();
+    ctx.moveTo(62, 70); ctx.bezierCurveTo(30, 70, 20, 98, 44, 104); // tail
+    ctx.moveTo(84, 80); ctx.lineTo(80, 106); ctx.moveTo(108, 80); ctx.lineTo(112, 106); // legs
+    ctx.stroke();
+  });
+}
+
+/** The imperial eagle: a black eagle with spread wings on gold. */
+function germanEagle(): THREE.MeshStandardMaterial {
+  return flagTexture((ctx) => {
+    ctx.fillStyle = '#f2c230';
+    ctx.fillRect(0, 0, 192, 128);
+    ctx.fillStyle = '#16140f';
+    ctx.strokeStyle = '#16140f';
+    ctx.beginPath();
+    ctx.ellipse(96, 70, 16, 34, 0, 0, Math.PI * 2); // body
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(96, 32, 11, 0, Math.PI * 2); // head
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(96, 32); ctx.lineTo(118, 34); ctx.lineTo(98, 42); // beak
+    ctx.fill();
+    for (const s of [-1, 1]) {
+      ctx.beginPath();
+      ctx.moveTo(96 + s * 12, 52);
+      ctx.lineTo(96 + s * 74, 26);
+      ctx.lineTo(96 + s * 66, 50);
+      ctx.lineTo(96 + s * 70, 70);
+      ctx.lineTo(96 + s * 54, 66);
+      ctx.lineTo(96 + s * 50, 84);
+      ctx.lineTo(96 + s * 18, 80);
+      ctx.fill(); // spread wings with feathered tips
+    }
+    ctx.lineWidth = 6;
+    ctx.beginPath();
+    ctx.moveTo(90, 100); ctx.lineTo(82, 118); ctx.moveTo(102, 100); ctx.lineTo(110, 118);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(86, 102); ctx.lineTo(96, 124); ctx.lineTo(106, 102);
+    ctx.fill(); // tail
+  });
+}
+
+/** Which courtyard: a Welsh hold (roundhouses and a fire pit), a German one (half-timbered houses and a fountain), or the Great Castle's royal one. */
+export type DungeonStyle = 'welsh' | 'german' | 'royal';
+
 export class Dungeon {
+  private readonly royal: boolean;
   readonly group = new THREE.Group();
   readonly layout: DungeonLayout;
   private readonly flames: THREE.Mesh[] = [];
+  /** Fires and the like that want a real light, besides the wall torches. */
+  private readonly extraTorches: THREE.Vector3[] = [];
   private time = 0;
 
   /**
@@ -85,7 +168,8 @@ export class Dungeon {
    * Forework gate, the Great Hall, Chapel Royal and Great Kitchens round the yard, a knot garden,
    * the Elphinstone Tower for cover, and a slate roof and chimneys on the cell block.
    */
-  constructor(private readonly world: RAPIER.World, cellCount: number, armyColor: number, private readonly royal = false) {
+  constructor(private readonly world: RAPIER.World, cellCount: number, armyColor: number, private readonly style: DungeonStyle = 'welsh') {
+    this.royal = style === 'royal';
     const cells = Math.max(1, Math.min(MAX_CELLS, cellCount));
     this.buildGround();
     this.buildWalls(armyColor);
@@ -369,25 +453,101 @@ export class Dungeon {
     crate(13.5, -1, 1.1, 0.3); barrel(15.6, 1.2); bale(11.6, 1.4, 0.6); crate(16.2, -3.2, 0.9, 0);
     crate(-27.4, -8, 1.1, 0); barrel(-28.8, -5.6); crate(27.4, -9.4, 1.0, 0.3); bale(27.6, -6.2, 0.2);
     crate(-6.4, -9, 1.0, 0.5); crate(6.8, -11, 1.0, -0.2); barrel(-8.4, -10.4);
-    // The well, on the central road's edge.
-    p.add(new THREE.CylinderGeometry(1.5, 1.6, 1.1, 14), plastic(shade(STONE, 0.9)), -6.5, 0.55, 14);
-    p.add(new THREE.CylinderGeometry(1.1, 1.1, 0.12, 14), plastic(0x2e5f86), -6.5, 1.0, 14);
-    for (const s of [-1, 1]) p.add(new THREE.BoxGeometry(0.2, 2.4, 0.2), woodDark, -6.5 + s * 1.5, 2.2, 14);
-    p.add(new THREE.BoxGeometry(3.6, 0.2, 0.2), woodDark, -6.5, 3.3, 14);
-    this.round(-6.5, 14, 1.6, 1.2);
     p.buildInto(this.group);
+    if (this.style === 'german') this.buildGermanVillage();
+    else this.buildWelshHold();
+  }
 
-    // Barracks cottages in the east and west corners, fronts to the yard.
-    const west = buildCottage(0, 'thatch', 1);
+  /** A collider fitted to whatever is in `obj` now (a house or a hut that's been put in place). */
+  private solidAround(obj: THREE.Object3D, shrink = 0.9): void {
+    obj.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(obj);
+    const c = box.getCenter(new THREE.Vector3());
+    const h = box.getSize(new THREE.Vector3()).multiplyScalar(0.5);
+    this.solid({ x: c.x, y: h.y, z: c.z, hx: h.x * shrink, hy: h.y, hz: h.z * shrink });
+  }
+
+  /** A flag on a pole standing on the ground, `y` up to its top. */
+  private banner(x: number, z: number, material: THREE.Material, height = 7): void {
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.14, height, 6), plastic(WOOD_DARK));
+    pole.position.set(x, height / 2, z);
+    const flag = new THREE.Mesh(new THREE.PlaneGeometry(3.4, 2.2).translate(1.7, 0, 0), material);
+    flag.position.set(x + 0.1, height - 1.3, z);
+    this.group.add(pole, flag);
+  }
+
+  /**
+   * Welsh: three stone roundhouses under thatch, a fire pit on the green (it lights the yard and
+   * is cover from the jailers' view only in the sense that they'd rather warm their hands), and
+   * red dragon banners by the gate.
+   */
+  private buildWelshHold(): void {
+    const p = new PartBuilder();
+    const rubble = plastic(0x9a9482);
+    const thatch = plastic(0xcfa85a);
+    const dark = plastic(GLOOM);
+    const house = (x: number, z: number, yaw: number) => {
+      const g = new PartBuilder();
+      g.add(new THREE.CylinderGeometry(4.3, 4.6, 3, 16), rubble, 0, 1.5, 0);
+      g.add(new THREE.CylinderGeometry(5.6, 5.6, 0.3, 16), plastic(0x7a5a3a), 0, 3.1, 0);
+      g.add(new THREE.ConeGeometry(5.8, 4.8, 16), thatch, 0, 5.4, 0);
+      g.add(new THREE.CylinderGeometry(0.5, 0.7, 0.8, 8), dark, 0, 8, 0);
+      for (let i = 0; i < 9; i++) g.add(new THREE.BoxGeometry(0.1, 3.2, 0.1), plastic(0xb89a50), Math.cos(i) * 2.2, 4.8, Math.sin(i) * 2.2 + 1);
+      g.add(new THREE.BoxGeometry(1.5, 2.2, 0.3), plastic(WOOD_DARK), 0, 1.1, 4.5);
+      g.add(new THREE.BoxGeometry(0.9, 0.9, 0.2), dark, 2.4, 1.7, 3.6, 0, 0.6);
+      const grp = new THREE.Group();
+      g.buildInto(grp);
+      grp.position.set(x, 0, z);
+      grp.rotation.y = yaw;
+      this.group.add(grp);
+      this.solidAround(grp, 0.85);
+    };
+    house(-30.4, 22, Math.PI / 2);
+    house(30.4, 18, -Math.PI / 2);
+    house(31, -6, -Math.PI / 2);
+    // The fire pit: a ring of stones, logs, and a flame the torches' lights pick up.
+    for (let i = 0; i < 12; i++) {
+      const a = (i / 12) * Math.PI * 2;
+      p.add(new THREE.SphereGeometry(0.42, 6, 5), rubble, -6.5 + Math.cos(a) * 1.7, 0.3, 14 + Math.sin(a) * 1.7);
+    }
+    for (let i = 0; i < 5; i++) p.add(new THREE.CylinderGeometry(0.16, 0.16, 2, 6).rotateZ(Math.PI / 2), plastic(WOOD_DARK), -6.5, 0.3 + (i % 2) * 0.25, 14, 0, (i / 5) * Math.PI, 0);
+    p.buildInto(this.group);
+    this.round(-6.5, 14, 1.9, 0.7);
+    this.extraTorches.push(new THREE.Vector3(-6.5, 1.2, 14));
+    const flame = new THREE.Mesh(new THREE.ConeGeometry(0.9, 2, 8), new THREE.MeshBasicMaterial({ color: 0xffa040 }));
+    flame.position.set(-6.5, 1.5, 14);
+    this.group.add(flame);
+    this.flames.push(flame);
+    const dragon = welshDragon();
+    for (const x of [-7, 7]) this.banner(x, 36, dragon);
+  }
+
+  /** German: tall half-timbered town houses and an inn, a fountain on the green, and black eagle banners by the gate. */
+  private buildGermanVillage(): void {
+    const p = new PartBuilder();
+    const stone = plastic(shade(STONE, 0.9));
+    p.add(new THREE.CylinderGeometry(2.4, 2.6, 0.9, 16), stone, -6.5, 0.45, 14);
+    p.add(new THREE.CylinderGeometry(2.0, 2.0, 0.12, 16), plastic(0x2e5f86), -6.5, 0.8, 14);
+    p.add(new THREE.CylinderGeometry(0.35, 0.5, 2.2, 10), stone, -6.5, 1.8, 14);
+    p.add(new THREE.CylinderGeometry(1.1, 0.6, 0.35, 12), stone, -6.5, 3, 14);
+    p.add(new THREE.SphereGeometry(0.4, 8, 6), plastic(0xd9a520), -6.5, 3.5, 14);
+    p.buildInto(this.group);
+    this.round(-6.5, 14, 2.6, 1.0);
+    const west = buildCottage(2, 'slate', 3);
     west.position.set(-30.4, 0, 22);
     west.rotation.y = Math.PI / 2;
-    const east = buildCottage(1, 'tile', 2);
-    east.position.set(30.4, 0, 18);
+    const inn = buildCottage(3, 'tile', 0);
+    inn.position.set(30.4, 0, 14);
+    inn.rotation.y = -Math.PI / 2;
+    const east = buildCottage(2, 'tile', 2);
+    east.position.set(30.4, 0, -8);
     east.rotation.y = -Math.PI / 2;
-    this.group.add(west, east);
-    this.solid({ x: -30.4, y: 3, z: 22, hx: 4, hy: 3, hz: 4.8 });
-    this.solid({ x: 30.4, y: 3, z: 18, hx: 4.4, hy: 3, hz: 5.2 });
+    this.group.add(west, inn, east);
+    for (const h of [west, inn, east]) this.solidAround(h);
+    const eagle = germanEagle();
+    for (const x of [-7, 7]) this.banner(x, 36, eagle);
   }
+
 
   // ---------- light ----------
 
@@ -415,6 +575,7 @@ export class Dungeon {
       this.group.add(f);
       this.flames.push(f);
     }
+    spots.push(...this.extraTorches);
     return spots;
   }
 

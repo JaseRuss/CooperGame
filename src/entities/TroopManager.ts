@@ -200,6 +200,20 @@ export class TroopManager {
     if (d - step < 0.01 && ++march.next >= march.route.length) march.arrived = true;
   }
 
+  /** `n` knights who've just climbed out of a knocked-out cannon with their hands up, round (x, z) (siege level). */
+  addSurrendered(x: number, z: number, color: number, n: number): void {
+    const anchor = new THREE.Vector2(x, z);
+    const squad: Squad = { spawn: { anchor, count: 0, wanderRadius: 0, faction: 'enemy', color, holdWhile: () => false, once: true }, soldiers: [], respawnTimer: 0 };
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2 + this.rng();
+      const s = new Soldier(x + Math.cos(a) * 2.6, z + Math.sin(a) * 2.6, anchor, 0, this.rng, 'enemy', color);
+      s.giveUp();
+      this.scene.add(s.mesh);
+      squad.soldiers.push(s);
+    }
+    this.squads.push(squad);
+  }
+
   /** Soldiers with their hands up, waiting to be collected (siege level). */
   surrendered(): Soldier[] {
     const out: Soldier[] = [];

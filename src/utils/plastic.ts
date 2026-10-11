@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { SIEGE } from '../core/config';
 
 const cache = new Map<number, THREE.MeshPhysicalMaterial>();
 
@@ -34,4 +35,5 @@ export const ARMY_RED = 0xb8392e;
 /** The two enemy armies; each enemy base belongs to one. */
 export type EnemyArmy = 'tan' | 'blue';
 export const ENEMY_ARMY_COLOR: Record<EnemyArmy, number> = { tan: ARMY_TAN, blue: ARMY_BLUE };
-export const ENEMY_ARMY_NAME: Record<EnemyArmy, string> = { tan: 'Tan Army', blue: 'Blue Army' };
+/** The siege level's armies have countries: the tan army is Wales and the blue is the Germans. */
+export const ENEMY_ARMY_NAME: Record<EnemyArmy, string> = SIEGE ? { tan: 'Welsh', blue: 'German' } : { tan: 'Tan Army', blue: 'Blue Army' };
