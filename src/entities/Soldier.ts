@@ -125,7 +125,10 @@ function jointed(a: V, joint: V, b: V, r: number): THREE.BufferGeometry[] {
 function boot(ankle: V): THREE.BufferGeometry[] {
   return [
     box(0.15, 0.11, 0.28, ankle.x, ankle.y - 0.03, ankle.z - 0.06),
+    box(0.17, 0.035, 0.31, ankle.x, ankle.y - 0.1, ankle.z - 0.065), // thick sole
+    ball(0.075, v3(ankle.x, ankle.y - 0.03, ankle.z - 0.19), 1, 0.8, 0.9), // toe cap
     new THREE.CylinderGeometry(0.095, 0.1, 0.16, 8).translate(ankle.x, ankle.y + 0.08, ankle.z),
+    new THREE.TorusGeometry(0.1, 0.013, 4, 10).rotateX(Math.PI / 2).translate(ankle.x, ankle.y + 0.15, ankle.z), // laces band
   ];
 }
 
@@ -137,44 +140,55 @@ function rifle(x: number, y: number, z: number): THREE.BufferGeometry[] {
     box(0.05, 0.16, 0.08, x, y - 0.11, z - 0.3, 0.15), // magazine
     new THREE.CylinderGeometry(0.024, 0.024, 0.52, 6).rotateX(Math.PI / 2).translate(x, y + 0.02, z - 0.8), // barrel
     box(0.02, 0.05, 0.02, x, y + 0.07, z - 1.02), // front sight
+    box(0.018, 0.03, 0.2, x, y - 0.03, z - 1.12), // bayonet
     new THREE.TorusGeometry(0.05, 0.012, 4, 8, Math.PI).rotateY(Math.PI / 2).translate(x, y - 0.07, z - 0.18), // trigger guard
   ];
 }
 
 /** What a figure's arms are doing: holding the rifle, cheering with it overhead, or aiming a rocket launcher up at the sky. */
-type Arms = 'rifle' | 'cheer' | 'launcher';
+type Arms = 'rifle' | 'cheer' | 'launcher' | 'wave' | 'salute' | 'carry' | 'point' | 'flag';
 
 /** Everything from the hips up, with the hips at height y. */
-function upperBody(y: number, arms: Arms = 'rifle'): THREE.BufferGeometry[] {
+function upperBody(y: number, arms: Arms = 'rifle', suit = false): THREE.BufferGeometry[] {
   const v = (x: number, yy: number, z: number) => v3(x, y + yy, z);
   const helmet = new THREE.SphereGeometry(0.2, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2).scale(1, 0.9, 1.05);
   helmet.translate(0, y + 0.72, 0);
+  const army = !suit;
   return [
     box(0.4, 0.18, 0.25, 0, y, 0), // hips
     box(0.44, 0.52, 0.27, 0, y + 0.33, 0, -0.08), // torso
     box(0.46, 0.08, 0.3, 0, y + 0.06, 0), // belt
-    ...[-0.14, -0.05, 0.05, 0.14].map((x) => box(0.08, 0.1, 0.06, x, y + 0.07, -0.16)), // ammo pouches
-    new THREE.CylinderGeometry(0.07, 0.07, 0.16, 8).translate(0.25, y + 0.03, 0.08), // canteen
-    box(0.12, 0.11, 0.04, -0.11, y + 0.4, -0.15, -0.08), // breast pockets
-    box(0.12, 0.11, 0.04, 0.11, y + 0.4, -0.15, -0.08),
-    ball(0.055, v(-0.1, 0.24, -0.17)), // grenade clipped to the webbing
-    box(0.05, 0.5, 0.03, -0.12, y + 0.35, -0.14, -0.08), // webbing straps
-    box(0.05, 0.5, 0.03, 0.12, y + 0.35, -0.14, -0.08),
-    // Pack with a rolled blanket on top and an entrenching tool strapped to the side.
-    box(0.34, 0.34, 0.15, 0, y + 0.36, 0.21),
-    new THREE.CylinderGeometry(0.07, 0.07, 0.4, 8).rotateZ(Math.PI / 2).translate(0, y + 0.58, 0.22),
-    box(0.03, 0.3, 0.04, 0.2, y + 0.3, 0.22),
-    box(0.1, 0.12, 0.03, 0.2, y + 0.12, 0.22),
-    // Neck, face, helmet.
-    new THREE.CylinderGeometry(0.06, 0.07, 0.1, 8).translate(0, y + 0.6, 0),
-    ball(0.13, v(0, 0.68, 0), 1, 1.05, 1),
-    box(0.04, 0.06, 0.05, 0, y + 0.66, -0.13), // nose
-    ball(0.03, v(-0.13, 0.67, 0)), // ears
-    ball(0.03, v(0.13, 0.67, 0)),
-    helmet,
-    new THREE.CylinderGeometry(0.23, 0.25, 0.035, 16).translate(0, y + 0.72, 0.01), // flared brim
-    new THREE.TorusGeometry(0.2, 0.014, 4, 18).rotateX(Math.PI / 2).translate(0, y + 0.78, 0), // net band
-    ...(arms === 'cheer' ? cheeringArms(y) : arms === 'launcher' ? launcherArms(y) : [
+    ...(army
+      ? [
+          ball(0.1, v(0.26, 0.54, 0.01), 1, 0.8, 1), // shoulder pads
+          ball(0.1, v(-0.26, 0.54, 0.01), 1, 0.8, 1),
+          ...[-0.14, -0.05, 0.05, 0.14].map((x) => box(0.08, 0.1, 0.06, x, y + 0.07, -0.16)), // ammo pouches
+          new THREE.CylinderGeometry(0.07, 0.07, 0.16, 8).translate(0.25, y + 0.03, 0.08), // canteen
+          box(0.12, 0.11, 0.04, -0.11, y + 0.4, -0.15, -0.08), // breast pockets
+          box(0.12, 0.11, 0.04, 0.11, y + 0.4, -0.15, -0.08),
+          ball(0.055, v(-0.1, 0.24, -0.17)), // grenade clipped to the webbing
+          box(0.05, 0.5, 0.03, -0.12, y + 0.35, -0.14, -0.08), // webbing straps
+          box(0.05, 0.5, 0.03, 0.12, y + 0.35, -0.14, -0.08),
+          // Pack with a rolled blanket on top, an entrenching tool strapped to the side and a radio aerial.
+          box(0.34, 0.34, 0.15, 0, y + 0.36, 0.21),
+          new THREE.CylinderGeometry(0.07, 0.07, 0.4, 8).rotateZ(Math.PI / 2).translate(0, y + 0.58, 0.22),
+          box(0.03, 0.3, 0.04, 0.2, y + 0.3, 0.22),
+          box(0.1, 0.12, 0.03, 0.2, y + 0.12, 0.22),
+          new THREE.CylinderGeometry(0.008, 0.008, 0.7, 4).translate(-0.12, y + 0.75, 0.24),
+          // Neck, face, helmet with goggles and a chin strap.
+          new THREE.CylinderGeometry(0.06, 0.07, 0.1, 8).translate(0, y + 0.6, 0),
+          ball(0.13, v(0, 0.68, 0), 1, 1.05, 1),
+          box(0.04, 0.06, 0.05, 0, y + 0.66, -0.13), // nose
+          ball(0.03, v(-0.13, 0.67, 0)), // ears
+          ball(0.03, v(0.13, 0.67, 0)),
+          helmet,
+          new THREE.CylinderGeometry(0.23, 0.25, 0.035, 16).translate(0, y + 0.72, 0.01), // flared brim
+          new THREE.TorusGeometry(0.2, 0.014, 4, 18).rotateX(Math.PI / 2).translate(0, y + 0.78, 0), // net band
+          ...[-0.07, 0.07].map((x) => new THREE.CylinderGeometry(0.052, 0.052, 0.03, 10).rotateX(Math.PI / 2).translate(x, y + 0.79, -0.19)), // goggles on the brim
+          box(0.18, 0.02, 0.02, 0, y + 0.79, -0.19),
+        ]
+      : spaceKit(y)),
+    ...(arms === 'cheer' ? cheeringArms(y) : arms === 'launcher' ? launcherArms(y) : arms in POSE_ARMS ? POSE_ARMS[arms as PoseArms](y) : [
       // Arms bent to hold the rifle: right hand on the grip, left under the fore-end.
       ...jointed(v(0.25, 0.53, 0.01), v(0.33, 0.36, -0.05), v(0.14, 0.44, -0.2), 0.065),
       ...jointed(v(-0.25, 0.53, 0.01), v(-0.18, 0.37, -0.34), v(0.1, 0.46, -0.58), 0.065),
@@ -184,6 +198,127 @@ function upperBody(y: number, arms: Arms = 'rifle'): THREE.BufferGeometry[] {
     ]),
   ];
 }
+
+/** A space suit's helmet, life-support pack with twin tanks, chest controls, hoses and ring joints (in place of the army kit). */
+function spaceKit(y: number): THREE.BufferGeometry[] {
+  const v = (x: number, yy: number, z: number) => v3(x, y + yy, z);
+  return [
+    new THREE.TorusGeometry(0.13, 0.035, 6, 16).rotateX(Math.PI / 2).translate(0, y + 0.58, 0), // neck ring
+    new THREE.SphereGeometry(0.255, 16, 12).translate(0, y + 0.75, 0), // bubble helmet
+    new THREE.CylinderGeometry(0.01, 0.01, 0.3, 4).translate(0.17, y + 1.0, 0.04), // helmet aerial
+    ball(0.025, v(0.17, 1.16, 0.04)),
+    box(0.1, 0.05, 0.05, -0.18, y + 0.9, -0.12), // helmet lamp
+    box(0.46, 0.52, 0.22, 0, y + 0.36, 0.24), // life-support pack
+    ...[-0.12, 0.12].map((x) => new THREE.CylinderGeometry(0.075, 0.075, 0.56, 10).translate(x, y + 0.36, 0.4)), // twin tanks
+    ...[-0.12, 0.12].map((x) => ball(0.075, v(x, 0.64, 0.4))),
+    new THREE.TorusGeometry(0.12, 0.02, 5, 12, Math.PI).rotateY(Math.PI / 2).translate(0.2, y + 0.55, -0.02), // hoses to the chest
+    new THREE.TorusGeometry(0.12, 0.02, 5, 12, Math.PI).rotateY(Math.PI / 2).translate(-0.2, y + 0.55, -0.02),
+    box(0.26, 0.16, 0.06, 0, y + 0.4, -0.17, -0.08), // chest control box
+    ...[-0.07, 0, 0.07].map((x) => ball(0.022, v(x, 0.42, -0.21))),
+    box(0.16, 0.05, 0.05, 0, y + 0.32, -0.17), // display strip
+    new THREE.TorusGeometry(0.235, 0.025, 5, 18).rotateX(Math.PI / 2).translate(0, y + 0.05, 0), // waist ring
+    ball(0.11, v(0.26, 0.54, 0.01)), // big shoulder joints
+    ball(0.11, v(-0.26, 0.54, 0.01)),
+  ];
+}
+
+/** The same cheering figure in a space suit: bulky boots, ringed ankles. */
+function spaceCheeringFigure(): THREE.BufferGeometry {
+  const frontAnkle = v3(-0.14, 0.13, -0.1);
+  const backAnkle = v3(0.14, 0.13, 0.08);
+  const ring = (at: V, r: number) => new THREE.TorusGeometry(r, 0.025, 5, 12).rotateX(Math.PI / 2).translate(at.x, at.y, at.z);
+  return mergeGeometries([
+    stand(),
+    ...boot(frontAnkle),
+    ...boot(backAnkle),
+    ring(v3(-0.14, 0.2, -0.1), 0.115),
+    ring(v3(0.14, 0.2, 0.08), 0.115),
+    ...jointed(frontAnkle, v3(-0.13, 0.53, -0.08), v3(-0.1, 0.93, -0.01), 0.11),
+    ...jointed(backAnkle, v3(0.13, 0.53, 0.06), v3(0.1, 0.93, 0.01), 0.11),
+    ball(0.125, v3(-0.13, 0.53, -0.11), 1, 1.1, 0.8),
+    ball(0.125, v3(0.13, 0.53, 0.03), 1, 1.1, 0.8),
+    ...upperBody(0.95, 'cheer', true),
+  ]);
+}
+
+/** The glossy dark visor on a space helmet (a second material, so it's its own mesh), for a figure whose hips are at height `hips`. */
+const visorGeometries = new Map<number, THREE.BufferGeometry>();
+function visorGeometry(hips: number): THREE.BufferGeometry {
+  let g = visorGeometries.get(hips);
+  if (!g) {
+    g = new THREE.SphereGeometry(0.2, 14, 10).scale(1, 0.78, 0.9).translate(0, hips + 0.76, -0.125);
+    visorGeometries.set(hips, g);
+  }
+  return g;
+}
+const visorMaterial = new THREE.MeshPhysicalMaterial({ color: 0x1b2a52, emissive: 0x0b1530, roughness: 0.08, metalness: 0.5, clearcoat: 1, clearcoatRoughness: 0.03 });
+
+type PoseArms = 'wave' | 'salute' | 'carry' | 'point' | 'flag';
+
+/** Where a carried crate's middle sits relative to the figure's stand (it's added as a separate mesh by whoever uses the 'carry' pose). */
+export const CARRY_CRATE_AT = v3(0, 1.38, -0.5);
+/** The flag pole in the 'flag' pose, relative to the stand: its foot and its top. */
+export const FLAG_POLE_AT = v3(0, 0, -0.42);
+
+/** An arm hanging down at the side. */
+function armDown(y: number, side: 1 | -1): THREE.BufferGeometry[] {
+  const v = (x: number, yy: number, z: number) => v3(x, y + yy, z);
+  return [...jointed(v(side * 0.25, 0.53, 0.01), v(side * 0.32, 0.33, 0), v(side * 0.28, 0.12, -0.05), 0.065), ball(0.06, v(side * 0.28, 0.12, -0.05))];
+}
+
+/** Arms for the other poses: one hand waving, a salute, carrying a crate, pointing the way, and planting a flag. */
+const POSE_ARMS: Record<PoseArms, (y: number) => THREE.BufferGeometry[]> = {
+  wave: (y) => {
+    const v = (x: number, yy: number, z: number) => v3(x, y + yy, z);
+    return [
+      ...jointed(v(0.25, 0.53, 0.01), v(0.45, 0.72, -0.02), v(0.5, 1.0, -0.04), 0.065),
+      ball(0.075, v(0.5, 1.03, -0.04), 1.1, 1.2, 0.5), // an open hand
+      ...armDown(y, -1),
+      box(0.07, 0.1, 0.55, -0.1, y + 0.45, 0.34, 0, 0), // rifle slung on the back
+    ];
+  },
+  salute: (y) => {
+    const v = (x: number, yy: number, z: number) => v3(x, y + yy, z);
+    return [
+      ...jointed(v(0.25, 0.53, 0.01), v(0.42, 0.66, 0), v(0.13, 0.88, -0.17), 0.065),
+      box(0.12, 0.03, 0.1, 0.13, y + 0.9, -0.17, 0.2), // flat hand at the brim
+      ...armDown(y, -1),
+      box(0.07, 0.1, 0.55, -0.1, y + 0.45, 0.34), // rifle slung on the back
+    ];
+  },
+  carry: (y) => {
+    const v = (x: number, yy: number, z: number) => v3(x, y + yy, z);
+    return [
+      ...jointed(v(0.25, 0.53, 0.01), v(0.34, 0.36, -0.22), v(0.3, 0.44, -0.55), 0.065),
+      ...jointed(v(-0.25, 0.53, 0.01), v(-0.34, 0.36, -0.22), v(-0.3, 0.44, -0.55), 0.065),
+      ball(0.06, v(0.3, 0.44, -0.55)),
+      ball(0.06, v(-0.3, 0.44, -0.55)),
+    ];
+  },
+  point: (y) => {
+    const v = (x: number, yy: number, z: number) => v3(x, y + yy, z);
+    return [
+      ...jointed(v(0.25, 0.53, 0.01), v(0.34, 0.58, -0.24), v(0.36, 0.64, -0.52), 0.065),
+      limb(v(0.36, 0.64, -0.52), v(0.37, 0.66, -0.7), 0.025), // pointing finger
+      ball(0.06, v(0.36, 0.64, -0.52)),
+      ...jointed(v(-0.25, 0.53, 0.01), v(-0.36, 0.38, -0.02), v(-0.2, 0.28, -0.04), 0.065), // other hand on the hip
+      ball(0.06, v(-0.2, 0.28, -0.04)),
+      box(0.07, 0.1, 0.55, -0.1, y + 0.45, 0.34),
+    ];
+  },
+  flag: (y) => {
+    const v = (x: number, yy: number, z: number) => v3(x, y + yy, z);
+    const pole = FLAG_POLE_AT;
+    return [
+      ...jointed(v(0.25, 0.53, 0.01), v(0.3, 0.4, -0.2), v3(pole.x + 0.06, y + 0.55, pole.z), 0.065),
+      ...jointed(v(-0.25, 0.53, 0.01), v(-0.3, 0.3, -0.2), v3(pole.x - 0.06, y + 0.3, pole.z), 0.065),
+      ball(0.06, v3(pole.x + 0.06, y + 0.55, pole.z)),
+      ball(0.06, v3(pole.x - 0.06, y + 0.3, pole.z)),
+      new THREE.CylinderGeometry(0.025, 0.03, 2.3, 6).translate(pole.x, 1.15, pole.z), // the pole, planted in the ground
+      box(0.55, 0.36, 0.02, pole.x + 0.3, 2.1, pole.z), // the flag
+    ];
+  },
+};
 
 /** Both arms flung up in a V, the rifle held high across the hands: hooray! */
 function cheeringArms(y: number): THREE.BufferGeometry[] {
@@ -235,16 +370,20 @@ function stand(): THREE.BufferGeometry {
   return base;
 }
 
-function standingFigure(arms: Arms = 'rifle'): THREE.BufferGeometry {
+function standingFigure(arms: Arms = 'rifle', suit = false): THREE.BufferGeometry {
   const frontAnkle = v3(-0.12, 0.13, -0.24);
   const backAnkle = v3(0.12, 0.13, 0.22);
+  const r = suit ? 0.11 : 0.095;
   return mergeGeometries([
     stand(),
     ...boot(frontAnkle),
     ...boot(backAnkle),
-    ...jointed(frontAnkle, v3(-0.12, 0.52, -0.15), v3(-0.1, 0.93, -0.02), 0.095),
-    ...jointed(backAnkle, v3(0.11, 0.53, 0.14), v3(0.1, 0.93, 0.02), 0.095),
-    ...upperBody(0.95, arms),
+    ...(suit ? [frontAnkle, backAnkle].map((a) => new THREE.TorusGeometry(0.115, 0.025, 5, 12).rotateX(Math.PI / 2).translate(a.x, a.y + 0.07, a.z)) : []),
+    ...jointed(frontAnkle, v3(-0.12, 0.52, -0.15), v3(-0.1, 0.93, -0.02), r),
+    ...jointed(backAnkle, v3(0.11, 0.53, 0.14), v3(0.1, 0.93, 0.02), r),
+    ball(suit ? 0.125 : 0.115, v3(-0.12, 0.52, -0.18), 1, 1.1, 0.8), // knee pads
+    ball(suit ? 0.125 : 0.115, v3(0.11, 0.53, 0.11), 1, 1.1, 0.8),
+    ...upperBody(0.95, arms, suit),
   ]);
 }
 
@@ -262,17 +401,18 @@ function cheeringFigure(): THREE.BufferGeometry {
   ]);
 }
 
-function kneelingFigure(): THREE.BufferGeometry {
+function kneelingFigure(suit = false): THREE.BufferGeometry {
   const frontAnkle = v3(-0.12, 0.13, -0.32);
+  const r = suit ? 0.11 : 0.095;
   return mergeGeometries([
     stand(),
     ...boot(frontAnkle),
-    ...jointed(frontAnkle, v3(-0.12, 0.52, -0.3), v3(-0.1, 0.58, 0.04), 0.095), // front leg, knee up
-    limb(v3(0.12, 0.1, 0.05), v3(0.1, 0.58, 0.05), 0.095), // thigh down to the kneeling knee
-    ball(0.09, v3(0.12, 0.1, 0.05)),
-    limb(v3(0.12, 0.1, 0.05), v3(0.12, 0.12, 0.42), 0.085), // shin along the ground
+    ...jointed(frontAnkle, v3(-0.12, 0.52, -0.3), v3(-0.1, 0.58, 0.04), r), // front leg, knee up
+    limb(v3(0.12, 0.1, 0.05), v3(0.1, 0.58, 0.05), r), // thigh down to the kneeling knee
+    ball(r * 0.95, v3(0.12, 0.1, 0.05)),
+    limb(v3(0.12, 0.1, 0.05), v3(0.12, 0.12, 0.42), r * 0.9), // shin along the ground
     box(0.14, 0.1, 0.24, 0.12, 0.11, 0.55, -1.2), // boot, toe down
-    ...upperBody(0.6),
+    ...upperBody(0.6, 'rifle', suit),
   ]);
 }
 
@@ -382,6 +522,8 @@ function standingKnight(longbow = false, handsUp = false): THREE.BufferGeometry 
     ...boot(backAnkle),
     ...jointed(frontAnkle, v3(-0.12, 0.52, -0.15), v3(-0.1, 0.93, -0.02), 0.095),
     ...jointed(backAnkle, v3(0.11, 0.53, 0.14), v3(0.1, 0.93, 0.02), 0.095),
+    ball(0.115, v3(-0.12, 0.52, -0.18), 1, 1.1, 0.8), // knee pads
+    ball(0.115, v3(0.11, 0.53, 0.11), 1, 1.1, 0.8),
     ball(0.1, v3(-0.12, 0.52, -0.17), 1, 0.8, 1), // knee cops
     ball(0.1, v3(0.11, 0.53, 0.12), 1, 0.8, 1),
     ...knightUpperBody(0.95, longbow, handsUp),
@@ -476,7 +618,6 @@ export function createFigureMesh(pose: 0 | 1, color: number): THREE.Mesh {
   return mesh;
 }
 
-let cheering: THREE.BufferGeometry | null = null;
 
 let archerFigure: THREE.BufferGeometry | null = null;
 
@@ -494,9 +635,32 @@ export function createSurrenderedKnightMesh(color: number): THREE.Mesh {
   return mesh;
 }
 
-/** A cheering army man (arms up, rifle overhead) in the given plastic colour, standing on his stand at y 0. */
-export function createCheeringFigure(color: number): THREE.Mesh {
-  const mesh = new THREE.Mesh((cheering ??= cheeringFigure()), plastic(color));
+/** A cheering army man (arms up, rifle overhead) in the given plastic colour, standing on his stand at y 0; `space` puts him in a space suit. */
+export function createCheeringFigure(color: number, space = false): THREE.Mesh {
+  return createPoseFigure(color, 'cheer', space);
+}
+
+/** Every pose an army man can strike. */
+export type Pose = 'stand' | 'kneel' | 'cheer' | 'wave' | 'salute' | 'carry' | 'point' | 'flag';
+
+const poseGeometries = new Map<string, THREE.BufferGeometry>();
+
+/**
+ * An army man in a pose, in the given plastic colour, standing on his stand at y 0; `space` puts
+ * him in a space suit. `carry` and `flag` leave out the crate and (for flag) nothing else: see
+ * `CARRY_CRATE_AT` for where a crate goes.
+ */
+export function createPoseFigure(color: number, pose: Pose, space = false): THREE.Mesh {
+  const key = `${pose}${space ? '-space' : ''}`;
+  let geo = poseGeometries.get(key);
+  if (!geo) {
+    if (pose === 'kneel') geo = kneelingFigure(space);
+    else if (pose === 'cheer') geo = space ? spaceCheeringFigure() : cheeringFigure();
+    else geo = standingFigure(pose === 'stand' ? 'rifle' : pose, space);
+    poseGeometries.set(key, geo);
+  }
+  const mesh = new THREE.Mesh(geo, plastic(color));
+  if (space) mesh.add(new THREE.Mesh(visorGeometry(pose === 'kneel' ? 0.6 : 0.95), visorMaterial));
   mesh.castShadow = true;
   return mesh;
 }

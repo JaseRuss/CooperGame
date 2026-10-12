@@ -3,7 +3,7 @@ import { PartBuilder } from '../utils/modelKit';
 import { plastic, shade, ARMY_GREEN, ARMY_RED, ARMY_TAN, ARMY_BLUE } from '../utils/plastic';
 import { mulberry32 } from '../utils/rng';
 import { Tank } from '../entities/Tank';
-import { createCheeringFigure } from '../entities/Soldier';
+import { createCheeringFigure, createPoseFigure } from '../entities/Soldier';
 import { buildJeep, buildChopperParts } from './Vehicles';
 import { buildRocket } from './MoonRocket';
 import { ImpactEffects } from '../combat/ImpactEffects';
@@ -13,10 +13,10 @@ import { ImpactEffects } from '../combat/ImpactEffects';
 // its own little scene, drawn instead of the world once the rocket gets there.
 
 const ARMIES = [ARMY_GREEN, ARMY_RED, ARMY_TAN, ARMY_BLUE];
-const MOON_GREY = 0xa6a5a2;
-const WHITE = 0xeeebe3;
-const STEEL = 0x9aa0a8;
-const DARK = 0x3a3e46;
+export const MOON_GREY = 0xa6a5a2;
+export const WHITE = 0xeeebe3;
+export const STEEL = 0x9aa0a8;
+export const DARK = 0x3a3e46;
 /** Where the camera ends up looking: the crowd in front of the banner. */
 const FOCUS = new THREE.Vector3(0, 6.5, -10);
 /** The Earth, low in the sky over the left of the base as the camera sees it (under the words on screen). */
@@ -59,7 +59,7 @@ function groundHeight(x: number, z: number): number {
 }
 
 /** A blue-and-green toy Earth with swirly clouds and white poles. */
-function earthTexture(): THREE.CanvasTexture {
+export function earthTexture(): THREE.CanvasTexture {
   const c = document.createElement('canvas');
   c.width = 512;
   c.height = 256;
@@ -100,7 +100,7 @@ function earthTexture(): THREE.CanvasTexture {
 }
 
 /** The banner: red and white stripes, a blue canton full of stars, and the words across it. */
-function bannerTexture(): THREE.CanvasTexture {
+export function bannerTexture(): THREE.CanvasTexture {
   const c = document.createElement('canvas');
   c.width = 2048;
   c.height = 340;
@@ -148,7 +148,7 @@ function bannerTexture(): THREE.CanvasTexture {
 }
 
 /** A green army flag: a white star on green. */
-function flagTexture(): THREE.CanvasTexture {
+export function flagTexture(): THREE.CanvasTexture {
   const c = document.createElement('canvas');
   c.width = 192;
   c.height = 120;
@@ -169,7 +169,7 @@ function flagTexture(): THREE.CanvasTexture {
 }
 
 /** A panelled white dome on a grey ring, with an airlock porch facing +Z (rotate to aim it). */
-function dome(p: PartBuilder, x: number, z: number, r: number, porchYaw: number): void {
+export function dome(p: PartBuilder, x: number, z: number, r: number, porchYaw: number): void {
   const white = plastic(WHITE);
   const steel = plastic(STEEL);
   const dark = plastic(DARK);
@@ -202,7 +202,7 @@ function dome(p: PartBuilder, x: number, z: number, r: number, porchYaw: number)
 }
 
 /** A covered walkway tube between two points on the ground. */
-function tube(p: PartBuilder, a: THREE.Vector2, b: THREE.Vector2): void {
+export function tube(p: PartBuilder, a: THREE.Vector2, b: THREE.Vector2): void {
   const len = a.distanceTo(b);
   const yaw = Math.atan2(b.x - a.x, b.y - a.y);
   const mx = (a.x + b.x) / 2;
@@ -349,7 +349,7 @@ export class MoonBase {
     // The party: army men of every colour, jumping for joy in the low gravity.
     for (let i = 0; i < 52; i++) {
       const color = ARMIES[i % 4];
-      const mesh = createCheeringFigure(color);
+      const mesh = i % 5 === 2 ? createPoseFigure(color, 'wave', true) : i % 7 === 3 ? createPoseFigure(color, 'point', true) : createCheeringFigure(color, true);
       const x = (this.rng() - 0.5) * 34;
       const z = -7 + this.rng() * 20;
       mesh.position.set(x, 0, z);
@@ -365,7 +365,7 @@ export class MoonBase {
       });
     }
     // The general on the stage, cheering too (a little more dignified).
-    const general = createCheeringFigure(shade(ARMY_GREEN, 1.35));
+    const general = createCheeringFigure(shade(ARMY_GREEN, 1.35), true);
     general.scale.setScalar(1.15);
     general.position.set(-1.2, 1.2, -14.5);
     scene.add(general);

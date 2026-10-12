@@ -61,7 +61,7 @@ const NIGHT_SONG: Song = {
   seed: 29,
 };
 
-const BASE_SONGS: Record<Exclude<Mission, 6>, Song> = {
+const BASE_SONGS: Record<Exclude<Mission, 6 | 7>, Song> = {
   // Day Battle: a jaunty toy-soldier march in C major, with a bugle playing the tune.
   1: {
     bpm: 112,
@@ -158,8 +158,28 @@ const BASE_SONGS: Record<Exclude<Mission, 6>, Song> = {
   },
 };
 
+/** The Moon epilogue: a slow, floaty tune in F major, soft pads and a flute drifting over a bouncing bass. */
+const MOON_SONG: Song = {
+  bpm: 84,
+  chords: [[C + 5, 'maj'], [C + 5, 'maj'], [C + 2, 'min'], [C + 7, 'maj'], [C + 5, 'maj'], [C + 10, 'maj'], [C + 2, 'min'], [C + 7, 'maj']],
+  drums: {
+    kick: ['x.......x.......', 'x.......x.....x.'],
+    hat: ['..o...o...o...o.'],
+    tom: ['................', '................', '................', '..............o.'],
+  },
+  bass: 'r.......o...f...',
+  bassWave: 'sine',
+  lead: 'flute',
+  rhythm: ['x.......x.......', '..x.....x...x...', 'x.....x.........', '....x.......x...'],
+  key: C + 5,
+  tuneNotes: [0, 2, 4, 7, 9, 12, 14],
+  tuneOctave: 2,
+  pad: true,
+  seed: 131,
+};
+
 /** The siege bonus level plays the castle jig. */
-const SONGS: Record<Mission, Song> = { ...BASE_SONGS, 6: BASE_SONGS[3] };
+const SONGS: Record<Mission, Song> = { ...BASE_SONGS, 6: BASE_SONGS[3], 7: MOON_SONG };
 
 const LOOKAHEAD = 0.15; // seconds of notes scheduled ahead
 /** The band's overall level, leaving headroom for the sound effects on top. */

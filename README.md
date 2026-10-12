@@ -467,6 +467,20 @@ click, creep with RB / Shift, Y / C swaps to first person and Back / R goes back
 checkpoint. It's in the level select as **5 · Bonus: Prison Break**. The plan is in
 `docs/plans/prison-break.md`.
 
+## Epilogue: Moon Buggy
+
+The zombie mission's happy ending now leads on (press A / Enter on the "Mission Accomplished"
+screen), and it's in the level select as **7 · Epilogue: Moon Buggy**. The armies made it to the Moon;
+you drive a moon buggy with low gravity (a jump keeps you up for about five seconds, and a hard
+landing can shake a crate off the bed).
+
+- Drive into an army's coloured **supply bay** at the main base to load four of its crates, then
+  follow the beam and the **dirt road** to that army's camp and into the glowing ring. Crates hop
+  off onto the pallet; the third one starts a time-lapse of that army's Moon base going up.
+- Controls: left stick / W A S D drive, A / Space / RT jumps, RB / Shift handbrake, Y / C camera,
+  Back / R back to the main base. In the air W / S tip the nose and A / D spin.
+- Code is in `src/moon/` (`MoonGame` is the level, `Buggy` the physics, `Camp` the build sequence).
+
 ## Bonus: Under Siege
 
 A second bonus level, in the level select as **6 · Bonus: Under Siege**: the castle mission with

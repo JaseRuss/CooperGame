@@ -2206,6 +2206,7 @@ export class Game {
         4: '',
         5: '',
         6: 'The Great Castle has fallen! The siege is over and the prisoners are free.',
+        7: '',
       };
       const bombed = MISSION === 1 && this.tanker?.active;
       this.hud.showVictory(bombed ? 'The bomb tanker blew the Fortress sky-high! The toy box is saved!' : message[MISSION], nextMission ? '' : 'Keep driving around and enjoy it!');
@@ -2534,10 +2535,10 @@ export class Game {
     }
     if (this.ending) {
       this.gameOverTime += dt;
-      const retry = this.ending.happy ? 'Press A or Enter to play again' : 'Press A or Enter to try again';
+      const retry = this.ending.happy ? 'Press A or Enter for the Moon epilogue' : 'Press A or Enter to try again';
       const ready = this.ending.words && this.ending.timer > (this.ending.happy ? 5 : OVERRUN_WORDS + RETRY_DELAY);
       this.hud.setVictoryFooter(ready ? `${retry} · Start / M for the level select` : '');
-      if (confirm && ready) startMission(MISSION);
+      if (confirm && ready) startMission(this.ending.happy ? 7 : MISSION);
       return;
     }
     this.survived += dt;
