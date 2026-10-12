@@ -635,6 +635,13 @@ export function createSurrenderedKnightMesh(color: number): THREE.Mesh {
   return mesh;
 }
 
+/** A toy zombie on its stand in the given plastic colour (`lurch` leans it over with one arm clawing high), standing at y 0 and facing -Z. */
+export function createZombieFigure(color: number, lurch = false): THREE.Mesh {
+  const mesh = new THREE.Mesh(ZOMBIE_FIGURES[lurch ? 1 : 0], plastic(color));
+  mesh.castShadow = true;
+  return mesh;
+}
+
 /** A cheering army man (arms up, rifle overhead) in the given plastic colour, standing on his stand at y 0; `space` puts him in a space suit. */
 export function createCheeringFigure(color: number, space = false): THREE.Mesh {
   return createPoseFigure(color, 'cheer', space);

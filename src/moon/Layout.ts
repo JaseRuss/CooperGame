@@ -74,3 +74,54 @@ export function roadTo(f: Faction, index: number): [number, number][] {
 export function campZones(): FlatZone[] {
   return FACTIONS.map((f) => ({ x: f.camp.x, z: f.camp.z, r: CAMP_R }));
 }
+
+// ---------- the Weird Side ----------
+
+/**
+ * The valley over the northern mountains that opens once every army has its Moon base: an ellipse
+ * of flat-ish, pastel ground ringed by mountains, full of odd things to find.
+ */
+export const VALLEY = { x: 0, z: -1130, rx: 450, rz: 280 };
+/** The canyon road through the mountains: from the plain's north edge (z `from`) into the valley (z `to`). */
+export const CANYON = { from: -540, to: -890, half: 15 };
+/** The ring road round the middle of the valley. */
+export const LOOP = { x: 0, z: -1130, rx: 270, rz: 160 };
+/** Where the new road leaves the main base: behind the big dome. */
+export const NORTH_START = { x: 0, z: -64 };
+
+/** The canyon's middle line: a lazy S, so you can't see down it into the valley from the plain. */
+export function canyonX(z: number): number {
+  const t = THREE.MathUtils.clamp((CANYON.from - z) / (CANYON.from - CANYON.to), 0, 1);
+  return 30 * Math.sin(t * Math.PI * 2);
+}
+
+/** How far out of the valley (x, z) is: under 1 inside, 1 on its rim. */
+export function valleyQ(x: number, z: number, shrink = 0): number {
+  return Math.hypot((x - VALLEY.x) / (VALLEY.rx - shrink), (z - VALLEY.z) / (VALLEY.rz - shrink));
+}
+
+/** 1 where the mountains are carved away for the canyon and the valley, 0 where they stand, in between on their slopes. */
+export function openness(x: number, z: number): number {
+  const smooth = THREE.MathUtils.smoothstep;
+  let open = 1 - smooth((valleyQ(x, z) - 1) * Math.min(VALLEY.rx, VALLEY.rz), 0, 110);
+  if (z < CANYON.from + 40 && z > CANYON.to - 60) open = Math.max(open, 1 - smooth(Math.abs(x - canyonX(z)), CANYON.half + 3, CANYON.half + 45));
+  return open;
+}
+
+/** The new road: out the back of the main base, north across the plain, through the canyon and down to the ring road. */
+export function northRoad(): [number, number][] {
+  const pts: [number, number][] = [[NORTH_START.x, NORTH_START.z], [0, -110], [-22, -220], [16, -350], [-6, -460]];
+  for (let z = CANYON.from; z >= CANYON.to; z -= 35) pts.push([canyonX(z), z]);
+  pts.push([0, -930], [0, LOOP.z + LOOP.rz]);
+  return pts;
+}
+
+/** The ring road round the valley, as a closed loop (its last point is its first). */
+export function valleyLoop(): [number, number][] {
+  const pts: [number, number][] = [];
+  for (let i = 0; i <= 24; i++) {
+    const a = Math.PI / 2 + (i / 24) * Math.PI * 2;
+    pts.push([LOOP.x + Math.cos(a) * LOOP.rx, LOOP.z + Math.sin(a) * LOOP.rz]);
+  }
+  return pts;
+}

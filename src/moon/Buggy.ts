@@ -3,7 +3,7 @@ import { PartBuilder } from '../utils/modelKit';
 import { plastic, shade, ARMY_GREEN } from '../utils/plastic';
 import { createCheeringFigure } from '../entities/Soldier';
 import { damp, clamp } from '../utils/math';
-import { MoonTerrain, PLAY_HALF } from './MoonTerrain';
+import type { MoonTerrain } from './MoonTerrain';
 
 /**
  * Moon gravity is about a sixth of Earth's (1.6 m/s²). The buggy's is a bit stronger than that so
@@ -205,6 +205,20 @@ export class Buggy {
     this.applyPose();
   }
 
+  /** Moves it to (x, z) facing `yaw`, keeping its speed but turned to match (for doors that lead somewhere else). */
+  teleport(x: number, z: number, yaw: number, terrain: MoonTerrain): void {
+    const turn = yaw - this.yaw;
+    const c = Math.cos(turn);
+    const s = Math.sin(turn);
+    const vx = this.vel.x;
+    this.vel.x = vx * c + this.vel.z * s;
+    this.vel.z = -vx * s + this.vel.z * c;
+    const lift = this.pos.y - terrain.heightAt(this.pos.x, this.pos.z);
+    this.pos.set(x, terrain.heightAt(x, z) + Math.max(lift, RIDE), z);
+    this.yaw = yaw;
+    this.applyPose();
+  }
+
   /** Loads (or empties) the bed: `count` crates of an army's colour. */
   setCargo(color: number, count: number): void {
     for (const c of this.crates) this.root.remove(c);
@@ -352,16 +366,14 @@ export class Buggy {
         ev.bumped = Math.max(ev.bumped, -vn);
       }
     }
-    // The edge of the plain.
-    for (const axis of ['x', 'z'] as const) {
-      const limit = PLAY_HALF - 6;
-      if (Math.abs(this.pos[axis]) > limit) {
-        const sign = Math.sign(this.pos[axis]);
-        this.pos[axis] = sign * limit;
-        if (this.vel[axis] * sign > 0) {
-          ev.bumped = Math.max(ev.bumped, Math.abs(this.vel[axis]));
-          this.vel[axis] *= -0.4;
-        }
+    // The edge of the plain (and of the canyon and valley, once they're open).
+    const out = terrain.keepInside(this.pos);
+    if (out) {
+      const vn = this.vel.x * out.x + this.vel.z * out.y;
+      if (vn > 0) {
+        ev.bumped = Math.max(ev.bumped, vn);
+        this.vel.x -= 1.4 * vn * out.x;
+        this.vel.z -= 1.4 * vn * out.y;
       }
     }
 

@@ -22,7 +22,7 @@ export const TERRAIN_HEIGHT = 18;
  * bonus level, "Under Siege": the castle mission with surrendering knights, prisons and a wagon
  * that ferries prisoners (see `docs/plans/under-siege.md`). Mission 7 is the epilogue after the
  * zombie mission: a moon buggy run carrying supplies from the main Moon base to the four armies'
- * encampments (see `src/moon/`).
+ * encampments, then a valley of odd things to find over the mountains (see `src/moon/`).
  */
 export type Mission = 1 | 2 | 3 | 4 | 5 | 6 | 7;
 
@@ -34,7 +34,7 @@ export const MISSIONS: { mission: Mission; title: string; blurb: string; bonus?:
   { mission: 4, title: 'Zombie Attack', blurb: 'Every army together at the Fortress against wave after wave of zombies. How long can you hold out?' },
   { mission: 5, title: 'Bonus: Prison Break', blurb: "On foot, at night! Break out of the tan army's prison, steal the gear for a raft, slip past the search helicopters across the sea and sneak home as the dawn breaks.", bonus: true },
   { mission: 6, title: 'Bonus: Under Siege', blurb: 'Castles with villages and archer towers. Beaten knights surrender: a wagon takes them to our prisons, while ours are locked up in theirs.', bonus: true },
-  { mission: 7, title: 'Epilogue: Moon Buggy', blurb: "The armies made it to the Moon! Drive supplies from the main base to each army's camp in a jumping moon buggy, and watch their Moon bases go up.", bonus: true },
+  { mission: 7, title: 'Epilogue: Moon Buggy', blurb: "The armies made it to the Moon! Drive supplies from the main base to each army's camp in a jumping moon buggy and watch their Moon bases go up. Then a road opens over the mountains to the Weird Side…", bonus: true },
 ];
 
 const missionParam = Number(new URLSearchParams(window.location.search).get('mission'));
