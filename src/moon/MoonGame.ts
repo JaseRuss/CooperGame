@@ -20,6 +20,8 @@ import { RoadWorks, type RoadFx } from './RoadWorks';
 import { WonderValley, type WonderFx } from './wonders/Wonders';
 import { WONDERS, wonderZones } from './wonders';
 import type { WonderDef } from './wonders/types';
+import { Maze } from './Maze';
+import { SkiRobot, type SkiFx } from './SkiRobot';
 
 const SHADOW_HALF = 60;
 /** Where the sun is: low in the sky, so everything throws a long shadow. */
@@ -105,6 +107,7 @@ export class MoonGame {
   private effects!: ImpactEffects;
   private camps: Camp[] = [];
   private wonders!: WonderValley;
+  private skier!: SkiRobot;
   /** The new roads (to the Weird Side and round it), laid during the road-building scene. */
   private laterRoads: THREE.Mesh[] = [];
   private roadWorks!: RoadWorks;
@@ -194,6 +197,11 @@ export class MoonGame {
     this.wonders = new WonderValley(this.scene, this.terrain, WONDERS);
     const crystals = this.terrain.buildCrystals([]);
     this.wonders.root.add(crystals);
+    // The maze goes up after the tableaux, so its walls keep clear of them.
+    const maze = new Maze(this.terrain, wonderZones());
+    this.wonders.root.add(maze.group);
+    this.skier = new SkiRobot(this.terrain);
+    this.wonders.root.add(this.skier.root);
     this.buildSky();
     this.dust = new Dust(this.scene);
     this.effects = new ImpactEffects(this.scene);
@@ -204,6 +212,7 @@ export class MoonGame {
     this.scene.add(this.buggy.root);
     this.map = new MoonMap(this.terrain.paths, this.terrain.shownRoads);
     this.map.data.base = { x: 0, z: -30 };
+    this.map.data.walls = maze.runs;
     this.camFocus.copy(this.buggy.pos);
     this.camYaw = this.buggy.yaw;
 
@@ -212,7 +221,8 @@ export class MoonGame {
       legend:
         '<span><i style="background:#eeebe3"></i>Main base (load up here)</span><span><i style="background:#b8392e"></i>An army\'s camp: a square until it\'s built, then a dome</span>' +
         '<span><i style="background:#b09a6a"></i>Dirt roads to each camp</span><span><i style="background:#ffffff"></i>You, in the buggy</span>' +
-        '<span><i style="background:#8a4ad8"></i>Something odd to find (later…)</span><span><i style="background:#ffd24a"></i>Found it!</span>',
+        '<span><i style="background:#8a4ad8"></i>Something odd to find (later…)</span><span><i style="background:#ffd24a"></i>Found it!</span>' +
+        '<span><i style="background:#f4a6c0"></i>Maze walls</span><span><i style="background:#15121c"></i>Not explored yet</span>',
     });
     this.hud.setSettings(this.settings, (s) => {
       this.settings = s;
@@ -548,6 +558,7 @@ export class MoonGame {
     this.dust.update(dt, (x, z) => this.terrain.heightAt(x, z));
     this.base.update(dt);
     this.wonders.update(dt, this.buggy, this.wonderFx);
+    this.skier.update(dt, this.buggy.pos, this.skiFx);
     for (const c of this.camps) c.update(dt, 999);
     if (!done) return;
     // The road's open: the buggy's waiting at the start of it.
@@ -574,6 +585,11 @@ export class MoonGame {
     this.camFocus.copy(this.buggy.pos);
     this.hud.showBanner('THE WEIRD SIDE OF THE MOON', 'Follow the new road north over the mountains and see what you can find');
   }
+
+  private readonly skiFx: SkiFx = {
+    say: (text, color) => this.hud.showCallout(text, color),
+    dust: (at, count, speed) => this.dust.burst(at, count, speed, 0.5),
+  };
 
   private readonly wonderFx: WonderFx = {
     say: (text, color) => this.hud.showCallout(text, color),
@@ -656,6 +672,7 @@ export class MoonGame {
     for (const c of this.camps) c.update(dt, near(c));
     this.base.update(dt);
     this.wonders.update(dt, b, this.wonderFx);
+    if (this.terrain.weirdOpen) this.skier.update(dt, b.pos, this.skiFx);
     const inValley = this.terrain.weirdOpen && valleyQ(b.pos.x, b.pos.z) < 1;
     if (inValley !== this.inValley) {
       this.inValley = inValley;
@@ -752,6 +769,7 @@ export class MoonGame {
     d.camps = this.camps.map((c) => ({ x: c.center.x, z: c.center.z, color: c.faction.color, built: c.built, delivered: c.delivered, need: CRATES_NEEDED }));
     d.crates = this.loose.filter((c) => !c.to).map((c) => ({ x: c.mesh.position.x, z: c.mesh.position.z, color: c.color }));
     d.wonders = this.wonders.mapPoints();
+    if (this.terrain.weirdOpen) this.map.reveal(b.pos.x, b.pos.z);
     this.mapView = this.map.view({ ...NO_MAP, playerX: b.pos.x, playerZ: b.pos.z, playerYaw: b.yaw });
   }
 
@@ -991,6 +1009,7 @@ export class MoonGame {
       stats: this.stats,
       camera: this.camera,
       roadWorks: this.roadWorks,
+      skier: this.skier,
       state: () => ({ building: !!this.building, roadWorks: this.roadWorks.playing, built: this.camps.map((c) => c.built), delivered: this.camps.map((c) => c.delivered), cargo: this.buggy.cargo, found: this.wonders.foundCount }),
     };
   }

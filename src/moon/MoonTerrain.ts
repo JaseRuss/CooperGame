@@ -378,7 +378,26 @@ export class MoonTerrain {
     }
     geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
     geo.computeVertexNormals();
-    const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, flatShading: true }));
+    // The plain is faceted like the rest of the toys, but the valley's pale dust shows every facet as a
+    // blocky patch under the low sun, so its triangles are drawn smooth: two groups, one material each.
+    const index = geo.index as THREE.BufferAttribute;
+    const faceted: number[] = [];
+    const soft: number[] = [];
+    for (let i = 0; i < index.count; i += 3) {
+      const a = index.getX(i);
+      const b = index.getX(i + 1);
+      const c = index.getX(i + 2);
+      const x = (pos.getX(a) + pos.getX(b) + pos.getX(c)) / 3;
+      const z = (pos.getZ(a) + pos.getZ(b) + pos.getZ(c)) / 3;
+      (z < CANYON.to + 30 && valleyQ(x, z) < 1.45 ? soft : faceted).push(a, b, c);
+    }
+    geo.setIndex(faceted.concat(soft));
+    geo.addGroup(0, faceted.length, 0);
+    geo.addGroup(faceted.length, soft.length, 1);
+    const mesh = new THREE.Mesh(geo, [
+      new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, flatShading: true }),
+      new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1 }),
+    ]);
     mesh.receiveShadow = true;
     return mesh;
   }
