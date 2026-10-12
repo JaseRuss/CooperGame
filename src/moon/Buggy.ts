@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { PartBuilder } from '../utils/modelKit';
+import { PartBuilder, loftGeometry, tubeX, tubeZ } from '../utils/modelKit';
 import { plastic, shade, ARMY_GREEN } from '../utils/plastic';
 import { createCheeringFigure } from '../entities/Soldier';
 import { damp, clamp } from '../utils/math';
@@ -79,8 +79,8 @@ interface Wheel {
 }
 
 /**
- * The moon buggy: a toy rover with four fat wheels, an army man at the wheel waving, a roll bar, a
- * dish and a flat bed behind for the supply crates. Its physics are hand-rolled: soft springs, slidey
+ * The moon buggy: a toy rover with four balloon tyres under mudguards, a rounded hood behind a bull
+ * bar, two army men cheering in a roll cage, a dish, and a railed bed behind for the supply crates. Its physics are hand-rolled: soft springs, slidey
  * grip and a jump that takes several seconds to come down.
  */
 export class Buggy {
@@ -110,42 +110,128 @@ export class Buggy {
   constructor() {
     const g = this.root;
     const p = new PartBuilder();
-    const frame = plastic(0x5b6068);
+    const frame = plastic(0x4a4e56);
     const body = plastic(ARMY_GREEN);
     const dark = plastic(shade(ARMY_GREEN, 0.6));
     const steel = plastic(0xaeb4bc);
     const seat = plastic(0x2f3238);
     const white = plastic(0xf2eee2);
+    const orange = plastic(0xf2a21e);
+    const gold = new THREE.MeshStandardMaterial({ color: 0xe0ae34, metalness: 0.75, roughness: 0.38, flatShading: true });
     const lamp = new THREE.MeshStandardMaterial({ color: 0xfff3c0, emissive: 0xffe9a0, emissiveIntensity: 1.4 });
+    const tail = new THREE.MeshStandardMaterial({ color: 0xff3b2e, emissive: 0xff2010, emissiveIntensity: 1.2 });
+    const glass = new THREE.MeshPhysicalMaterial({ color: 0xcfe8ff, transparent: true, opacity: 0.28, roughness: 0.05, clearcoat: 1, depthWrite: false });
+    const v = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
 
-    p.add(new THREE.BoxGeometry(1.5, 0.28, 4.3), frame, 0, -0.16, 0);
-    // Hood and the front bumper.
-    p.add(new THREE.BoxGeometry(1.7, 0.5, 1.45), body, 0, 0.12, 1.35);
-    p.add(new THREE.BoxGeometry(1.76, 0.24, 0.3), dark, 0, -0.04, 2.2);
-    for (const x of [-0.5, 0.5]) p.add(new THREE.SphereGeometry(0.17, 10, 8), lamp, x, 0.2, 2.1);
-    // Seats, two side by side, backs to the rear.
-    for (const x of [-0.42, 0.42]) {
-      p.add(new THREE.BoxGeometry(0.7, 0.2, 0.7), seat, x, 0.36, 0.0);
-      p.add(new THREE.BoxGeometry(0.7, 0.62, 0.16), seat, x, 0.66, -0.4);
+    // The chassis: two rails with cross-members, a skid plate, and a gold-foil equipment box slung under the bed.
+    for (const x of [-0.55, 0.55]) p.add(new THREE.BoxGeometry(0.14, 0.16, 4.6), frame, x, -0.2, -0.1);
+    for (const z of [-2.3, -1.35, 0, 1.35, 2.1]) p.add(new THREE.BoxGeometry(1.24, 0.12, 0.14), frame, 0, -0.2, z);
+    p.add(new THREE.BoxGeometry(1.0, 0.05, 3.2), steel, 0, -0.3, 0.2);
+    p.add(new THREE.BoxGeometry(0.96, 0.3, 0.8), gold, 0, -0.24, -2.0);
+    // Jump jets: four little rocket bells under the corners.
+    for (const [x, z] of [[-0.42, 0.75], [0.42, 0.75], [-0.42, -0.85], [0.42, -0.85]]) {
+      p.add(new THREE.CylinderGeometry(0.08, 0.17, 0.24, 10), frame, x, -0.4, z);
+      p.add(new THREE.CylinderGeometry(0.11, 0.11, 0.03, 10), orange, x, -0.3, z);
     }
-    p.add(new THREE.BoxGeometry(1.8, 0.4, 0.8), body, 0, 0.1, 0.1);
-    p.add(new THREE.BoxGeometry(1.84, 0.1, 0.84), dark, 0, 0.32, 0.1);
-    // The cab's roll bar and a flat windscreen frame.
-    for (const [x, z] of [[-0.88, 0.62], [0.88, 0.62], [-0.88, -0.62], [0.88, -0.62]]) p.add(new THREE.CylinderGeometry(0.06, 0.06, 1.2, 8), steel, x, 0.88, z);
-    for (const x of [-0.88, 0.88]) p.add(new THREE.CylinderGeometry(0.06, 0.06, 1.24, 8).rotateX(Math.PI / 2), steel, x, 1.48, 0);
-    p.add(new THREE.CylinderGeometry(0.06, 0.06, 1.8, 8).rotateZ(Math.PI / 2), steel, 0, 1.48, 0.62);
-    p.add(new THREE.CylinderGeometry(0.06, 0.06, 1.8, 8).rotateZ(Math.PI / 2), steel, 0, 1.48, -0.62);
-    // The load bed.
+
+    // A rounded hood that tapers to the nose, with racing stripes and a white star.
+    p.add(
+      loftGeometry(
+        [
+          { z: 0.7, w: 1.84, h: 0.68, y: 0.14 },
+          { z: 1.3, w: 1.76, h: 0.62, y: 0.14 },
+          { z: 1.95, w: 1.56, h: 0.46, y: 0.08 },
+          { z: 2.3, w: 1.2, h: 0.28, y: 0.02 },
+        ],
+        20,
+        4,
+      ),
+      body,
+    );
+    for (const x of [-0.34, 0.34]) p.add(new THREE.BoxGeometry(0.16, 0.03, 0.62), orange, x, 0.47, 1.02);
+    p.add(new THREE.CylinderGeometry(0.24, 0.24, 0.03, 5), white, 0, 0.47, 1.05);
+    // Grille, a tubular bull bar, and headlamps in steel housings.
+    p.add(new THREE.BoxGeometry(0.72, 0.16, 0.05), seat, 0, 0.03, 2.31);
+    for (const x of [-0.24, -0.08, 0.08, 0.24]) p.add(new THREE.BoxGeometry(0.04, 0.17, 0.06), steel, x, 0.03, 2.32);
+    p.add(tubeX(0.06, 1.96, 10), steel, 0, -0.1, 2.5);
+    p.add(tubeX(0.05, 1.2, 10), steel, 0, 0.22, 2.48);
+    for (const x of [-0.58, 0.58]) {
+      p.beam(v(x, -0.1, 2.5), v(x, 0.22, 2.48), 0.09, steel, true);
+      p.beam(v(x * 0.95, -0.2, 2.1), v(x, -0.1, 2.5), 0.09, steel, true);
+    }
+    for (const x of [-0.58, 0.58]) {
+      p.add(tubeZ(0.2, 0.17, 0.2, 14), steel, x, 0.2, 2.1);
+      p.add(new THREE.SphereGeometry(0.17, 12, 8), lamp, x, 0.2, 2.16, 0, 0, 0, 1, 1, 0.5);
+    }
+
+    // The cab: a tub with a dashboard, a steering wheel and two bucket seats with headrests.
+    p.add(new THREE.BoxGeometry(1.84, 0.08, 1.5), dark, 0, -0.1, -0.02);
+    for (const x of [-0.9, 0.9]) {
+      p.add(new THREE.BoxGeometry(0.08, 0.5, 1.5), body, x, 0.15, -0.02);
+      p.add(new THREE.BoxGeometry(0.1, 0.06, 1.5), orange, x, 0.42, -0.02);
+    }
+    p.add(new THREE.BoxGeometry(1.84, 0.62, 0.08), body, 0, 0.2, -0.76);
+    p.add(new THREE.BoxGeometry(1.72, 0.24, 0.26), seat, 0, 0.56, 0.62);
+    for (const x of [-0.6, -0.42, -0.24]) p.add(new THREE.CylinderGeometry(0.05, 0.05, 0.02, 10).rotateX(Math.PI / 2), lamp, x, 0.6, 0.48);
+    p.add(new THREE.TorusGeometry(0.17, 0.028, 6, 16), seat, -0.42, 0.74, 0.36, -0.5);
+    p.beam(v(-0.42, 0.74, 0.36), v(-0.42, 0.56, 0.6), 0.05, steel, true);
+    for (const x of [-0.42, 0.42]) {
+      p.add(new THREE.BoxGeometry(0.64, 0.16, 0.62), seat, x, 0.3, -0.05);
+      p.add(new THREE.BoxGeometry(0.64, 0.7, 0.14), seat, x, 0.68, -0.42, -0.1);
+      p.add(new THREE.BoxGeometry(0.36, 0.2, 0.13), seat, x, 1.12, -0.48, -0.1);
+      p.add(new THREE.BoxGeometry(0.1, 0.72, 0.15), orange, x, 0.68, -0.42, -0.1);
+    }
+    // The roll cage: raked pillars, top rails, a brace across the back, a low windscreen and a light bar.
+    for (const x of [-0.9, 0.9]) {
+      const top = x * 0.92;
+      p.beam(v(x, 0.4, 0.74), v(top, 1.52, 0.42), 0.11, steel, true);
+      p.beam(v(x, 0.4, -0.74), v(top, 1.52, -0.6), 0.11, steel, true);
+      p.beam(v(top, 1.52, 0.42), v(top, 1.52, -0.6), 0.11, steel, true);
+      for (const z of [0.42, -0.6]) p.add(new THREE.SphereGeometry(0.065, 8, 6), steel, top, 1.52, z);
+    }
+    p.add(tubeX(0.055, 1.66, 10), steel, 0, 1.52, 0.42);
+    p.add(tubeX(0.055, 1.66, 10), steel, 0, 1.52, -0.6);
+    p.beam(v(-0.86, 0.6, -0.72), v(0.84, 1.48, -0.62), 0.07, steel, true);
+    p.add(new THREE.BoxGeometry(1.66, 0.46, 0.03), glass, 0, 0.84, 0.66, -0.28);
+    p.add(new THREE.BoxGeometry(1.3, 0.1, 0.12), seat, 0, 1.63, 0.42);
+    for (const x of [-0.48, -0.16, 0.16, 0.48]) p.add(new THREE.SphereGeometry(0.085, 10, 8), lamp, x, 1.63, 0.49, 0, 0, 0, 1, 1, 0.6);
+
+    // The load bed: a dark floor, low boards, a tubular rail round the top and a tailgate with lights.
     p.add(new THREE.BoxGeometry(1.95, 0.16, 2.35), dark, 0, 0.06, -1.62);
-    for (const x of [-0.96, 0.96]) p.add(new THREE.BoxGeometry(0.08, 0.3, 2.35), steel, x, 0.26, -1.62);
-    p.add(new THREE.BoxGeometry(1.95, 0.3, 0.08), steel, 0, 0.26, -2.82);
-    // A dish on a mast at the back corner, and a whip aerial.
-    p.add(new THREE.CylinderGeometry(0.05, 0.05, 1.5, 6), steel, 0.84, 1.0, -2.7);
-    p.add(new THREE.SphereGeometry(0.42, 14, 8, 0, Math.PI * 2, 0, Math.PI / 2.4), white, 0.84, 1.8, -2.7, -1.0, 0.3);
-    p.add(new THREE.CylinderGeometry(0.015, 0.015, 2.3, 4), steel, -0.84, 1.3, -2.7);
-    p.add(new THREE.SphereGeometry(0.05, 6, 5), plastic(0xe0503f), -0.84, 2.45, -2.7);
-    // A white star on the hood.
-    p.add(new THREE.CylinderGeometry(0.26, 0.26, 0.02, 5), white, 0, 0.39, 1.35);
+    for (const x of [-0.96, 0.96]) {
+      p.add(new THREE.BoxGeometry(0.06, 0.22, 2.35), body, x, 0.25, -1.62);
+      p.add(tubeZ(0.045, 0.045, 2.35, 8), steel, x, 0.5, -1.62);
+      for (const z of [-0.5, -1.62, -2.76]) p.add(new THREE.CylinderGeometry(0.04, 0.04, 0.4, 8), steel, x, 0.32, z);
+    }
+    p.add(new THREE.BoxGeometry(1.95, 0.26, 0.08), body, 0, 0.27, -2.82);
+    p.add(tubeX(0.045, 1.95, 8), steel, 0, 0.5, -2.8);
+    p.add(new THREE.BoxGeometry(0.5, 0.16, 0.02), white, 0, 0.27, -2.87);
+    for (const x of [-0.78, 0.78]) p.add(new THREE.BoxGeometry(0.22, 0.14, 0.04), tail, x, 0.27, -2.87);
+    p.add(new THREE.BoxGeometry(1.9, 0.12, 0.14), frame, 0, -0.06, -2.9);
+
+    // Mudguards over each wheel on little stays, and the springs.
+    for (const sx of [-1, 1]) {
+      for (const sz of [-1, 1]) {
+        const wx = sx * HALF_TRACK;
+        const wz = sz * HALF_BASE;
+        for (let i = -2; i <= 2; i++) {
+          const a = i * 0.42;
+          p.add(new THREE.BoxGeometry(0.6, 0.05, 0.4), dark, wx, -0.04 + Math.cos(a) * 0.9, wz + Math.sin(a) * 0.9, a);
+        }
+        p.beam(v(sx * 0.6, -0.14, wz), v(sx * 0.82, 0.84, wz), 0.06, steel, true);
+        p.beam(v(sx * 0.62, -0.2, wz - 0.3), v(sx * 0.86, -0.08, wz), 0.07, frame, true);
+        p.beam(v(sx * 0.62, -0.2, wz + 0.3), v(sx * 0.86, -0.08, wz), 0.07, frame, true);
+        p.beam(v(sx * 0.58, 0.36, wz + sz * 0.16), v(sx * 0.8, -0.06, wz + sz * 0.16), 0.13, orange, true);
+      }
+    }
+
+    // A dish with a feed horn on a mast at one back corner, and a whip aerial with a pennant at the other.
+    p.add(new THREE.CylinderGeometry(0.05, 0.06, 1.4, 8), steel, 0.86, 1.1, -2.72);
+    p.add(new THREE.SphereGeometry(0.46, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2.4), white, 0.86, 1.86, -2.72, -1.0, 0.3);
+    p.add(new THREE.SphereGeometry(0.07, 8, 6), orange, 0.86, 1.86, -2.72);
+    p.add(new THREE.CylinderGeometry(0.015, 0.02, 2.3, 4), steel, -0.86, 1.6, -2.72);
+    p.add(new THREE.SphereGeometry(0.06, 6, 5), plastic(0xe0503f), -0.86, 2.76, -2.72);
+    p.add(new THREE.BoxGeometry(0.02, 0.24, 0.42), orange, -0.86, 2.5, -2.94);
     p.buildInto(g);
 
     const driver = createCheeringFigure(ARMY_GREEN, true);
@@ -159,20 +245,23 @@ export class Buggy {
     mate.position.set(0.42, 0.45, 0.02);
     g.add(mate);
 
+    // Fat balloon tyres with chevron treads, on yellow five-spoke hubs.
     const tyre = plastic(0x2a2c31);
     const hub = plastic(0xe8c23f);
-    const lug = plastic(0xaeb4bc);
     for (const [sx, sz] of [[1, 1], [-1, 1], [1, -1], [-1, -1]]) {
       const steer = new THREE.Group();
       const spin = new THREE.Group();
       const wp = new PartBuilder();
-      wp.add(new THREE.CylinderGeometry(WHEEL_R, WHEEL_R, 0.52, 18).rotateZ(Math.PI / 2), tyre, 0, 0, 0);
-      for (let i = 0; i < 10; i++) {
-        const a = (i / 10) * Math.PI * 2;
-        wp.add(new THREE.BoxGeometry(0.56, 0.1, 0.16), tyre, 0, Math.cos(a) * (WHEEL_R + 0.03), Math.sin(a) * (WHEEL_R + 0.03), a);
+      wp.add(new THREE.TorusGeometry(WHEEL_R - 0.23, 0.23, 10, 22).rotateY(Math.PI / 2), tyre, 0, 0, 0, 0, 0, 0, 1.15, 1, 1);
+      wp.add(tubeX(0.4, 0.42, 16), tyre, 0, 0, 0);
+      for (let i = 0; i < 14; i++) {
+        const a = (i / 14) * Math.PI * 2;
+        for (const side of [-1, 1]) wp.add(new THREE.BoxGeometry(0.27, 0.07, 0.1), tyre, side * 0.11, Math.cos(a) * (WHEEL_R - 0.025), Math.sin(a) * (WHEEL_R - 0.025), a, side * 0.4);
       }
-      wp.add(new THREE.CylinderGeometry(0.3, 0.3, 0.56, 12).rotateZ(Math.PI / 2), hub, 0, 0, 0);
-      for (let i = 0; i < 3; i++) wp.add(new THREE.BoxGeometry(0.58, 0.08, 0.5), lug, 0, 0, 0, (i / 3) * Math.PI);
+      wp.add(tubeX(0.31, 0.5, 14), hub, 0, 0, 0);
+      wp.add(new THREE.TorusGeometry(0.31, 0.035, 6, 18).rotateY(Math.PI / 2), steel, sx * 0.25, 0, 0);
+      for (let i = 0; i < 5; i++) wp.add(new THREE.BoxGeometry(0.05, 0.56, 0.09), steel, sx * 0.25, 0, 0, (i / 5) * Math.PI * 2 + Math.PI / 5);
+      wp.add(new THREE.SphereGeometry(0.1, 10, 8), steel, sx * 0.27, 0, 0, 0, 0, 0, 0.7, 1, 1);
       wp.buildInto(spin);
       steer.add(spin);
       steer.position.set(sx * HALF_TRACK, -0.04, sz * HALF_BASE);

@@ -241,7 +241,7 @@ const STYLE = `
 .hud .checklist .line { padding:0 12px; }
 .hud .checklist .done { color:#9be27a; text-decoration:line-through; opacity:0.75; }
 
-.hud .banner { position:absolute; left:50%; top:17%; transform:translateX(-50%); text-align:center; opacity:0; white-space:nowrap; padding:10px 34px 12px;
+.hud .banner { position:absolute; left:50%; top:17%; transform:translateX(-50%); text-align:center; opacity:0; width:max-content; max-width:92%; box-sizing:border-box; padding:10px 34px 12px;
   background:linear-gradient(90deg, transparent, rgba(20,26,14,0.85) 12%, rgba(20,26,14,0.85) 88%, transparent); }
 .hud .banner .big { font-size:32px; color:#ffd24a; text-shadow:0 3px 8px #000, 0 0 18px rgba(255,160,40,0.45); }
 .hud .banner .small { font-size:15px; font-weight:700; margin-top:4px; }

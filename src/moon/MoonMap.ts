@@ -1,10 +1,15 @@
 import * as THREE from 'three';
 import type { WorldMap, MapView, MapDrawOptions } from '../ui/WorldMap';
 import { PLAY_HALF } from './MoonTerrain';
-import { VALLEY, CANYON, canyonX } from './Layout';
+import { VALLEY, CANYON, canyonX, valleyQ } from './Layout';
+import type { WallRun } from './Maze';
 
 /** How many metres across the little corner map shows. */
 const MINI_METERS = 300;
+/** The fog of war over the valley: metres per pixel of its mask, and how far round the buggy is uncovered. */
+const FOG_CELL = 4;
+const FOG_REVEAL = 85;
+const FOG_PAD = 24;
 
 export interface MoonMapData {
   player: { x: number; z: number; yaw: number };
@@ -14,7 +19,9 @@ export interface MoonMapData {
   crates: { x: number; z: number; color: number }[];
   /** Once the road over the mountains is built: the canyon, the valley and its new roads show. */
   weird: boolean;
-  /** The odd things on the Weird Side: a ? until found (secret ones not at all), then a star. */
+  /** The maze's walls, drawn where the fog has lifted. */
+  walls: WallRun[];
+  /** The odd things on the Weird Side: a ? until found (secret ones not at all), then a star. They show through the fog. */
   wonders: { x: number; z: number; found: boolean; secret: boolean; title: string }[];
 }
 
@@ -24,13 +31,46 @@ export interface MoonMapData {
  * map slots, standing in for the tank game's world map.
  */
 export class MoonMap {
-  readonly data: MoonMapData = { player: { x: 0, z: 0, yaw: 0 }, base: { x: 0, z: -20 }, camps: [], crates: [], weird: false, wonders: [] };
+  readonly data: MoonMapData = { player: { x: 0, z: 0, yaw: 0 }, base: { x: 0, z: -20 }, camps: [], crates: [], weird: false, walls: [], wonders: [] };
+  /** The fog of war: opaque where the buggy hasn't been yet, rubbed away where it has. */
+  private readonly fog = document.createElement('canvas');
+  private readonly fogCtx: CanvasRenderingContext2D;
+  private readonly fogX = VALLEY.x - VALLEY.rx - FOG_PAD;
+  private readonly fogZ = VALLEY.z - VALLEY.rz - FOG_PAD;
+  private lastReveal: { x: number; z: number } | null = null;
 
   constructor(
     private readonly roads: THREE.Vector2[][],
     /** How many of `roads` are there from the start; the rest appear once the Weird Side opens. */
     private readonly shownRoads = roads.length,
-  ) {}
+  ) {
+    this.fog.width = Math.ceil(((VALLEY.rx + FOG_PAD) * 2) / FOG_CELL);
+    this.fog.height = Math.ceil(((VALLEY.rz + FOG_PAD) * 2) / FOG_CELL);
+    this.fogCtx = this.fog.getContext('2d') as CanvasRenderingContext2D;
+    this.fogCtx.fillStyle = '#15121c';
+    this.fogCtx.fillRect(0, 0, this.fog.width, this.fog.height);
+  }
+
+  /** Lifts the fog round (x, z): called as the buggy explores the valley. */
+  reveal(x: number, z: number): void {
+    if (valleyQ(x, z) > 1.25) return;
+    const last = this.lastReveal;
+    if (last && Math.hypot(x - last.x, z - last.z) < FOG_CELL) return;
+    this.lastReveal = { x, z };
+    const ctx = this.fogCtx;
+    const px = (x - this.fogX) / FOG_CELL;
+    const pz = (z - this.fogZ) / FOG_CELL;
+    const r = FOG_REVEAL / FOG_CELL;
+    const g = ctx.createRadialGradient(px, pz, r * 0.55, px, pz, r);
+    g.addColorStop(0, 'rgba(0,0,0,1)');
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.globalCompositeOperation = 'destination-out';
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(px, pz, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalCompositeOperation = 'source-over';
+  }
 
   /** A fresh view object, so the HUD knows to redraw. */
   view(base: MapView): MapView {
@@ -83,6 +123,24 @@ export class MoonMap {
       path.forEach((p, i) => (i ? ctx.lineTo(sx(p.x), sy(p.y)) : ctx.moveTo(sx(p.x), sy(p.y))));
       ctx.stroke();
     }
+    if (d.weird) {
+      // The maze's walls, then the fog of war over whatever of the valley hasn't been explored.
+      ctx.lineCap = 'butt';
+      ctx.lineWidth = Math.max(2, 4 * s);
+      for (const wall of d.walls) {
+        ctx.strokeStyle = `#${new THREE.Color(wall.color).getHexString()}`;
+        ctx.beginPath();
+        ctx.moveTo(sx(wall.x1), sy(wall.z1));
+        ctx.lineTo(sx(wall.x2), sy(wall.z2));
+        ctx.stroke();
+      }
+      ctx.save();
+      ctx.beginPath();
+      ctx.ellipse(sx(VALLEY.x), sy(VALLEY.z), VALLEY.rx * s, VALLEY.rz * s, 0, 0, Math.PI * 2);
+      ctx.clip();
+      ctx.drawImage(this.fog, sx(this.fogX), sy(this.fogZ), this.fog.width * FOG_CELL * s, this.fog.height * FOG_CELL * s);
+      ctx.restore();
+    }
     const r = big ? 7 : 5;
     // The main base: a white dome.
     ctx.beginPath();
@@ -128,8 +186,24 @@ export class MoonMap {
     const mark = big ? r * 0.6 : r;
     for (const wd of d.weird ? d.wonders : []) {
       if (wd.secret && !wd.found) continue;
-      const x = sx(wd.x);
-      const y = sy(wd.z);
+      let x = sx(wd.x);
+      let y = sy(wd.z);
+      // The radar always shows the ones still to find: those off its edge sit on the rim as small blips.
+      const off = Math.hypot(x - w / 2, y - h / 2);
+      const rim = w / 2 - 7;
+      if (!big && off > rim) {
+        if (wd.found) continue;
+        x = w / 2 + ((x - w / 2) / off) * rim;
+        y = h / 2 + ((y - h / 2) / off) * rim;
+        ctx.beginPath();
+        ctx.arc(x, y, 3.6, 0, Math.PI * 2);
+        ctx.fillStyle = '#b07af0';
+        ctx.fill();
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        continue;
+      }
       if (wd.found) {
         ctx.fillStyle = '#ffd24a';
         ctx.strokeStyle = '#000';

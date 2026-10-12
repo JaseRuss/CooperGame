@@ -511,10 +511,18 @@ map at all. Find the lot for a fanfare. The music changes to a bongo-and-marimba
   the end of the rainbow, the great snail race, a pirate ship looking for the sea, a washing line of
   enormous pants, the Man in the Moon having a lie-in, a soldier fishing for stars, the Moon's worst
   traffic jam, Moon golf and the space whale.
+- **The maze:** high candy-coloured castle walls (too high to jump) cut the valley floor into winding
+  lanes. It's a real maze with a good few walls knocked through, and the walls stop short of the
+  roads and of every tableau, so nothing is shut in. On the map the valley starts under a **fog of
+  war** that lifts as you explore, showing the walls; the purple blips for things still to find
+  always show through the fog, and the ones off the edge of the corner radar sit on its rim.
+- **The skiing robot:** a giant cooker on red skis (bobble hat, scarf, two ski poles) does laps of
+  the mountain walls round the valley, and ski-jumps the canyon each time it comes round.
 - To jump straight there (for trying it out), open the game with `?mission=7&wonders`: every camp is
   built and the road is open.
 - Code is in `src/moon/wonders/` (`index.ts` lists every tableau and where it stands, `Wonders.ts`
-  finds them and runs the gadgets) and `src/moon/RoadWorks.ts` (the road-building scene).
+  finds them and runs the gadgets), `src/moon/RoadWorks.ts` (the road-building scene), `src/moon/Maze.ts`
+  and `src/moon/SkiRobot.ts`.
 
 ## Bonus: Under Siege
 
