@@ -67,6 +67,8 @@ export interface PrisonHUD {
   launcher?: { shots: number; max: number; reloadLeft: number; reloadTime: number };
   /** Plantable bombs, shown in the weapon card. */
   bombs?: { count: number; max: number };
+  /** Driving a vehicle (the Moon epilogue's buggy): the card's labels and the key hints, in place of the on-foot ones. */
+  vehicle?: { gun: string; hull: string; ready: string; mode: string; keysPad: string; keysKb: string };
 }
 
 /** A marker pointing the way to somewhere: on screen over it, or pinned to the edge toward it. */
@@ -1268,6 +1270,15 @@ export class HUD {
       this.reloadText.style.color = prison.downFor > 0 ? '#ff8a7a' : '#ffd24a';
       this.modeText.textContent = prison.onRaft ? 'Raft · At sea' : `${state.cameraMode === 'first' ? '1st' : '3rd'} person · On foot`;
       this.jamSlot.style.display = prison.onRaft ? 'none' : '';
+      const vehicle = prison.vehicle;
+      if (vehicle) {
+        this.gunName.textContent = vehicle.gun;
+        this.hullName.textContent = vehicle.hull;
+        this.reloadText.textContent = vehicle.ready;
+        this.reloadText.style.color = '#ffd24a';
+        this.modeText.textContent = vehicle.mode;
+        this.jamSlot.style.display = 'none';
+      }
     }
 
     const aaLocked = state.aaLockScreen !== null;
@@ -1325,7 +1336,11 @@ export class HUD {
     const drive = chopper ? 'fly' : 'drive';
     this.setHTML(
       this.keys,
-      (prison
+      (prison?.vehicle
+        ? state.usingGamepad
+          ? prison.vehicle.keysPad
+          : prison.vehicle.keysKb + (state.mouseCaptureHint ? '<br><span style="color:#ffd24a">Click the game to capture the mouse</span>' : '')
+        : prison
         ? state.usingGamepad
           ? `${k('LS', 'move')}${k('RS', 'aim')}${k('RB', 'creep')}${k('RT', 'fire')}${k('LT', 'jam')}${prison.launcher ? `${k('LB', 'grenade')}${k('RB', 'bomb')}` : ''}${k('X', 'squad')}${k('Y', 'camera')}${k('Start', 'pause · options')}${k('Back', 'checkpoint')}`
           : this.secondary
