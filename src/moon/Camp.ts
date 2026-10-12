@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { PartBuilder } from '../utils/modelKit';
 import { plastic, shade } from '../utils/plastic';
-import { createCheeringFigure } from '../entities/Soldier';
+import { createPoseFigure, CARRY_CRATE_AT, type Pose } from '../entities/Soldier';
 import { mulberry32 } from '../utils/rng';
 import { dome, tube, WHITE, STEEL, DARK } from '../world/MoonBase';
 import { makeCrate, MOON_G } from './Buggy';
@@ -32,6 +32,9 @@ interface Piece {
   /** For 'lift': how far it climbs. */
   height: number;
 }
+
+/** The crew's poses: mostly waving the buggy in, a few cheering. */
+const CREW: Pose[] = ['wave', 'wave', 'cheer', 'wave', 'cheer', 'wave', 'wave'];
 
 interface Hopper {
   mesh: THREE.Object3D;
@@ -187,7 +190,7 @@ export class Camp {
 
     // The army, hopping about near the tents and waving.
     for (let i = 0; i < 7; i++) {
-      const mesh = createCheeringFigure(color, true);
+      const mesh = createPoseFigure(color, CREW[i % CREW.length], true);
       const a = this.rng() * Math.PI * 2;
       const d = 4 + this.rng() * 9;
       const base = new THREE.Vector3(Math.cos(a) * d, 0, -6 + Math.sin(a) * d * 0.7);
@@ -195,6 +198,21 @@ export class Camp {
       this.group.add(mesh);
       this.hoppers.push({ mesh, base, phase: this.rng(), period: 1.7 + this.rng() * 1.2, height: 0.6 + this.rng() * 1.2, yaw: Math.PI });
     }
+
+    // Two crew carrying crates over to the pallet, and one planting a flag by the tents.
+    for (const [x, z, ry] of [[-4, 8, -0.3], [4, 6, 0.3]]) {
+      const carrier = createPoseFigure(color, 'carry', true);
+      const load = makeCrate(color);
+      load.position.copy(CARRY_CRATE_AT);
+      carrier.add(load);
+      carrier.position.set(x, 0, z);
+      carrier.rotation.y = Math.PI + ry;
+      this.group.add(carrier);
+    }
+    const planter = createPoseFigure(color, 'flag', true);
+    planter.position.set(-9, 0, 4);
+    planter.rotation.y = Math.PI * 0.8;
+    this.group.add(planter);
 
     this.group.add(this.buildGroup);
     this.makeBuild();

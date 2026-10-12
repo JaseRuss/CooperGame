@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { PartBuilder } from '../utils/modelKit';
 import { plastic, ARMY_GREEN, ARMY_RED, ARMY_TAN, ARMY_BLUE } from '../utils/plastic';
 import { mulberry32 } from '../utils/rng';
-import { createCheeringFigure } from '../entities/Soldier';
+import { createPoseFigure, CARRY_CRATE_AT, type Pose } from '../entities/Soldier';
 import { buildRocket } from '../world/MoonRocket';
 import { dome, tube, bannerTexture, flagTexture, WHITE, STEEL } from '../world/MoonBase';
 import { makeCrate } from './Buggy';
@@ -10,6 +10,9 @@ import type { MoonTerrain } from './MoonTerrain';
 import { FACTIONS, BAY_RADIUS, type Faction } from './Layout';
 
 const ARMIES = [ARMY_GREEN, ARMY_RED, ARMY_TAN, ARMY_BLUE];
+
+/** The crowd at the stage: mostly cheering, with wavers, salutes and a few pointing at the Earth. */
+const CROWD: Pose[] = ['cheer', 'cheer', 'wave', 'cheer', 'salute', 'wave', 'cheer', 'point'];
 
 interface Hopper {
   mesh: THREE.Object3D;
@@ -126,11 +129,13 @@ export class MainBase {
     // The party carries on in front of the stage.
     const rng = mulberry32(2468);
     for (let i = 0; i < 26; i++) {
-      const mesh = createCheeringFigure(ARMIES[i % 4], true);
+      const pose = CROWD[i % CROWD.length];
+      const mesh = createPoseFigure(ARMIES[i % 4], pose, true);
       mesh.position.set((rng() - 0.5) * 26, 0, -8 + rng() * 6);
       mesh.rotation.y = Math.PI + (rng() - 0.5) * 0.6;
       scene.add(mesh);
-      this.hoppers.push({ mesh, phase: rng(), period: 1.5 + rng() * 1.1, height: 0.6 + rng() * 1.8 });
+      // The ones who are saluting or pointing stand still; the rest bounce.
+      this.hoppers.push({ mesh, phase: rng(), period: 1.5 + rng() * 1.1, height: pose === 'salute' || pose === 'point' ? 0 : 0.6 + rng() * 1.8 });
     }
   }
 
@@ -166,6 +171,18 @@ export class MainBase {
     back.position.z += 0.28;
     back.rotation.y = 0;
     scene.add(back);
+    // A guard in a space suit at the gate of the bay, and a loader carrying a crate over to the stack.
+    const guard = createPoseFigure(f.color, 'stand', true);
+    guard.position.set(x + 6.2, 0.3, z + 3);
+    guard.rotation.y = Math.PI * 0.85;
+    scene.add(guard);
+    const loader = createPoseFigure(f.color, 'carry', true);
+    const load = makeCrate(f.color);
+    load.position.copy(CARRY_CRATE_AT);
+    loader.add(load);
+    loader.position.set(x - 5.6, 0.3, z + 2.4);
+    loader.rotation.y = Math.PI * 0.6;
+    scene.add(loader);
     // A ring on the ground that glows while this army still needs supplies.
     const ring = new THREE.Mesh(
       new THREE.RingGeometry(BAY_RADIUS - 2.2, BAY_RADIUS - 1.2, 40).rotateX(-Math.PI / 2),

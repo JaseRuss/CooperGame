@@ -3,7 +3,7 @@ import { PartBuilder } from '../utils/modelKit';
 import { plastic, shade, ARMY_GREEN, ARMY_RED, ARMY_TAN, ARMY_BLUE } from '../utils/plastic';
 import { mulberry32 } from '../utils/rng';
 import { Tank } from '../entities/Tank';
-import { createCheeringFigure } from '../entities/Soldier';
+import { createCheeringFigure, createPoseFigure } from '../entities/Soldier';
 import { buildJeep, buildChopperParts } from './Vehicles';
 import { buildRocket } from './MoonRocket';
 import { ImpactEffects } from '../combat/ImpactEffects';
@@ -349,7 +349,7 @@ export class MoonBase {
     // The party: army men of every colour, jumping for joy in the low gravity.
     for (let i = 0; i < 52; i++) {
       const color = ARMIES[i % 4];
-      const mesh = createCheeringFigure(color, true);
+      const mesh = i % 5 === 2 ? createPoseFigure(color, 'wave', true) : i % 7 === 3 ? createPoseFigure(color, 'point', true) : createCheeringFigure(color, true);
       const x = (this.rng() - 0.5) * 34;
       const z = -7 + this.rng() * 20;
       mesh.position.set(x, 0, z);
