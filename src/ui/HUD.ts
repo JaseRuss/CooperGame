@@ -157,7 +157,7 @@ const HIT_MARKER_TEXT: Record<ArmorZone, { text: string; color: string }> = {
 const HIT_MARKER_TIME = 1.1;
 const BANNER_TIME = 4;
 const HULL_SEGMENTS = 20;
-const FULLSCREEN_ROW_INDEX = OPTION_ROWS.length + DEFAULT_BUDDY_NAMES.length + MISSIONS.length;
+const FULLSCREEN_ROW_INDEX = OPTION_ROWS.length + DEFAULT_BUDDY_NAMES.length;
 
 const RETICLE_COLORS: Record<AimTarget, string> = {
   enemy: '#ff6a5a',
@@ -420,12 +420,14 @@ export class HUD {
   private readonly minimapCtx: CanvasRenderingContext2D;
   private readonly fps: HTMLDivElement;
   private readonly overlay: HTMLDivElement;
-  private readonly tabs: Record<'map' | 'options', HTMLDivElement>;
-  private readonly pages: Record<'map' | 'options', HTMLDivElement>;
+  private readonly tabs: Record<'map' | 'options' | 'levels', HTMLDivElement>;
+  private readonly pages: Record<'map' | 'options' | 'levels', HTMLDivElement>;
   private readonly bigMapCanvas: HTMLCanvasElement;
   private readonly bigMapCtx: CanvasRenderingContext2D;
   private readonly optionList: HTMLDivElement;
   private readonly optionHint: HTMLDivElement;
+  private readonly levelList: HTMLDivElement;
+  private readonly levelHint: HTMLDivElement;
   private readonly footer: HTMLDivElement;
   private readonly crosshair: HTMLDivElement;
   private readonly rangeLabel: HTMLDivElement;
@@ -460,8 +462,9 @@ export class HUD {
   private readonly mapLegends: HTMLDivElement[] = [];
   private lastDrawnMap: MapView | null = null;
   private pausedOpen = false;
-  private page: 'map' | 'options' = 'map';
+  private page: 'map' | 'options' | 'levels' = 'map';
   private optionIndex = 0;
+  private levelIndex = 0;
   /** The buddy name being edited on the options screen, if any. */
   private nameEdit: { crew: number; chars: string[]; cursor: number } | null = null;
   private settings: Settings | null = null;
@@ -591,11 +594,16 @@ export class HUD {
     this.overlay = el('div', 'overlay', root);
     el('h1', 'stencil', this.overlay, 'PAUSED');
     const tabRow = el('div', 'tabs', this.overlay);
-    this.tabs = { map: el('div', 'stencil tab', tabRow, 'MAP'), options: el('div', 'stencil tab', tabRow, 'OPTIONS') };
+    this.tabs = {
+      map: el('div', 'stencil tab', tabRow, 'MAP'),
+      options: el('div', 'stencil tab', tabRow, 'OPTIONS'),
+      levels: el('div', 'stencil tab', tabRow, 'LEVELS'),
+    };
     this.tabs.map.addEventListener('click', () => this.showPage('map'));
     this.tabs.options.addEventListener('click', () => this.showPage('options'));
+    this.tabs.levels.addEventListener('click', () => this.showPage('levels'));
 
-    this.pages = { map: el('div', 'page', this.overlay), options: el('div', 'page', this.overlay) };
+    this.pages = { map: el('div', 'page', this.overlay), options: el('div', 'page', this.overlay), levels: el('div', 'page', this.overlay) };
     this.bigMapCanvas = el('canvas', '', this.pages.map);
     this.bigMapCanvas.style.cssText = 'border:3px solid rgba(214,196,138,0.7); border-radius:8px; box-shadow:0 4px 18px rgba(0,0,0,0.6);';
     this.bigMapCtx = this.bigMapCanvas.getContext('2d') as CanvasRenderingContext2D;
@@ -615,6 +623,8 @@ export class HUD {
 
     this.optionList = el('div', 'panel options', this.pages.options);
     this.optionHint = el('div', 'hint shadow', this.pages.options);
+    this.levelList = el('div', 'panel options', this.pages.levels);
+    this.levelHint = el('div', 'hint shadow', this.pages.levels);
     document.addEventListener('fullscreenchange', () => {
       if (this.page === 'options') this.renderOptions();
     });
@@ -826,8 +836,32 @@ export class HUD {
       } else if (menu.back) this.toggleBigMap();
       return;
     }
+    if (this.page === 'levels') {
+      if (menu.back) {
+        this.showPage('map');
+        this.sfx('back');
+        return;
+      }
+      if (menu.left || menu.options) {
+        this.showPage('options');
+        this.sfx('move');
+        return;
+      }
+      const n = MISSIONS.length;
+      if (menu.up) this.levelIndex = (this.levelIndex + n - 1) % n;
+      if (menu.down) this.levelIndex = (this.levelIndex + 1) % n;
+      if (menu.up || menu.down) this.sfx('move');
+      if (menu.confirm || menu.right) this.startLevel(MISSIONS[this.levelIndex].mission);
+      this.renderLevels();
+      return;
+    }
     if (this.nameEdit) {
       this.handleNameEdit(menu);
+      return;
+    }
+    if (menu.options) {
+      this.showPage('levels');
+      this.sfx('move');
       return;
     }
     if (menu.back) {
@@ -842,9 +876,6 @@ export class HUD {
     const crew = this.optionIndex - OPTION_ROWS.length;
     if (this.optionIndex === FULLSCREEN_ROW_INDEX) {
       if (menu.left || menu.right || menu.confirm) this.toggleFullscreen();
-    } else if (crew >= DEFAULT_BUDDY_NAMES.length) {
-      // Level select: A / Enter starts the chosen level.
-      if (menu.confirm) this.startLevel(MISSIONS[crew - DEFAULT_BUDDY_NAMES.length].mission);
     } else if (crew >= 0) {
       if (menu.confirm || menu.right) this.startNameEdit(crew);
     } else {
@@ -935,20 +966,23 @@ export class HUD {
     this.sfx('confirm');
   }
 
-  private showPage(page: 'map' | 'options'): void {
+  private showPage(page: 'map' | 'options' | 'levels'): void {
     this.page = page;
     this.lastDrawnMap = null;
-    for (const p of ['map', 'options'] as const) {
+    for (const p of ['map', 'options', 'levels'] as const) {
       this.tabs[p].classList.toggle('on', p === page);
       this.pages[p].classList.toggle('on', p === page);
     }
     this.footer.textContent =
       page === 'map'
         ? 'Start / M: resume  ·  X / O: options  ·  B / Esc: resume'
-        : this.nameEdit
+        : page === 'levels'
+          ? 'D-pad / arrows: choose  ·  A / Enter: start from the beginning  ·  B / Esc: back to map'
+          : this.nameEdit
           ? 'Type, or D-pad ↑↓: letter  ·  ←→: move  ·  X / Backspace: delete  ·  A / Enter: save  ·  B / Esc: cancel'
-          : 'D-pad / arrows: choose and change  ·  A / Enter: change  ·  B / Esc: back to map';
+          : 'D-pad / arrows: choose and change  ·  A / Enter: change  ·  X / O: levels  ·  B / Esc: back to map';
     if (page === 'options') this.renderOptions();
+    if (page === 'levels') this.renderLevels();
   }
 
   private cycleOption(index: number, dir: 1 | -1): void {
@@ -1041,27 +1075,6 @@ export class HUD {
       }
     });
 
-    // Level select: one row per mission; picking another starts it from the beginning.
-    el('div', 'stencil section', this.optionList, 'LEVEL SELECT');
-    MISSIONS.forEach((level, n) => {
-      const i = OPTION_ROWS.length + settings.buddyNames.length + n;
-      const playing = level.mission === MISSION;
-      const line = el('div', `opt level${i === this.optionIndex ? ' sel' : ''}`, this.optionList);
-      el('div', 'name', line, `${level.mission} · ${level.title}`);
-      el('b', playing ? 'pen' : '', el('div', 'val', line), playing ? 'PLAYING' : 'START ▶');
-      line.addEventListener('mouseenter', () => {
-        if (this.optionIndex === i || this.nameEdit) return;
-        this.optionIndex = i;
-        this.renderOptions();
-      });
-      line.addEventListener('click', () => this.startLevel(level.mission));
-      if (i === this.optionIndex) {
-        this.optionHint.textContent = playing
-          ? `${level.blurb} (You're playing this one now.)`
-          : `${level.blurb} Press A / Enter to start it from the beginning.`;
-      }
-    });
-
     const fullscreenLine = el('div', `opt${this.optionIndex === FULLSCREEN_ROW_INDEX ? ' sel' : ''}`, this.optionList);
     el('div', 'name', fullscreenLine, 'Fullscreen');
     const fullscreenValue = el('div', 'val', fullscreenLine);
@@ -1078,6 +1091,28 @@ export class HUD {
       this.optionHint.textContent = 'Play the game in fullscreen. Select again to exit fullscreen.';
     }
     this.optionList.querySelector('.sel')?.scrollIntoView({ block: 'nearest' });
+  }
+
+  /** Level select: one row per mission; picking another starts it from the beginning. */
+  private renderLevels(): void {
+    this.levelList.replaceChildren();
+    MISSIONS.forEach((level, n) => {
+      const playing = level.mission === MISSION;
+      const line = el('div', `opt level${n === this.levelIndex ? ' sel' : ''}`, this.levelList);
+      el('div', 'name', line, `${level.mission} · ${level.title}`);
+      el('b', playing ? 'pen' : '', el('div', 'val', line), playing ? 'PLAYING' : 'START ▶');
+      line.addEventListener('mouseenter', () => {
+        if (this.levelIndex === n) return;
+        this.levelIndex = n;
+        this.renderLevels();
+      });
+      line.addEventListener('click', () => this.startLevel(level.mission));
+      if (n === this.levelIndex) {
+        this.levelHint.textContent = playing
+          ? `${level.blurb} (You're playing this one now.)`
+          : `${level.blurb} Press A / Enter to start it from the beginning.`;
+      }
+    });
   }
 
   showHitMarker(zone: ArmorZone): void {
