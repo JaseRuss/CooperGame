@@ -12,12 +12,12 @@ const STALK_TIME = 11;
 /** No shark ever gets closer than this to the raft (it's pushed out, and keeps its head down). */
 const KEEP_CLEAR = 8.5;
 
-type Shapes = {
+export type SharkShapes = {
   body: Map<THREE.Material, THREE.BufferGeometry>;
   jaw: Map<THREE.Material, THREE.BufferGeometry>;
   tail: Map<THREE.Material, THREE.BufferGeometry>;
 };
-let shapes: Shapes | null = null;
+let shapes: SharkShapes | null = null;
 
 const mat = (color: number, emissive = 0x1c2a38) => new THREE.MeshStandardMaterial({ color, roughness: 0.55, metalness: 0, emissive });
 
@@ -26,7 +26,7 @@ const mat = (color: number, emissive = 0x1c2a38) => new THREE.MeshStandardMateri
  * eyebrows, a toothy grin on a hinged lower jaw with a tongue and drool, and a red-checked
  * napkin tied round its neck as a bib. It's hungry.
  */
-function sharkShapes(): Shapes {
+export function sharkShapes(): SharkShapes {
   if (shapes) return shapes;
   const grey = mat(0x6d8296);
   const dark = mat(0x4c5d6e);
@@ -80,7 +80,7 @@ function sharkShapes(): Shapes {
   return shapes;
 }
 
-function dress(geos: Map<THREE.Material, THREE.BufferGeometry>, parent: THREE.Object3D): void {
+export function dress(geos: Map<THREE.Material, THREE.BufferGeometry>, parent: THREE.Object3D): void {
   for (const [m, g] of geos) parent.add(new THREE.Mesh(g, m));
 }
 

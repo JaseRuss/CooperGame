@@ -15,13 +15,19 @@ import { Dust } from './Dust';
 import { Camp, BUILD_TIME, type BuildFx } from './Camp';
 import { MainBase } from './MainBase';
 import { MoonMap } from './MoonMap';
-import { FACTIONS, BASE_ZONE, START, CRATES_NEEDED, DROP_RADIUS, BAY_RADIUS, CAMP_R, roadTo, campZones } from './Layout';
+import { FACTIONS, BASE_ZONE, START, CRATES_NEEDED, DROP_RADIUS, BAY_RADIUS, CAMP_R, roadTo, campZones, northRoad, valleyLoop, valleyQ, NORTH_START, VALLEY } from './Layout';
+import { RoadWorks, type RoadFx } from './RoadWorks';
+import { WonderValley, type WonderFx } from './wonders/Wonders';
+import { WONDERS, wonderZones } from './wonders';
+import type { WonderDef } from './wonders/types';
 
 const SHADOW_HALF = 60;
 /** Where the sun is: low in the sky, so everything throws a long shadow. */
 const SUN_DIRECTION = new THREE.Vector3(0.55, 0.5, -0.67).normalize();
 /** Where the Earth hangs, as a direction from the camera. */
 const EARTH_DIRECTION = new THREE.Vector3(-0.35, 0.3, 0.88).normalize();
+/** A ringed planet low over the northern mountains, where the Weird Side is. */
+const PLANET_DIRECTION = new THREE.Vector3(0.3, 0.16, -0.94).normalize();
 /** Seconds between one crate being loaded and the next. */
 const LOAD_INTERVAL = 0.3;
 const UNLOAD_INTERVAL = 0.45;
@@ -31,6 +37,12 @@ const CRATE_FLIGHT = 1.1;
 /** A fallen crate can't be picked straight back up. */
 const PICKUP_DELAY = 1.2;
 const PICKUP_RANGE = 3.6;
+/** `?mission=7&wonders` skips the supply run: every camp is built and the road to the Weird Side is open. */
+const SKIP_TO_WONDERS = new URLSearchParams(window.location.search).has('wonders');
+/** Seconds after the last Moon base goes up before the road crews set off. */
+const ROADWORKS_DELAY = 6.5;
+/** Where the arch over the road into the Weird Side stands. */
+const WEIRD_GATE = new THREE.Vector3(0, 12, -915);
 
 const CONTROLS =
   '<span><b>Drive</b> left stick · W A S D</span><span><b>Jump</b> (it\'s the Moon: you stay up for ages) A · RT · Space</span>' +
@@ -92,6 +104,16 @@ export class MoonGame {
   private dust!: Dust;
   private effects!: ImpactEffects;
   private camps: Camp[] = [];
+  private wonders!: WonderValley;
+  /** The new roads (to the Weird Side and round it), laid during the road-building scene. */
+  private laterRoads: THREE.Mesh[] = [];
+  private roadWorks!: RoadWorks;
+  /** Counting down to the road crews setting off (null when they aren't waiting to). */
+  private roadWorksIn: number | null = null;
+  /** The buggy's in the Weird Side's valley (for the music). */
+  private inValley = false;
+  /** The title of the last thing found there. */
+  private lastFound = '';
   private map!: MoonMap;
   private mapView: MapView = NO_MAP;
   private mapAge = 0;
@@ -148,6 +170,10 @@ export class MoonGame {
     this.sun.shadow.bias = -0.0006;
     this.sun.shadow.normalBias = 0.05;
     this.scene.add(this.sun, this.sun.target);
+    // A soft fill from the other side, so the faces turned away from the low sun aren't lost in the dark.
+    const fill = new THREE.DirectionalLight(0xd6defa, 0.55);
+    fill.position.set(-0.35, 0.55, 0.75);
+    this.scene.add(fill);
 
     window.addEventListener('resize', () => this.onResize());
     // Let the loading words paint before the terrain is made.
@@ -157,11 +183,17 @@ export class MoonGame {
   private init(): void {
     // The roads come first: the ground is flattened along them and craters keep clear.
     const roads = FACTIONS.map((f, i) => roadTo(f, i));
-    const zones = [BASE_ZONE, ...campZones()];
-    this.terrain = new MoonTerrain(roads, zones);
+    const zones = [BASE_ZONE, ...campZones(), ...wonderZones()];
+    this.terrain = new MoonTerrain(roads, zones, [], [northRoad(), valleyLoop()]);
     this.scene.add(this.terrain.buildMesh());
     this.scene.add(this.terrain.buildRoads([...FACTIONS.map((f) => ({ x: f.camp.x, z: f.camp.z, r: CAMP_R - 8 }))]));
     this.scene.add(this.terrain.buildRocks([{ x: 0, z: -10, r: 90 }, ...campZones().map((z) => ({ ...z, r: z.r + 6 }))]));
+    this.laterRoads = this.terrain.buildLaterRoads();
+    for (const m of this.laterRoads) this.scene.add(m);
+    this.roadWorks = new RoadWorks(this.scene, this.terrain, this.laterRoads);
+    this.wonders = new WonderValley(this.scene, this.terrain, WONDERS);
+    const crystals = this.terrain.buildCrystals([]);
+    this.wonders.root.add(crystals);
     this.buildSky();
     this.dust = new Dust(this.scene);
     this.effects = new ImpactEffects(this.scene);
@@ -170,7 +202,7 @@ export class MoonGame {
     this.buggy = new Buggy();
     this.buggy.placeAt(START.x, START.z, START.yaw, this.terrain);
     this.scene.add(this.buggy.root);
-    this.map = new MoonMap(this.terrain.paths);
+    this.map = new MoonMap(this.terrain.paths, this.terrain.shownRoads);
     this.map.data.base = { x: 0, z: -30 };
     this.camFocus.copy(this.buggy.pos);
     this.camYaw = this.buggy.yaw;
@@ -179,7 +211,8 @@ export class MoonGame {
     this.hud.setOnFoot(CONTROLS, {
       legend:
         '<span><i style="background:#eeebe3"></i>Main base (load up here)</span><span><i style="background:#b8392e"></i>An army\'s camp: a square until it\'s built, then a dome</span>' +
-        '<span><i style="background:#b09a6a"></i>Dirt roads to each camp</span><span><i style="background:#ffffff"></i>You, in the buggy</span>',
+        '<span><i style="background:#b09a6a"></i>Dirt roads to each camp</span><span><i style="background:#ffffff"></i>You, in the buggy</span>' +
+        '<span><i style="background:#8a4ad8"></i>Something odd to find (later…)</span><span><i style="background:#ffd24a"></i>Found it!</span>',
     });
     this.hud.setSettings(this.settings, (s) => {
       this.settings = s;
@@ -194,7 +227,8 @@ export class MoonGame {
     this.ready = true;
     this.sound.music.start();
     this.clock.start();
-    this.hud.showBanner('EPILOGUE: THE MOON', "Everyone made it! Load an army's supplies at the main base and drive them along the dirt road to their camp. Space jumps: the Moon's gravity is weak");
+    if (SKIP_TO_WONDERS) this.skipToWonders();
+    else this.hud.showBanner('EPILOGUE: THE MOON', "Everyone made it! Load an army's supplies at the main base and drive them along the dirt road to their camp. Space jumps: the Moon's gravity is weak");
     if (import.meta.env.DEV) (window as unknown as { moon: MoonGame }).moon = this;
     requestAnimationFrame(this.animate);
   }
@@ -230,7 +264,35 @@ export class MoonGame {
     glow.scale.setScalar(260 * 3.2);
     glow.position.copy(earth.position).multiplyScalar(1.01);
     this.sky.add(glow);
+    this.sky.add(this.ringedPlanet());
     this.scene.add(this.sky);
+  }
+
+  /** A pastel-striped planet with a ring, tipped over, hanging above the northern mountains. */
+  private ringedPlanet(): THREE.Group {
+    const c = document.createElement('canvas');
+    c.width = 64;
+    c.height = 256;
+    const ctx = c.getContext('2d') as CanvasRenderingContext2D;
+    const bands = ['#f7b8c8', '#f3d8a8', '#c8b0f0', '#f7c0a0', '#e8a8d8', '#f8e0b8', '#b8c8f0', '#f7b8c8'];
+    bands.forEach((col, i) => {
+      ctx.fillStyle = col;
+      ctx.fillRect(0, i * 32, 64, 32);
+    });
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    const group = new THREE.Group();
+    const planet = new THREE.Mesh(new THREE.SphereGeometry(150, 40, 20), new THREE.MeshStandardMaterial({ map: tex, emissive: 0xffffff, emissiveMap: tex, emissiveIntensity: 0.55, roughness: 0.9, fog: false }));
+    group.add(planet);
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(200, 330, 64, 1),
+      new THREE.MeshBasicMaterial({ color: 0xf0e0c8, transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false, fog: false }),
+    );
+    ring.rotation.x = Math.PI / 2 - 0.35;
+    group.add(ring);
+    group.rotation.z = 0.4;
+    group.position.copy(PLANET_DIRECTION).multiplyScalar(3300);
+    return group;
   }
 
   private applySettings(): void {
@@ -430,9 +492,110 @@ export class MoonGame {
     const left = this.unbuilt.length;
     if (left === 0) {
       this.victoryAt = this.time;
-      this.hud.showVictory('All four armies have their Moon bases! The Green, Red, Tan and Blue armies are home at last.', 'Keep driving around and enjoy the Moon!');
+      this.hud.showVictory('All four armies have their Moon bases! The Green, Red, Tan and Blue armies are home at last.', 'But the road crews have one more surprise…');
       this.sound.music.fanfare();
+      this.roadWorksIn = ROADWORKS_DELAY;
     } else this.hud.showBanner(`${left} CAMP${left === 1 ? '' : 'S'} TO GO`, 'Back to the main base for the next army\'s supplies');
+  }
+
+  // ---------- the Weird Side ----------
+
+  /** The road over the mountains is built: the canyon and the valley open, and the hunt for wonders starts. */
+  private openWeirdSide(): void {
+    this.roadWorks.finish();
+    this.terrain.weirdOpen = true;
+    this.wonders.root.visible = true;
+    this.wonders.open = true;
+    this.map.data.weird = true;
+    this.refreshMap();
+  }
+
+  /** The road crews set off: the scene plays with the camera taken over. */
+  private startRoadWorks(): void {
+    this.roadWorksIn = null;
+    this.hud.hideVictory();
+    this.victoryAt = null;
+    this.roadWorks.begin();
+    this.wonders.root.visible = true;
+    this.cutCameraReady = false;
+    this.sound.music.alarm();
+    this.hud.showBanner('ONE MORE JOB…', 'The road crews are building a road over the mountains');
+  }
+
+  private readonly roadFx: RoadFx = {
+    boom: (at, size) => this.effects.explode(at, size),
+    dust: (at, count, speed) => this.dust.burst(at, count, speed, 0.35),
+    confetti: (at) => this.effects.confetti(at),
+    sound: (name, at, volume, rate) => this.sound.play(name, { at, volume, rate, minGap: 0.05 }),
+    banner: (title, subtitle) => this.hud.showBanner(title, subtitle),
+    stinger: () => this.sound.music.stinger(),
+  };
+
+  private stepRoadWorks(dt: number, skip: boolean): void {
+    const rw = this.roadWorks;
+    let done = skip && rw.time > 2.5;
+    if (done) rw.finish();
+    else done = rw.update(dt, this.roadFx);
+    const shot = rw.cameraShot();
+    const k = this.cutCameraReady ? 1 - Math.exp(-6 * dt) : 1;
+    this.cutCameraReady = true;
+    this.camera.position.lerp(shot.pos, k);
+    this.camLook.lerp(shot.look, k);
+    this.camera.lookAt(this.camLook);
+    const t = rw.time;
+    this.hud.setFade(THREE.MathUtils.clamp(Math.max(1 - t / 0.8, (t - 18.6) / 0.8), 0, 1), '#000000');
+    this.effects.update(dt);
+    this.dust.update(dt, (x, z) => this.terrain.heightAt(x, z));
+    this.base.update(dt);
+    this.wonders.update(dt, this.buggy, this.wonderFx);
+    for (const c of this.camps) c.update(dt, 999);
+    if (!done) return;
+    // The road's open: the buggy's waiting at the start of it.
+    this.openWeirdSide();
+    this.buggy.setCargo(0, 0);
+    this.buggy.placeAt(NORTH_START.x, NORTH_START.z - 6, Math.PI, this.terrain);
+    this.camYaw = this.buggy.yaw;
+    this.camFocus.copy(this.buggy.pos);
+    this.fadeIn = 0.8;
+    this.hud.showBanner('THE WEIRD SIDE OF THE MOON', 'Follow the new road north over the mountains and see what you can find');
+  }
+
+  /** For `?wonders`: every camp built at once, the road open, and the buggy at the start of it. */
+  private skipToWonders(): void {
+    for (const camp of this.camps) {
+      camp.beginBuild();
+      camp.finishBuild();
+      this.base.bayDone(camp.faction.id);
+      for (const s of camp.solidsWorld()) this.terrain.solids.add(s);
+    }
+    this.openWeirdSide();
+    this.buggy.placeAt(NORTH_START.x, NORTH_START.z - 6, Math.PI, this.terrain);
+    this.camYaw = this.buggy.yaw;
+    this.camFocus.copy(this.buggy.pos);
+    this.hud.showBanner('THE WEIRD SIDE OF THE MOON', 'Follow the new road north over the mountains and see what you can find');
+  }
+
+  private readonly wonderFx: WonderFx = {
+    say: (text, color) => this.hud.showCallout(text, color),
+    sound: (name, at, volume, rate) => this.sound.play(name, { at, volume, rate, minGap: 0.12 }),
+    dust: (at, count, speed) => this.dust.burst(at, count, speed, 0.3),
+    confetti: (at) => this.effects.confetti(at),
+    boom: (at, size) => this.effects.explode(at, size),
+    splash: (at, size) => this.effects.splash(at, size),
+    found: (def, count, total) => this.wonderFound(def, count, total),
+  };
+
+  private wonderFound(def: WonderDef, count: number, total: number): void {
+    this.lastFound = def.title;
+    this.hud.showBanner(def.title, `${def.line}  (${count} / ${total})`);
+    this.sound.music.stinger();
+    this.refreshMap();
+    if (count === total) {
+      this.victoryAt = this.time;
+      this.hud.showVictory(`You found all ${total} wonders of the Weird Side! Cooper the explorer!`, 'Keep driving: the Moon is all yours');
+      this.sound.music.fanfare();
+      for (let i = 0; i < 10; i++) this.effects.confetti(this.buggy.pos.clone().add(new THREE.Vector3((Math.random() - 0.5) * 30, 12 + Math.random() * 10, (Math.random() - 0.5) * 30)));
+    }
   }
 
   // ---------- the frame ----------
@@ -459,6 +622,15 @@ export class MoonGame {
       this.updateLoose(dt);
       return;
     }
+    if (this.roadWorksIn !== null) {
+      this.roadWorksIn -= dt;
+      if (this.roadWorksIn <= 0) this.startRoadWorks();
+    }
+    if (this.roadWorks.playing) {
+      this.sound.updateEngine(0, 'jeep', false);
+      this.stepRoadWorks(dt, input.menu.confirm);
+      return;
+    }
     if (this.fadeIn > 0) {
       this.fadeIn = Math.max(0, this.fadeIn - dt);
       this.hud.setFade(this.fadeIn / 0.8, '#000000');
@@ -483,6 +655,12 @@ export class MoonGame {
     const near = (c: Camp) => Math.hypot(b.pos.x - c.center.x, b.pos.z - c.center.z);
     for (const c of this.camps) c.update(dt, near(c));
     this.base.update(dt);
+    this.wonders.update(dt, b, this.wonderFx);
+    const inValley = this.terrain.weirdOpen && valleyQ(b.pos.x, b.pos.z) < 1;
+    if (inValley !== this.inValley) {
+      this.inValley = inValley;
+      this.sound.music.setWeird(inValley);
+    }
     this.effects.update(dt);
     this.dust.update(dt, (x, z) => this.terrain.heightAt(x, z));
     this.updateCamera(dt);
@@ -573,6 +751,7 @@ export class MoonGame {
     d.player = { x: b.pos.x, z: b.pos.z, yaw: b.yaw };
     d.camps = this.camps.map((c) => ({ x: c.center.x, z: c.center.z, color: c.faction.color, built: c.built, delivered: c.delivered, need: CRATES_NEEDED }));
     d.crates = this.loose.filter((c) => !c.to).map((c) => ({ x: c.mesh.position.x, z: c.mesh.position.z, color: c.color }));
+    d.wonders = this.wonders.mapPoints();
     this.mapView = this.map.view({ ...NO_MAP, playerX: b.pos.x, playerZ: b.pos.z, playerYaw: b.yaw });
   }
 
@@ -599,9 +778,17 @@ export class MoonGame {
 
   /** The way to go next: the camp its crates belong to, else the nearest bay that still has a camp waiting. */
   private waypoint(): HUDState['waypoint'] {
-    if (this.hud.paused || this.building || this.victoryAt !== null) return null;
+    if (this.hud.paused || this.building || this.roadWorks.playing || this.victoryAt !== null) return null;
     const b = this.buggy;
     const p = b.pos;
+    if (this.terrain.weirdOpen) {
+      // Off to the Weird Side, then on to the nearest thing not found yet.
+      if (!this.inValley) return this.waypointTo(WEIRD_GATE, `THE WEIRD SIDE ${Math.round(Math.hypot(WEIRD_GATE.x - p.x, WEIRD_GATE.z - p.z))} m`);
+      const next = this.wonders.nearestUnfound(p.x, p.z);
+      if (!next) return null;
+      const at = next.group.position;
+      return this.waypointTo(new THREE.Vector3(at.x, at.y + 8, at.z), `??? ${Math.round(Math.hypot(at.x - p.x, at.z - p.z))} m`);
+    }
     const carrying = this.camps.find((c) => !c.built && b.cargo > 0 && c.faction.color === b.cargoColor);
     if (carrying) {
       const d = Math.round(Math.hypot(carrying.drop.x - p.x, carrying.drop.z - p.z));
@@ -629,7 +816,9 @@ export class MoonGame {
         return b.grounded ? `Unloading… ${camp.delivered + camp.incoming} / ${CRATES_NEEDED}` : 'Land first to unload';
       }
     }
-    if (this.time < 20 && b.cargo === 0) return `Drive into a coloured supply bay to load that army's crates. ${usingGamepad ? 'A' : 'Space'} jumps: try it!`;
+    if (this.wonders.inCannon) return 'FUSE LIT! Hold on to your helmet…';
+    if (this.terrain.weirdOpen && !this.inValley && b.pos.z > -560) return 'Follow the new road north, over the mountains to the Weird Side';
+    if (this.time < 20 && b.cargo === 0 && this.unbuilt.length > 0) return `Drive into a coloured supply bay to load that army's crates. ${usingGamepad ? 'A' : 'Space'} jumps: try it!`;
     if (b.cargo === 0 && this.unbuilt.length > 0) return 'Load up at a supply bay at the main base, then follow the beam to that army\'s camp';
     if (b.airTime > 2.2) return 'WHEEEE!';
     return null;
@@ -641,18 +830,33 @@ export class MoonGame {
     const ground = this.terrain.heightAt(b.pos.x, b.pos.z);
     const colorName = FACTIONS.find((f) => f.color === b.cargoColor)?.name;
     const k = (key: string, what: string) => `<span class="key">${key}</span>${what}`;
+    const weird = this.terrain.weirdOpen;
+    const found = this.wonders.foundCount;
+    const total = this.wonders.total;
+    const hidden = this.wonders.entries.filter((e) => e.def.secret && !e.found).length;
     return {
-      title: 'MOON SUPPLY RUN',
-      objectives: this.camps.map((c) => ({
-        label: c.built ? `${c.faction.name} Moon base built` : `${c.faction.name} camp: ${c.delivered} / ${CRATES_NEEDED} crates`,
-        done: c.built,
-      })),
+      title: weird ? 'THE WEIRD SIDE' : 'MOON SUPPLY RUN',
+      objectives: weird
+        ? [
+            { label: 'All four Moon bases built', done: true },
+            { label: `Wonders found: ${found} / ${total}`, done: found === total },
+          ]
+        : this.camps.map((c) => ({
+            label: c.built ? `${c.faction.name} Moon base built` : `${c.faction.name} camp: ${c.delivered} / ${CRATES_NEEDED} crates`,
+            done: c.built,
+          })),
       prompt: this.prompt(usingGamepad),
       downFor: 0,
       jam: 0,
       stealth: null,
       status: [
-        b.cargo > 0 && colorName ? `Carrying ${b.cargo} ${colorName} crate${b.cargo === 1 ? '' : 's'}` : 'Bed empty',
+        weird
+          ? this.lastFound
+            ? `Last found: ${this.lastFound.charAt(0)}${this.lastFound.slice(1).toLowerCase()}${hidden && found + hidden === total ? `  ·  ${hidden} hiding somewhere…` : ''}`
+            : 'Drive about and find the odd things'
+          : b.cargo > 0 && colorName
+            ? `Carrying ${b.cargo} ${colorName} crate${b.cargo === 1 ? '' : 's'}`
+            : 'Bed empty',
         `Speed ${Math.round(speed * 3.6)} km/h  ·  Height ${Math.max(0, Math.round(b.pos.y - ground - 0.62))} m${this.stats.lost ? `  ·  Crates lost ${this.stats.lost}` : ''}`,
       ],
       vehicle: {
@@ -694,8 +898,8 @@ export class MoonGame {
       buddyRoster: [],
       buddyOut: [],
       buddyMax: 0,
-      cinematic: this.building !== null,
-      cinematicLabel: this.building ? `● ${this.building.faction.name.toUpperCase()} MOON BASE` : '',
+      cinematic: this.building !== null || this.roadWorks.playing,
+      cinematicLabel: this.building ? `● ${this.building.faction.name.toUpperCase()} MOON BASE` : this.roadWorks.playing ? '● ROAD WORKS' : '',
       waypoint: this.waypoint(),
       enemyBasesLeft: 0,
       enemyBasesTotal: 0,
@@ -721,11 +925,12 @@ export class MoonGame {
       this.camera.lookAt(...this.debugCam.look);
     }
     // The shadow follows whatever the camera's watching.
-    const watch = this.building ? this.building.center : this.buggy.pos;
+    const watch = this.building ? this.building.center : this.roadWorks.playing ? this.camLook : this.buggy.pos;
     this.sun.position.copy(watch).addScaledVector(SUN_DIRECTION, 160);
     this.sun.target.position.copy(watch);
     this.sun.target.updateMatrixWorld();
     this.sky.position.copy(this.camera.position);
+    this.wonders.cull(this.camera.position);
     this.renderer.setViewport(0, 0, w, h);
     this.renderer.render(this.scene, this.camera);
   }
@@ -780,10 +985,13 @@ export class MoonGame {
       buggy: this.buggy,
       terrain: this.terrain,
       camps: this.camps,
+      wonders: this.wonders,
+      valley: VALLEY,
       loose: this.loose,
       stats: this.stats,
       camera: this.camera,
-      state: () => ({ building: !!this.building, built: this.camps.map((c) => c.built), delivered: this.camps.map((c) => c.delivered), cargo: this.buggy.cargo }),
+      roadWorks: this.roadWorks,
+      state: () => ({ building: !!this.building, roadWorks: this.roadWorks.playing, built: this.camps.map((c) => c.built), delivered: this.camps.map((c) => c.delivered), cargo: this.buggy.cargo, found: this.wonders.foundCount }),
     };
   }
 }

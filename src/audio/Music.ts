@@ -179,6 +179,26 @@ const MOON_SONG: Song = {
 };
 
 /** The siege bonus level plays the castle jig. */
+/** The Moon's Weird Side: a bouncy, slightly wonky marimba tune in whole tones over bongos. */
+const WEIRD_SONG: Song = {
+  bpm: 116,
+  chords: [[C, 'maj'], [C + 2, 'maj'], [C, 'maj'], [C - 2, 'maj'], [C + 4, 'min'], [C + 2, 'maj'], [C + 6, 'maj'], [C + 2, 'maj']],
+  drums: {
+    bongoHi: ['x..x..x...x.x...', 'x..x..x...x.x.x.'],
+    bongoLo: ['..x.....x.....x.'],
+    hat: ['o...o...o...o...'],
+  },
+  bass: 'r..o..r.f..o..r.',
+  bassWave: 'triangle',
+  lead: 'marimba',
+  rhythm: ['x.x...x.x.x.....', 'x...x.x...x.x.x.', '..x.x...x...x...', 'x.x.x.x.....x...'],
+  key: C,
+  tuneNotes: [0, 2, 4, 6, 8, 10, 12],
+  tuneOctave: 2,
+  pad: false,
+  seed: 4242,
+};
+
 const SONGS: Record<Mission, Song> = { ...BASE_SONGS, 6: BASE_SONGS[3], 7: MOON_SONG };
 
 const LOOKAHEAD = 0.15; // seconds of notes scheduled ahead
@@ -223,7 +243,15 @@ export class Music {
 
   /** Swaps to the night song (or back to the mission's own) from the top of its loop. */
   setNight(night: boolean): void {
-    const song = night ? NIGHT_SONG : SONGS[this.mission];
+    this.use(night ? NIGHT_SONG : SONGS[this.mission]);
+  }
+
+  /** Swaps to the Weird Side's tune on the Moon (or back to the mission's own). */
+  setWeird(weird: boolean): void {
+    this.use(weird ? WEIRD_SONG : SONGS[this.mission]);
+  }
+
+  private use(song: Song): void {
     if (song === this.song) return;
     this.song = song;
     this.loopSteps = song.chords.length * 16 * 2;

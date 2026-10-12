@@ -481,6 +481,41 @@ landing can shake a crate off the bed).
   Back / R back to the main base. In the air W / S tip the nose and A / D spin.
 - Code is in `src/moon/` (`MoonGame` is the level, `Buggy` the physics, `Camp` the build sequence).
 
+### The Weird Side
+
+Build all four Moon bases and the armies have one more surprise. Their road crews (a bulldozer, a
+dump truck, a cement mixer and a steamroller) drive out of the back of the main base laying a new
+road north, blow up the rockfall that blocks the canyon through the mountains (you can see it, with
+a ROAD CLOSED sign, from the north edge of the plain beforehand), and the camera flies down the
+canyon to the **Weird Side of the Moon**: a valley of candy-coloured dust, crystals, a rainbow over
+the lot and a whale swimming round the sky. The buggy is put at the start of the new road.
+
+There are **40 odd things to find**. Drive close to one and it's found: its name comes up with a
+joke and the count. The map shows each one as a purple **?** until it's found (then a gold star),
+and the arrow points to the nearest one you haven't found. One of them is hiding and isn't on the
+map at all. Find the lot for a fanfare. The music changes to a bongo-and-marimba tune in the valley.
+
+- **Things to play on:** the bouncy castle's trampoline (and the castle floor) fling the buggy
+  sky-high; drive into the funnel at the back of the **circus cannon** to be fired across the valley
+  at a bullseye; drive through the **blue door** and you come out of the **red door** on the other
+  side of the valley (and back again); hit the **zoom arrows** and the **rainbow ramp** to jump six
+  buses; and drive down the **bowling lane** to knock the pins flying (all ten is a strike, and the
+  scoreboard counts them; the pins stand back up after a while).
+- **The rest, roughly south to north:** the road crew's tea break by the canyon, Echo Canyon, the
+  welcome arch, a dragon asleep on its gold, an upside-down house, the moat guys on holiday at a duck
+  pond, the shark in a bib, an alien picnic, a UFO getting a parking ticket, the lost socks
+  department, a bath, Mr Moonwhippy's ice cream van, the rabbit in the Moon pounding mochi, a giant
+  wedge of cheese with mice in helmets, the cow jumping over the Moon (with the dish and the spoon),
+  a giant toaster, a living room with the telly on, the human pyramid, zombie aerobics, the Moon
+  disco, Crate-henge, a dinosaur in a fishbowl helmet, the great jam sandwich, penguins on a slide,
+  the end of the rainbow, the great snail race, a pirate ship looking for the sea, a washing line of
+  enormous pants, the Man in the Moon having a lie-in, a soldier fishing for stars, the Moon's worst
+  traffic jam, Moon golf and the space whale.
+- To jump straight there (for trying it out), open the game with `?mission=7&wonders`: every camp is
+  built and the road is open.
+- Code is in `src/moon/wonders/` (`index.ts` lists every tableau and where it stands, `Wonders.ts`
+  finds them and runs the gadgets) and `src/moon/RoadWorks.ts` (the road-building scene).
+
 ## Bonus: Under Siege
 
 A second bonus level, in the level select as **6 · Bonus: Under Siege**: the castle mission with

@@ -81,7 +81,7 @@ function pathPoint(side: 1 | -1, along: number): { x: number; z: number } {
  * A soldier lounging in a rubber ring: leaning back with his hands behind his head, legs over the
  * front of the ring and boots in the water, some in sunglasses. Faces -Z; the water line is y = 0.
  */
-function buildLounger(army: number, ringColor: number, duck: boolean, shades: boolean): { root: THREE.Group; figure: THREE.Group } {
+export function buildLounger(army: number, ringColor: number, duck: boolean, shades: boolean): { root: THREE.Group; figure: THREE.Group } {
   const root = new THREE.Group();
   const ring = new PartBuilder();
   const rubber = plastic(ringColor);
