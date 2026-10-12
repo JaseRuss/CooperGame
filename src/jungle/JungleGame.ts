@@ -99,6 +99,8 @@ const START_REVEAL = 90;
 const WALK_REVEAL = 26;
 const LADDER_REACH = 1.4;
 const HATCH_DWELL = 0.7;
+/** After climbing down, seconds before the ladder will take him up again, so he can walk away from it. */
+const LADDER_COOLDOWN = 2.5;
 const VICTORY_DELAY = 11;
 
 const CONTROLS =
@@ -198,6 +200,7 @@ export class JungleGame {
   private climb: Climb | null = null;
   private onTower: Lookout | null = null;
   private hatchDwell = 0;
+  private ladderCooldown = 0;
   private scouted = false;
   private airSupportCalled = false;
   private victoryAt: number | null = null;
@@ -756,8 +759,9 @@ export class JungleGame {
       this.scouted = true;
       this.hud.showBanner('FROM THE LOOKOUT', before ? 'More of the map is yours. Walk to the gap in the rail at the head of the ladder to climb down' : 'The country round the tower is on your map. Walk to the gap in the rail at the head of the ladder to climb down');
     } else {
-      this.player.teleport(c.tower.foot.x, c.tower.foot.z + 0.6, Math.PI, 0);
+      this.player.teleport(c.tower.foot.x, c.tower.foot.z + LADDER_REACH + 0.6, Math.PI, 0);
       this.onTower = null;
+      this.ladderCooldown = LADDER_COOLDOWN;
     }
   }
 
@@ -881,7 +885,10 @@ export class JungleGame {
             if (this.hatchDwell > HATCH_DWELL) this.startClimb(this.onTower, false);
           } else this.hatchDwell = 0;
         } else {
-          for (const l of this.lookouts) if (Math.hypot(p.x - l.foot.x, p.z - l.foot.z) < LADDER_REACH) this.startClimb(l, true);
+          this.ladderCooldown = Math.max(0, this.ladderCooldown - dt);
+          if (this.ladderCooldown === 0) {
+            for (const l of this.lookouts) if (Math.hypot(p.x - l.foot.x, p.z - l.foot.z) < LADDER_REACH) this.startClimb(l, true);
+          }
         }
       }
     }

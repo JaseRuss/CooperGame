@@ -596,8 +596,8 @@ export class HUD {
     const tabRow = el('div', 'tabs', this.overlay);
     this.tabs = {
       map: el('div', 'stencil tab', tabRow, 'MAP'),
-      options: el('div', 'stencil tab', tabRow, 'OPTIONS'),
       levels: el('div', 'stencil tab', tabRow, 'LEVELS'),
+      options: el('div', 'stencil tab', tabRow, 'OPTIONS'),
     };
     this.tabs.map.addEventListener('click', () => this.showPage('map'));
     this.tabs.options.addEventListener('click', () => this.showPage('options'));
@@ -831,7 +831,7 @@ export class HUD {
     if (!this.pausedOpen) return;
     if (this.page === 'map') {
       if (menu.options || menu.right) {
-        this.showPage('options');
+        this.showPage('levels');
         this.sfx('move');
       } else if (menu.back) this.toggleBigMap();
       return;
@@ -842,7 +842,12 @@ export class HUD {
         this.sfx('back');
         return;
       }
-      if (menu.left || menu.options) {
+      if (menu.left) {
+        this.showPage('map');
+        this.sfx('move');
+        return;
+      }
+      if (menu.right || menu.options) {
         this.showPage('options');
         this.sfx('move');
         return;
@@ -851,7 +856,7 @@ export class HUD {
       if (menu.up) this.levelIndex = (this.levelIndex + n - 1) % n;
       if (menu.down) this.levelIndex = (this.levelIndex + 1) % n;
       if (menu.up || menu.down) this.sfx('move');
-      if (menu.confirm || menu.right) this.startLevel(MISSIONS[this.levelIndex].mission);
+      if (menu.confirm) this.startLevel(MISSIONS[this.levelIndex].mission);
       this.renderLevels();
       return;
     }
@@ -975,9 +980,9 @@ export class HUD {
     }
     this.footer.textContent =
       page === 'map'
-        ? 'Start / M: resume  ·  X / O: options  ·  B / Esc: resume'
+        ? 'Start / M: resume  ·  X / O: levels  ·  B / Esc: resume'
         : page === 'levels'
-          ? 'D-pad / arrows: choose  ·  A / Enter: start from the beginning  ·  B / Esc: back to map'
+          ? 'D-pad / arrows: choose  ·  A / Enter: start from the beginning  ·  →: options  ·  B / Esc: back to map'
           : this.nameEdit
           ? 'Type, or D-pad ↑↓: letter  ·  ←→: move  ·  X / Backspace: delete  ·  A / Enter: save  ·  B / Esc: cancel'
           : 'D-pad / arrows: choose and change  ·  A / Enter: change  ·  X / O: levels  ·  B / Esc: back to map';

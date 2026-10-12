@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import type { AssetLibrary, AssetGroup } from '../world/AssetLibrary';
-import { PartBuilder, tubeZ } from '../utils/modelKit';
+import { PartBuilder, sandbagGeometry, tubeZ } from '../utils/modelKit';
 import { plastic, shade } from '../utils/plastic';
 
 const WOOD = 0x8b5e38;
@@ -81,50 +81,105 @@ export class Lookout {
     this.hatch = new THREE.Vector3(x, LOOKOUT_TOP, z + 2.9);
     const wood = plastic(WOOD);
     const dark = plastic(WOOD_DARK);
+    const plank = plastic(shade(WOOD, 1.15));
+    const stone = plastic(0x8d8f88);
+    const roofMat = plastic(0x8a6a3a);
+    const roofDark = plastic(shade(0x8a6a3a, 0.72));
+    const cloth = plastic(0xc4a468);
+    const bagMat = plastic(0xb5a47a);
+    const iron = plastic(0x4a4d52);
+    const lamp = plastic(0xffe9a8);
     const p = new PartBuilder();
+    const T = LOOKOUT_TOP;
     const corners = [[-1, -1], [1, -1], [1, 1], [-1, 1]];
+    const v = (px: number, py: number, pz: number) => new THREE.Vector3(px, py, pz);
     for (const [sx, sz] of corners) {
-      p.beam(new THREE.Vector3(x + sx * 3.9, 0, z + sz * 3.9), new THREE.Vector3(x + sx * 2.9, LOOKOUT_TOP, z + sz * 2.9), 0.7, dark, true);
-      solids.cylinder(x + sx * 3.4, z + sz * 3.4, 0.55, LOOKOUT_TOP);
+      // Stone footing, then a leg that leans in towards the platform.
+      p.add(new THREE.BoxGeometry(1.5, 0.5, 1.5), stone, x + sx * 3.9, 0.25, z + sz * 3.9);
+      p.add(new THREE.BoxGeometry(1.1, 0.2, 1.1), stone, x + sx * 3.9, 0.6, z + sz * 3.9);
+      p.beam(v(x + sx * 3.9, 0, z + sz * 3.9), v(x + sx * 2.9, T, z + sz * 2.9), 0.7, dark, true);
+      // Iron straps where the braces meet the leg.
+      for (const y of [4.5, 9, 13]) {
+        const inset = 3.9 - (y / T) * 1.0;
+        p.add(new THREE.BoxGeometry(0.85, 0.22, 0.85), iron, x + sx * inset, y, z + sz * inset);
+      }
+      solids.cylinder(x + sx * 3.4, z + sz * 3.4, 0.55, T);
     }
-    // Cross braces on each face, at three heights.
+    // Ring beams and cross braces on each face, at three heights.
     for (const y of [4.5, 9, 13]) {
-      const inset = 3.9 - (y / LOOKOUT_TOP) * 1.0;
+      const inset = 3.9 - (y / T) * 1.0;
       for (let i = 0; i < 4; i++) {
         const [ax, az] = corners[i];
         const [bx, bz] = corners[(i + 1) % 4];
-        p.beam(new THREE.Vector3(x + ax * inset, y, z + az * inset), new THREE.Vector3(x + bx * inset, y + 2.2, z + bz * inset), 0.3, wood);
-        p.beam(new THREE.Vector3(x + ax * inset, y + 2.2, z + az * inset), new THREE.Vector3(x + bx * inset, y, z + bz * inset), 0.3, wood);
+        p.beam(v(x + ax * inset, y, z + az * inset), v(x + bx * inset, y, z + bz * inset), 0.34, dark);
+        p.beam(v(x + ax * inset, y, z + az * inset), v(x + bx * inset, y + 2.2, z + bz * inset), 0.3, wood);
+        p.beam(v(x + ax * inset, y + 2.2, z + az * inset), v(x + bx * inset, y, z + bz * inset), 0.3, wood);
       }
     }
-    // Platform and railing.
-    p.add(new THREE.BoxGeometry(7.6, 0.4, 7.6), wood, x, LOOKOUT_TOP - 0.2, z);
-    solids.box(x, LOOKOUT_TOP - 0.2, z, 3.8, 0.2, 3.8);
-    for (let s = -1; s <= 1; s += 2) {
-      p.add(new THREE.BoxGeometry(7.6, 0.14, 0.14), wood, x, LOOKOUT_TOP + 1.05, z + s * 3.7);
-      p.add(new THREE.BoxGeometry(0.14, 0.14, 7.6), wood, x + s * 3.7, LOOKOUT_TOP + 1.05, z);
+    // Under the deck: joists, with a fascia round the edge.
+    p.add(new THREE.BoxGeometry(7.8, 0.3, 7.8), dark, x, T - 0.55, z);
+    for (let i = -3; i <= 3; i++) p.add(new THREE.BoxGeometry(0.22, 0.4, 7.4), wood, x + i, T - 0.35, z);
+    // The deck itself: planks in two tones.
+    for (let i = 0; i < 16; i++) {
+      p.add(new THREE.BoxGeometry(0.46, 0.14, 7.6), i % 2 ? plank : wood, x - 3.5 + i * 0.467, T - 0.13, z);
     }
-    for (const [sx, sz] of corners) p.add(new THREE.BoxGeometry(0.3, 5, 0.3), dark, x + sx * 3.6, LOOKOUT_TOP + 2.5, z + sz * 3.6);
+    solids.box(x, T - 0.2, z, 3.8, 0.2, 3.8);
+    // Rails: top and middle on every side, the south ones split at the gap, with posts between.
+    for (const h of [1.05, 0.55]) {
+      p.add(new THREE.BoxGeometry(7.6, 0.14, 0.14), wood, x, T + h, z - 3.7);
+      for (const sx of [-1, 1]) p.add(new THREE.BoxGeometry(0.14, 0.14, 7.6), wood, x + sx * 3.7, T + h, z);
+    }
+    for (const h of [1.05, 0.55]) {
+      p.add(new THREE.BoxGeometry(3.2, 0.14, 0.14), wood, x - 2.5, T + h, z + 3.7);
+      p.add(new THREE.BoxGeometry(3.2, 0.14, 0.14), wood, x + 2.5, T + h, z + 3.7);
+    }
+    for (const [sx, sz] of corners) {
+      p.add(new THREE.BoxGeometry(0.3, 5, 0.3), dark, x + sx * 3.6, T + 2.5, z + sz * 3.6);
+      p.add(new THREE.BoxGeometry(0.42, 0.14, 0.42), iron, x + sx * 3.6, T + 0.1, z + sz * 3.6);
+    }
     for (let i = -3; i <= 3; i++) {
-      p.add(new THREE.BoxGeometry(0.1, 1, 0.1), wood, x + i, LOOKOUT_TOP + 0.5, z - 3.7);
-      p.add(new THREE.BoxGeometry(0.1, 1, 0.1), wood, x - 3.7, LOOKOUT_TOP + 0.5, z + i);
-      p.add(new THREE.BoxGeometry(0.1, 1, 0.1), wood, x + 3.7, LOOKOUT_TOP + 0.5, z + i);
-      if (Math.abs(i) > 1) p.add(new THREE.BoxGeometry(0.1, 1, 0.1), wood, x + i, LOOKOUT_TOP + 0.5, z + 3.7);
+      p.add(new THREE.BoxGeometry(0.1, 1, 0.1), wood, x + i, T + 0.5, z - 3.7);
+      p.add(new THREE.BoxGeometry(0.1, 1, 0.1), wood, x - 3.7, T + 0.5, z + i);
+      p.add(new THREE.BoxGeometry(0.1, 1, 0.1), wood, x + 3.7, T + 0.5, z + i);
+      if (Math.abs(i) > 1) p.add(new THREE.BoxGeometry(0.1, 1, 0.1), wood, x + i, T + 0.5, z + 3.7);
     }
-    solids.box(x, LOOKOUT_TOP + 0.7, z - 3.7, 3.8, 0.7, 0.15);
-    solids.box(x - 3.7, LOOKOUT_TOP + 0.7, z, 0.15, 0.7, 3.8);
-    solids.box(x + 3.7, LOOKOUT_TOP + 0.7, z, 0.15, 0.7, 3.8);
-    solids.box(x - 2.4, LOOKOUT_TOP + 0.7, z + 3.7, 1.4, 0.7, 0.15);
-    solids.box(x + 2.4, LOOKOUT_TOP + 0.7, z + 3.7, 1.4, 0.7, 0.15);
+    solids.box(x, T + 0.7, z - 3.7, 3.8, 0.7, 0.15);
+    solids.box(x - 3.7, T + 0.7, z, 0.15, 0.7, 3.8);
+    solids.box(x + 3.7, T + 0.7, z, 0.15, 0.7, 3.8);
+    solids.box(x - 2.4, T + 0.7, z + 3.7, 1.4, 0.7, 0.15);
+    solids.box(x + 2.4, T + 0.7, z + 3.7, 1.4, 0.7, 0.15);
     // The ladder's gap is open to the eye but shut to feet: the way down is the hatch spot just inside it.
-    solids.box(x, LOOKOUT_TOP + 0.7, z + 3.75, 1.1, 0.7, 0.1);
-    // Roof.
-    p.add(new THREE.ConeGeometry(6.2, 3.2, 4).rotateY(Math.PI / 4), plastic(0x8a6a3a), x, LOOKOUT_TOP + 6.6, z);
-    // The ladder up the south face.
-    for (const s of [-0.5, 0.5]) p.add(new THREE.BoxGeometry(0.14, LOOKOUT_TOP, 0.14), dark, x + s, LOOKOUT_TOP / 2, z + 3.9 + 0.35);
-    for (let y = 0.5; y < LOOKOUT_TOP; y += 0.6) p.add(new THREE.BoxGeometry(1, 0.1, 0.1), wood, x, y, z + 4.25);
-    // A sack-cloth flag.
-    p.add(new THREE.CylinderGeometry(0.06, 0.08, 3.2, 6), dark, x + 3.6, LOOKOUT_TOP + 7.9, z - 3.6);
+    solids.box(x, T + 0.7, z + 3.75, 1.1, 0.7, 0.1);
+    // Sandbags stacked along the north rail, and a crate in the corner (just for looks).
+    const bag = sandbagGeometry(0.75, 0.26);
+    for (let i = 0; i < 5; i++) {
+      p.add(bag, bagMat, x - 2.2 + i * 0.85, T + 0.18, z - 3.1, 0, i % 2 ? 0.08 : -0.06);
+      if (i > 0 && i < 4) p.add(bag, bagMat, x - 1.8 + (i - 1) * 0.85, T + 0.6, z - 3.1, 0, 0.05);
+    }
+    p.add(new THREE.BoxGeometry(0.9, 0.7, 0.9), wood, x - 2.8, T + 0.35, z + 2.6, 0, 0.3);
+    // Roof: a stepped hip roof of shingle layers on a fascia, with a finial.
+    p.add(new THREE.BoxGeometry(7.4, 0.2, 0.2), dark, x, T + 5.05, z - 3.6);
+    p.add(new THREE.BoxGeometry(7.4, 0.2, 0.2), dark, x, T + 5.05, z + 3.6);
+    p.add(new THREE.BoxGeometry(0.2, 0.2, 7.4), dark, x - 3.6, T + 5.05, z);
+    p.add(new THREE.BoxGeometry(0.2, 0.2, 7.4), dark, x + 3.6, T + 5.05, z);
+    for (let k = 0; k < 3; k++) {
+      p.add(new THREE.ConeGeometry(6.6 - k * 1.45, 1.5, 4).rotateY(Math.PI / 4), k % 2 ? roofMat : roofDark, x, T + 5.75 + k * 0.85, z);
+    }
+    p.add(new THREE.ConeGeometry(0.35, 0.9, 6), iron, x, T + 8.65, z);
+    // A lamp on a bracket at the north-east corner, pointing out over the canopy.
+    p.beam(v(x + 3.6, T + 4.4, z - 3.6), v(x + 4.3, T + 4.2, z - 4.3), 0.14, iron);
+    p.add(new THREE.CylinderGeometry(0.4, 0.3, 0.6, 10), iron, x + 4.4, T + 4.2, z - 4.4, Math.PI / 2 - 0.4, Math.PI / 4);
+    p.add(new THREE.CylinderGeometry(0.32, 0.32, 0.08, 10), lamp, x + 4.62, T + 4.14, z - 4.62, Math.PI / 2 - 0.4, Math.PI / 4);
+    // The ladder up the south face, braced off the legs every few metres.
+    for (const s of [-0.5, 0.5]) p.add(new THREE.BoxGeometry(0.14, T, 0.14), dark, x + s, T / 2, z + 3.9 + 0.35);
+    for (let y = 0.5; y < T; y += 0.6) p.add(new THREE.BoxGeometry(1, 0.1, 0.1), wood, x, y, z + 4.25);
+    for (const y of [3, 6.5, 10, 13.5]) {
+      const inset = 3.9 - (y / T) * 1.0;
+      for (const s of [-0.5, 0.5]) p.beam(v(x + s, y, z + 4.25), v(x + s, y, z + inset), 0.12, iron);
+    }
+    // A sack-cloth flag on a pole from the roof.
+    p.add(new THREE.CylinderGeometry(0.06, 0.08, 3.2, 6), dark, x + 3.6, T + 6.9, z - 3.6);
+    p.add(new THREE.BoxGeometry(1.5, 0.9, 0.04), cloth, x + 4.4, T + 8.1, z - 3.6);
     p.buildInto(scene as unknown as THREE.Object3D);
   }
 }
