@@ -349,7 +349,7 @@ export class MoonBase {
     // The party: army men of every colour, jumping for joy in the low gravity.
     for (let i = 0; i < 52; i++) {
       const color = ARMIES[i % 4];
-      const mesh = createCheeringFigure(color);
+      const mesh = createCheeringFigure(color, true);
       const x = (this.rng() - 0.5) * 34;
       const z = -7 + this.rng() * 20;
       mesh.position.set(x, 0, z);
@@ -365,7 +365,7 @@ export class MoonBase {
       });
     }
     // The general on the stage, cheering too (a little more dignified).
-    const general = createCheeringFigure(shade(ARMY_GREEN, 1.35));
+    const general = createCheeringFigure(shade(ARMY_GREEN, 1.35), true);
     general.scale.setScalar(1.15);
     general.position.set(-1.2, 1.2, -14.5);
     scene.add(general);

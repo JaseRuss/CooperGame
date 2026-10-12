@@ -187,7 +187,7 @@ export class Camp {
 
     // The army, hopping about near the tents and waving.
     for (let i = 0; i < 7; i++) {
-      const mesh = createCheeringFigure(color);
+      const mesh = createCheeringFigure(color, true);
       const a = this.rng() * Math.PI * 2;
       const d = 4 + this.rng() * 9;
       const base = new THREE.Vector3(Math.cos(a) * d, 0, -6 + Math.sin(a) * d * 0.7);

@@ -148,12 +148,12 @@ export class Buggy {
     p.add(new THREE.CylinderGeometry(0.26, 0.26, 0.02, 5), white, 0, 0.39, 1.35);
     p.buildInto(g);
 
-    const driver = createCheeringFigure(ARMY_GREEN);
+    const driver = createCheeringFigure(ARMY_GREEN, true);
     driver.scale.setScalar(0.55);
     driver.rotation.y = Math.PI;
     driver.position.set(-0.42, 0.45, 0.02);
     g.add(driver);
-    const mate = createCheeringFigure(0xb8392e);
+    const mate = createCheeringFigure(0xb8392e, true);
     mate.scale.setScalar(0.55);
     mate.rotation.y = Math.PI;
     mate.position.set(0.42, 0.45, 0.02);

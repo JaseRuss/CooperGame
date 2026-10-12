@@ -126,7 +126,7 @@ export class MainBase {
     // The party carries on in front of the stage.
     const rng = mulberry32(2468);
     for (let i = 0; i < 26; i++) {
-      const mesh = createCheeringFigure(ARMIES[i % 4]);
+      const mesh = createCheeringFigure(ARMIES[i % 4], true);
       mesh.position.set((rng() - 0.5) * 26, 0, -8 + rng() * 6);
       mesh.rotation.y = Math.PI + (rng() - 0.5) * 0.6;
       scene.add(mesh);
