@@ -64,7 +64,7 @@ export interface PrisonHUD {
   /** Extra lines under the checklist (the raft's distance and hull, say). */
   status?: string[];
   /** A grenade launcher: rounds left, the magazine, and the reload (seconds left, and how long it takes). Shown in the weapon card. */
-  launcher?: { shots: number; max: number; reloadLeft: number; reloadTime: number };
+  launcher?: { shots: number; max: number; reloadLeft: number; reloadTime: number; name?: string };
   /** Plantable bombs, shown in the weapon card. */
   bombs?: { count: number; max: number };
   /** Driving a vehicle (the Moon epilogue's buggy): the card's labels and the key hints, in place of the on-foot ones. */
@@ -1106,7 +1106,7 @@ export class HUD {
     MISSIONS.forEach((level, n) => {
       const playing = level.mission === MISSION;
       const line = el('div', `opt level${n === this.levelIndex ? ' sel' : ''}`, this.levelList);
-      el('div', 'name', line, `${level.mission} · ${level.title}`);
+      el('div', 'name', line, level.preview ? level.title : `${level.mission} · ${level.title}`);
       el('b', playing ? 'pen' : '', el('div', 'val', line), playing ? 'PLAYING' : 'START ▶');
       line.addEventListener('mouseenter', () => {
         if (this.levelIndex === n) return;
@@ -1255,7 +1255,7 @@ export class HUD {
     const launcher = prison?.launcher;
     if (launcher) {
       const reloading = launcher.reloadLeft > 0;
-      this.rocketName.textContent = 'GRENADE LAUNCHER';
+      this.rocketName.textContent = launcher.name ?? 'GRENADE LAUNCHER';
       this.rocketFill.style.width = `${Math.round((reloading ? 1 - launcher.reloadLeft / launcher.reloadTime : launcher.shots / launcher.max) * 100)}%`;
       this.rocketText.textContent = reloading ? `RELOADING · ${Math.ceil(launcher.reloadLeft)}s` : `${launcher.shots} / ${launcher.max} · ${state.usingGamepad ? 'LB' : 'F'}`;
       this.rocketText.style.color = reloading ? '#ff8a7a' : '#ff9a5a';

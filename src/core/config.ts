@@ -22,12 +22,14 @@ export const TERRAIN_HEIGHT = 18;
  * bonus level, "Under Siege": the castle mission with surrendering knights, prisons and a wagon
  * that ferries prisoners (see `docs/plans/under-siege.md`). Mission 7 is the epilogue after the
  * zombie mission: a moon buggy run carrying supplies from the main Moon base to the four armies'
- * encampments, then a valley of odd things to find over the mountains (see `src/moon/`).
+ * encampments, then a valley of odd things to find over the mountains (see `src/moon/`). Mission 8
+ * is a new level on trial, only on the level select and outside the numbered run of levels: the
+ * trench jungle, a WWI-style trench fight across no man's land (see `src/trench/`).
  */
-export type Mission = 1 | 2 | 3 | 4 | 5 | 6 | 7;
+export type Mission = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 
 /** Every mission in play order, as the level select lists them. */
-export const MISSIONS: { mission: Mission; title: string; blurb: string; bonus?: true }[] = [
+export const MISSIONS: { mission: Mission; title: string; blurb: string; bonus?: true; preview?: true }[] = [
   { mission: 1, title: 'Day to Night', blurb: 'Starts in sunny fields and towns, but the sun sets as each of the five enemy bases falls. Then storm the Fortress in a night raid.' },
   { mission: 2, title: 'Jungle Strike', blurb: 'On foot with your squad in dense, storm-lashed jungle. Climb lookouts, knock trees down with the jam gun and plant bombs on three enemy bases.' },
   { mission: 3, title: 'Castle Siege', blurb: 'Knights, cannons and dragons! Knock down five enemy castles, then the Great Castle.' },
@@ -35,6 +37,7 @@ export const MISSIONS: { mission: Mission; title: string; blurb: string; bonus?:
   { mission: 5, title: 'Bonus: Prison Break', blurb: "On foot, at night! Break out of the tan army's prison, steal the gear for a raft, slip past the search helicopters across the sea and sneak home as the dawn breaks.", bonus: true },
   { mission: 6, title: 'Bonus: Under Siege', blurb: 'Castles with villages and archer towers. Beaten knights surrender: a wagon takes them to our prisons, while ours are locked up in theirs.', bonus: true },
   { mission: 7, title: 'Epilogue: Moon Buggy', blurb: "The armies made it to the Moon! Drive supplies from the main base to each army's camp in a jumping moon buggy and watch their Moon bases go up. Then a road opens over the mountains to the Weird Side…", bonus: true },
+  { mission: 8, title: 'New: Trench Jungle', blurb: "A trench line in the jungle, across no man's land from the enemy's. Shell them with the big gun, snipe from the fire step, stock up at the ammo dump, then blow the whistle and go over the top with fifty men to take out their five officers. Tougher than the others: no healing, and gas!", bonus: true, preview: true },
 ];
 
 const missionParam = Number(new URLSearchParams(window.location.search).get('mission'));
@@ -52,8 +55,10 @@ export const ZOMBIES = MISSION === 4;
 export const PRISON = MISSION === 5;
 /** The epilogue: a moon buggy ferrying supplies to the armies' Moon camps. */
 export const MOON = MISSION === 7;
+/** The new level on trial: the trench jungle. */
+export const TRENCH = MISSION === 8;
 
-const SEEDS: Record<Mission, number> = { 1: 1337, 2: 3579, 3: 4680, 4: 5791, 5: 6802, 6: 7913, 7: 8024 };
+const SEEDS: Record<Mission, number> = { 1: 1337, 2: 3579, 3: 4680, 4: 5791, 5: 6802, 6: 7913, 7: 8024, 8: 9135 };
 export const WORLD_SEED = SEEDS[MISSION];
 
 /** Reloads the page into another mission (a fresh world, from the start). */

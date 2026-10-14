@@ -31,12 +31,20 @@ export class Trooper {
   stateTime = 0;
   /** Gone for good (sunk away): the manager drops him. */
   gone = false;
+  /** How far above the ground he stands (up on a trench's fire step), in metres. */
+  lift = 0;
+  /** Bits worn on top of the figure (an officer's cap, a medic's armband): they ride with it when he crouches. */
+  readonly extras = new THREE.Group();
   private readonly body: RAPIER.RigidBody;
   private readonly controller: RAPIER.KinematicCharacterController;
   private readonly figure: THREE.Mesh;
   private readonly baseMaterial: THREE.Material;
   private readonly tag: THREE.Sprite;
   private readonly startledTag: THREE.Sprite;
+  private readonly poses: [THREE.BufferGeometry, THREE.BufferGeometry];
+  private crouching = false;
+  /** Ducked down in cover: nothing can hit him (the trench level), until he stands up again. */
+  private covered = false;
   private hop = Math.random() * 6;
   private tip = 0;
   private sink = 0;
@@ -57,6 +65,8 @@ export class Trooper {
   ) {
     this.hp = maxHp;
     this.figure = createFigureMesh(Math.random() < 0.25 ? 1 : 0, color);
+    this.poses = [createFigureMesh(0, color).geometry, createFigureMesh(1, color).geometry];
+    this.figure.add(this.extras);
     this.baseMaterial = plastic(color);
     this.tag = createJammedTag(1.8, 'STUCK!');
     this.tag.position.y = 2.4;
@@ -83,11 +93,11 @@ export class Trooper {
 
   /** Where to aim at him. */
   chest(out = new THREE.Vector3()): THREE.Vector3 {
-    return out.copy(this.pos).setY(1.15);
+    return out.copy(this.pos).setY(this.pos.y + 1.15);
   }
 
   eye(out = new THREE.Vector3()): THREE.Vector3 {
-    return out.copy(this.pos).setY(1.45);
+    return out.copy(this.pos).setY(this.pos.y + 1.45);
   }
 
   /** Walks `speed` m/s toward (x, z), sliding along trunks, turning to face the way he goes. */
@@ -110,11 +120,12 @@ export class Trooper {
       const n = Math.sin(this.detourTurn);
       [ux, uz] = [ux * c - uz * n, ux * n + uz * c];
     }
-    this.controller.computeColliderMovement(this.collider, { x: ux * step, y: -dt, z: uz * step }, undefined, WALK_ONLY);
+    // No push down into the ground: the height is set below anyway, and Rapier refuses a whole move that starts touching the floor.
+    this.controller.computeColliderMovement(this.collider, { x: ux * step, y: 0, z: uz * step }, undefined, WALK_ONLY);
     const m = this.controller.computedMovement();
     const t = this.body.translation();
-    this.body.setNextKinematicTranslation({ x: t.x + m.x, y: 0.9, z: t.z + m.z });
-    this.pos.set(t.x + m.x, 0, t.z + m.z);
+    this.body.setNextKinematicTranslation({ x: t.x + m.x, y: 0.9 + this.lift, z: t.z + m.z });
+    this.pos.set(t.x + m.x, this.lift, t.z + m.z);
     // Head-on into a trunk gets nowhere: after a moment, step off to one side.
     if (Math.hypot(m.x, m.z) < step * 0.3 && step > 0.01) {
       this.stuck += dt;
@@ -145,6 +156,28 @@ export class Trooper {
     return true;
   }
 
+  /** Stands him `h` metres up (on a fire step) or back down on the ground. */
+  setLift(h: number): void {
+    this.lift = h;
+    this.body.setTranslation({ x: this.pos.x, y: 0.9 + h, z: this.pos.z }, true);
+    this.pos.y = h;
+  }
+
+  /** Kneels him down (or stands him up); `cover` also takes him out of the line of fire while he's down there. */
+  crouch(on: boolean, cover = false): void {
+    if (on !== this.crouching) {
+      this.crouching = on;
+      this.figure.geometry = this.poses[on ? 1 : 0];
+      this.extras.position.y = on ? -0.35 : 0;
+    }
+    this.covered = on && cover;
+    if (this.state !== 'down') this.collider.setEnabled(!this.covered);
+  }
+
+  get inCover(): boolean {
+    return this.covered;
+  }
+
   private knockOver(): void {
     this.state = 'down';
     this.stateTime = 0;
@@ -172,8 +205,8 @@ export class Trooper {
 
   /** Jumps him to (x, z), clear of whatever he was stuck on. */
   warp(x: number, z: number): void {
-    this.body.setTranslation({ x, y: 0.9, z }, true);
-    this.pos.set(x, 0, z);
+    this.body.setTranslation({ x, y: 0.9 + this.lift, z }, true);
+    this.pos.set(x, this.lift, z);
     this.stuck = 0;
     this.detour = 0;
   }
@@ -183,7 +216,7 @@ export class Trooper {
     this.state = 'active';
     this.stateTime = 0;
     this.hp = hp;
-    this.collider.setEnabled(true);
+    this.collider.setEnabled(!this.covered);
     this.tip = 0;
   }
 
@@ -197,7 +230,7 @@ export class Trooper {
     }
     this.tip = this.state === 'down' ? Math.min(1, this.tip + dt * 5) : 0;
     this.hop += dt * (this.moving ? 9 : 0);
-    this.root.position.set(this.pos.x, -this.sink, this.pos.z);
+    this.root.position.set(this.pos.x, this.pos.y - this.sink, this.pos.z);
     this.figure.position.y = this.moving && this.state === 'active' ? Math.abs(Math.sin(this.hop)) * 0.15 : 0;
     this.figure.rotation.set(0, this.yaw, 0);
     if (this.state === 'jammed') this.figure.rotation.z = Math.sin(this.stateTime * 9) * 0.1;

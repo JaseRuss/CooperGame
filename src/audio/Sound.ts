@@ -149,6 +149,14 @@ export class Sound {
     }
   }
 
+  /**
+   * Where a synthesised effect (the trench level's whistles) should connect so the effects volume
+   * applies, or null while sound can't play.
+   */
+  synthOut(): AudioNode | null {
+    return this.ctx.state === 'running' && this.sfxLevel > 0 ? this.sfxBus : null;
+  }
+
   private playSample(name: SoundName, opts: PlayOptions): void {
     const { at, volume = 1, rate = 1, fadeAfter, minGap = 0.03 } = opts;
     const buffers = this.buffers.get(name);
