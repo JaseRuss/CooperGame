@@ -535,6 +535,11 @@ holes, stumps and barbed wire. Each trench has a sandbagged parapet too tall to 
 step to stand on to shoot over it, duckboards and a parados at the back. Medics (white helmets with
 red crosses) are never shot at, by either side.
 
+**A fixed number of soldiers on each side.** Nobody is replaced and nobody gets back up: they have
+26 riflemen and 5 officers, and we have 50 (18 on the fire step, 32 in reserve kneeling behind the
+trench until the whistle). Every man of theirs who falls stays down, so even if you're not a great
+shot the battle can always be won in the end. The panel shows how many each side has left.
+
 1. **The big gun.** You start at our field gun at the back. Walk up to it and press **A** (**G**)
    to aim it from a spotter's view: the red ring is where the shell lands. Six shells; they hit the
    soldiers in their trench (not the trees: the lane in front of the gun is already clear) while
@@ -555,8 +560,9 @@ red crosses) are never shot at, by either side.
    Our guns put down a barrage on their trench while fifty of our men go over: more of them
    grenade throwers, who get close and lob grenades into their trench, and the rest riflemen, who
    stop and cover them. Then everyone storms in through the breaches in their parapet.
-7. **Their five officers** are yours to find: our men leave them be. Three are in their trench and
-   one is in each of the dugouts behind it. Get all five and the trench is ours.
+7. **Their five officers.** Three are in their trench: our men fight them too, but officers are
+   tough and go down far quicker to your shots. The other two are in the dugouts behind their
+   trench, and they're yours alone: our men don't go in. Get all five and the trench is ours.
 
 **No healing.** Health doesn't come back on this level. Get hit too often and the stretcher
 bearers carry you back: you wake at the aid post by the big gun and have to make your way to the

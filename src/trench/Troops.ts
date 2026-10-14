@@ -5,7 +5,8 @@ import { STEP_H, STEP_Z, FLOOR_Z, PARAPET_Z, BREACHES, zoneOf } from './Layout';
 export type Phase = 'artillery' | 'front' | 'assault' | 'won';
 /** Holds the line from the fire step, an officer, or (in the assault) a grenade thrower or a rifleman. */
 export type Role = 'line' | 'officer' | 'grenadier' | 'rifleman';
-type Mode = 'duck' | 'up' | 'over' | 'support' | 'fight' | 'dugout';
+/** `reserve`: one of ours waiting behind the trench for the whistle, out of the fight until then. */
+type Mode = 'duck' | 'up' | 'over' | 'support' | 'fight' | 'dugout' | 'reserve';
 
 /** What the soldiers need from the game. */
 export interface Front {
@@ -61,11 +62,12 @@ const sideOf = (t: Trooper) => (t.side === 'friend' ? 1 : -1);
 export class Troops {
   readonly men: Man[] = [];
 
-  add(t: Trooper, role: Role, x: number, dugout?: THREE.Vector3): Man {
+  /** Adds a soldier: on the line at x, in a dugout (their officers), or (ours) waiting in reserve where he stands. */
+  add(t: Trooper, role: Role, x: number, dugout?: THREE.Vector3, reserve = false): Man {
     const m: Man = {
       t,
       role,
-      mode: dugout ? 'dugout' : 'duck',
+      mode: reserve ? 'reserve' : dugout ? 'dugout' : 'duck',
       post: dugout ? new THREE.Vector2(dugout.x, dugout.z) : new THREE.Vector2(x, sideOf(t) * STEP_Z),
       timer: Math.random() * 6,
       fire: 0.5 + Math.random() * 1.5,
@@ -75,7 +77,11 @@ export class Troops {
       stopZ: 0,
     };
     this.men.push(m);
-    if (!dugout) this.duck(m);
+    if (reserve) {
+      // Kneeling behind the parados, out of sight and out of reach of their rifles.
+      t.crouch(true, true);
+      t.yaw = 0;
+    } else if (!dugout) this.duck(m);
     return m;
   }
 
@@ -153,6 +159,7 @@ export class Troops {
   }
 
   private thinkFriend(m: Man, dt: number, front: Front): void {
+    if (m.mode === 'reserve') return; // the whistle sends him over (overTheTop)
     if (front.phase === 'artillery' || front.phase === 'front' || front.phase === 'won') {
       if (m.mode === 'over' || m.mode === 'support' || m.mode === 'fight') {
         // Over the top already: in the won trench they just stand about.
@@ -200,8 +207,8 @@ export class Troops {
       }
       return;
     }
-    // Fight: shoot anyone in sight close by, otherwise go for the nearest of theirs (through a
-    // breach). With only their officers left, they go and hold their trench near where they are.
+    // Fight: shoot anyone in sight close by, otherwise go for the nearest of theirs in their trench
+    // (through a breach). Once it's clear, they hold it near where they are.
     if (this.shootIfSeen(m, dt, front, CLOSE_RANGE, 0.02, 0.001)) return;
     const foe = this.nearestFoe(m);
     if (foe) t.stepToward(foe.t.pos.x, foe.t.pos.z, RUN, dt);
@@ -212,7 +219,7 @@ export class Troops {
     const t = m.t;
     if (front.phase === 'won') return;
     if (m.mode === 'dugout') {
-      // Their officers in the dugouts: they fight whoever comes in.
+      // Their officers in the dugouts: they only fight the player, when he comes for them.
       this.shootIfSeen(m, dt, front, PISTOL_RANGE, 0.025, 0.0012);
       return;
     }
@@ -298,8 +305,9 @@ export class Troops {
     const eye = t.eye();
     const options: { d: number; at: THREE.Vector3 }[] = [];
     for (const o of this.men) {
-      // Their officers are the player's to find: our men leave them be.
-      if (o.t.side === t.side || !o.t.active || o.t.inCover || o.role === 'officer') continue;
+      if (o.t.side === t.side || !o.t.active || o.t.inCover) continue;
+      // Nobody but the player fights in or out of the dugouts: the officers in there are his to find.
+      if (zoneOf(o.t.pos.z) === 4 || m.mode === 'dugout') continue;
       const d = Math.hypot(o.t.pos.x - t.pos.x, o.t.pos.z - t.pos.z);
       if (d < range) options.push({ d, at: o.t.chest() });
     }
@@ -318,7 +326,8 @@ export class Troops {
     let best: { t: Trooper; pos: THREE.Vector3 } | null = null;
     let bestD = Infinity;
     for (const o of this.men) {
-      if (o.t.side === t.side || !o.t.active || o.role === 'officer') continue;
+      // Ours don't go into the dugouts behind their trench: the officers in there are the player's to find.
+      if (o.t.side === t.side || !o.t.active || (t.side === 'friend' && zoneOf(o.t.pos.z) === 4)) continue;
       const d = Math.hypot(o.t.pos.x - t.pos.x, o.t.pos.z - t.pos.z);
       if (d < bestD) {
         bestD = d;

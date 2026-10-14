@@ -34,12 +34,17 @@ const ENEMY_DAMAGE = 8;
 /** Hit points: their riflemen, their officers, our men in the trench (and in the assault). */
 const ENEMY_HP = 2;
 const OFFICER_HP = 3;
+const OFFICER_VS_TROOPS = 0.12;
 const OUR_HP = 3;
 const OFFICERS_IN_TRENCH = [-31, 6, 35];
 const ENEMY_LINE = 26;
-const OUR_LINE = 12;
-/** Everyone of ours who goes over the top, the player not counted. */
-const ASSAULT_SIZE = 50;
+const OUR_LINE = 18;
+/**
+ * Both sides have a fixed number of men: nobody is replaced and nobody gets back up, so every man
+ * of theirs who falls stays down, and the battle can always be won in the end. Ours are the line,
+ * plus a reserve waiting behind the trench for the whistle (fifty in all).
+ */
+const OUR_RESERVE = 32;
 /** The big gun: shells, how far it reaches, and how big a hole a shell makes. */
 const SHELLS = 6;
 const GUN_MIN = 70;
@@ -161,6 +166,8 @@ export class TrenchGame {
   private readonly troops = new Troops();
   private readonly byHandle = new Map<number, Man>();
   private readonly medics: Medic[] = [];
+  /** Our fallen the trench medic has already seen to. */
+  private readonly tended = new Set<Man>();
   private trenchMedic!: Medic;
   private readonly pickups: Pickup[] = [];
   private readonly shells: Shell[] = [];
@@ -198,7 +205,6 @@ export class TrenchGame {
   private nextGas = Infinity;
   private gasWarned = false;
   private nextEnemyShell = 18;
-  private nextReinforcement = 0;
   private barrageLeft = 0;
   private nextBarrage = 0;
   private hurtFlashLevel = 0;
@@ -324,6 +330,13 @@ export class TrenchGame {
       for (const a of avoid) if (Math.abs(px - a) < 2) px = a + 2.2;
       this.addMan('friend', 'line', px, OUR_HP, i < 4 ? names[i] ?? `Buddy ${i + 1}` : '');
     }
+    // The reserve, kneeling in two blocks behind the parados (either side of the path in from the middle gap, and behind the left-hand gap).
+    const spots: THREE.Vector3[] = [];
+    for (let row = 0; row < 5; row++) {
+      for (const x of [-7.5, -5.5, 5.5, 7.5]) spots.push(new THREE.Vector3(x, 0, 42.6 + row * 1.6));
+      for (const x of [-43, -41, -39, -37]) spots.push(new THREE.Vector3(x, 0, 42.6 + row * 1.6));
+    }
+    for (const at of spots.slice(0, OUR_RESERVE)) this.addMan('friend', 'line', at.x, OUR_HP, '', undefined, at);
     this.trenchMedic = this.addMedic(ARMY_GREEN, -6, FLOOR_Z, 60);
     for (const dx of [-2.2, 2.2]) this.addMedic(ARMY_GREEN, AID_POST.x + dx, AID_POST.z - 3, 3);
 
@@ -382,11 +395,12 @@ export class TrenchGame {
 
   // ---------- people ----------
 
-  private addMan(side: 'friend' | 'enemy', role: 'line' | 'officer', x: number, hp: number, name = '', dugout?: THREE.Vector3): Man {
+  private addMan(side: 'friend' | 'enemy', role: 'line' | 'officer', x: number, hp: number, name = '', dugout?: THREE.Vector3, reserve?: THREE.Vector3): Man {
     const z = (side === 'friend' ? 1 : -1) * (STEP_Z + 1.15);
-    const t = new Trooper(this.world, dugout ? dugout.x : x, dugout ? dugout.z : z, side, side === 'friend' ? ARMY_GREEN : ARMY_TAN, hp, name);
+    const at = reserve ?? dugout;
+    const t = new Trooper(this.world, at ? at.x : x, at ? at.z : z, side, side === 'friend' ? ARMY_GREEN : ARMY_TAN, hp, name);
     this.scene.add(t.root);
-    const m = this.troops.add(t, role, x, dugout);
+    const m = this.troops.add(t, role, x, dugout, !!reserve);
     this.byHandle.set(t.collider.handle, m);
     if (dugout) t.yaw = 0;
     return m;
@@ -487,9 +501,9 @@ export class TrenchGame {
       return;
     }
     const m = this.byHandle.get(handle);
-    // Only the player's own rounds count against an officer.
-    if (!m || m.t.side === side || m.t.down || (m.role === 'officer' && !byPlayer)) return;
-    this.hurtMan(m, damage);
+    // Their officers are tough: our men's rounds do them an eighth of the harm the player's do.
+    if (!m || m.t.side === side || m.t.down) return;
+    this.hurtMan(m, m.role === 'officer' && !byPlayer ? damage * OFFICER_VS_TROOPS : damage);
     if (side === 'friend' && m.t.down) this.sound.play('thud', { at: end, volume: 0.5, rate: 1.2, minGap: 0.05 });
   }
 
@@ -957,9 +971,6 @@ export class TrenchGame {
     this.phaseTime = 0;
     this.scoped = false;
     this.manning = null;
-    // Reinforcements file up into the trench to make up the numbers.
-    const have = this.troops.friends().filter((m) => !m.t.down).length;
-    for (let i = have; i < ASSAULT_SIZE; i++) this.addMan('friend', 'line', -X_HALF + 3 + Math.random() * (X_HALF * 2 - 6), OUR_HP);
     this.barrageLeft = BARRAGE_SHELLS;
     this.troops.overTheTop();
     this.hop(ladder, PARAPET_Z - 4, 0); // far enough out that the camera's not stuck behind the parapet
@@ -969,21 +980,16 @@ export class TrenchGame {
   }
 
   private updateMedics(dt: number): void {
-    // Ours in the trench patches up any of our men who are down there.
+    // Ours in the trench goes to each of our men who falls there and tends him (he's out of the
+    // fight for good: nobody comes back, on either side).
     const m = this.trenchMedic;
     if (m.kneeling <= 0) {
-      const hurt = this.troops.friends().find((f) => f.t.down && zoneOf(f.t.pos.z) === 1 && f.t.stateTime > 2);
+      const hurt = this.troops.friends().find((f) => f.t.down && zoneOf(f.t.pos.z) === 1 && f.t.stateTime > 2 && !this.tended.has(f));
       if (hurt) {
         m.goal = new THREE.Vector3(hurt.t.pos.x + 0.6, 0, FLOOR_Z);
         if (m.update(dt, 4)) {
-          m.kneeling = 2.5;
-          hurt.t.revive(OUR_HP);
-          hurt.mode = 'duck';
-          hurt.timer = 4;
-          if (hurt.t.lift > 0) hurt.t.setLift(0);
-          hurt.t.warp(hurt.t.pos.x, STEP_Z + 1.15);
-          hurt.t.crouch(true, true);
-          hurt.t.revive(OUR_HP);
+          m.kneeling = 4;
+          this.tended.add(hurt);
         }
       } else {
         if (!m.goal || m.update(dt, 2)) m.goal = new THREE.Vector3(m.home.x + (Math.random() - 0.5) * 2 * m.span, 0, FLOOR_Z + (Math.random() - 0.5) * 0.8);
@@ -1027,19 +1033,6 @@ export class TrenchGame {
     }
     if (!this.gas.active && this.maskOn && this.phase !== 'assault' && thick === 0 && this.gasWasOn) this.hud.showCallout('ALL CLEAR: MASKS OFF (X)', '#9be27a');
     this.gasWasOn = this.gas.active;
-  }
-
-  /** Before the assault their trench is kept manned: a fresh man comes up whenever the line's thinned out. */
-  private reinforceThem(dt: number): void {
-    if (this.phase !== 'front') return;
-    this.nextReinforcement -= dt;
-    if (this.nextReinforcement > 0) return;
-    this.nextReinforcement = 7;
-    const line = this.troops.enemies().filter((m) => m.role === 'line' && m.t.active);
-    if (line.length >= ENEMY_LINE - 4) return;
-    let x = -X_HALF + 4 + Math.random() * (X_HALF * 2 - 8);
-    for (const b of BREACHES) if (Math.abs(x - b) < 3) x = b + 3;
-    this.addMan('enemy', 'line', x, ENEMY_HP).timer = 3 + Math.random() * 3;
   }
 
   /** Our guns covering the assault: shells all along their trench while our men cross. */
@@ -1123,7 +1116,6 @@ export class TrenchGame {
     this.updateMedics(dt);
     this.updateGas(dt);
     this.updateEnemyGuns(dt);
-    this.reinforceThem(dt);
     this.updateBarrage(dt);
     this.updateShells(dt);
     this.explosives.update(dt, (b) => this.onBlast(b), (pt) => this.impacts.trailPuff(pt));
@@ -1268,7 +1260,7 @@ export class TrenchGame {
     const status = [
       `Rifle ${this.rifle} · Sniper ${this.hasSniper ? this.sniper : '—'} · Lewis gun ${this.lewis || '—'}`,
       `Gas mask: ${this.hasMask ? (this.maskOn ? 'ON' : 'off (X)') : 'none'}`,
-      `Ours standing ${friends} · Theirs ${foes}`,
+      `Ours left ${friends} / ${OUR_LINE + OUR_RESERVE} · Theirs left ${foes} / ${ENEMY_LINE + 5}`,
       'No healing here: hit too often and you wake at the aid post',
     ];
     if (this.wakeUps) status.push(`Woken at the aid post ${this.wakeUps} time${this.wakeUps === 1 ? '' : 's'}`);
