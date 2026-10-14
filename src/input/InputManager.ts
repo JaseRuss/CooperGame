@@ -23,6 +23,10 @@ export interface InputState {
   sneak: boolean;
   /** Mega jam: a ring of jam all round the tank (X / X button). */
   megaJamPressed: boolean;
+  /** Use / climb (A button, or G): only the trench level reads it. */
+  usePressed: boolean;
+  /** Scope (B button, or V): only the trench level reads it. */
+  scopePressed: boolean;
   usingGamepad: boolean;
   pointerLocked: boolean;
   /** False once the browser has refused pointer lock; the mouse aims unlocked instead. */
@@ -51,6 +55,8 @@ interface EdgeLatches {
   rocket: boolean;
   aa: boolean;
   megaJam: boolean;
+  use: boolean;
+  scope: boolean;
   menu: Map<keyof MenuInput, boolean>;
 }
 
@@ -84,12 +90,14 @@ export class InputManager {
   private gamepadYawSpeed = InputManager.GAMEPAD_YAW_SPEED;
   private gamepadPitchSpeed = InputManager.GAMEPAD_PITCH_SPEED;
   private readonly edgeLatches: Record<1 | 2, EdgeLatches> = {
-    1: { cameraKey: false, cameraPad: false, resetKey: false, resetPad: false, mapKey: false, mapPad: false, rocket: false, aa: false, megaJam: false, menu: new Map() },
-    2: { cameraKey: false, cameraPad: false, resetKey: false, resetPad: false, mapKey: false, mapPad: false, rocket: false, aa: false, megaJam: false, menu: new Map() },
+    1: { cameraKey: false, cameraPad: false, resetKey: false, resetPad: false, mapKey: false, mapPad: false, rocket: false, aa: false, megaJam: false, use: false, scope: false, menu: new Map() },
+    2: { cameraKey: false, cameraPad: false, resetKey: false, resetPad: false, mapKey: false, mapPad: false, rocket: false, aa: false, megaJam: false, use: false, scope: false, menu: new Map() },
   };
   private rightMouseDown = false;
   /** Set while the options screen is taking typed text (a buddy's name). */
   textEntry = false;
+  /** Whether the pad's A button fires as well as the right trigger (the trench level keeps A for climbing). */
+  padAFires = true;
 
   constructor(canvas: HTMLCanvasElement) {
     window.addEventListener('keydown', (e) => this.keys.add(e.code));
@@ -268,6 +276,8 @@ export class InputManager {
     let rocketHeld = hasKey(keyboardPlayer === 1 ? 'KeyF' : 'Numpad3') || (mouseEnabled && this.rightMouseDown);
     let aaHeld = hasKey(keyboardPlayer === 1 ? 'KeyQ' : 'Numpad5');
     let megaJamHeld = hasKey(keyboardPlayer === 1 ? 'KeyX' : 'Numpad7');
+    let useHeld = keyboardPlayer === 1 && hasKey('KeyG');
+    let scopeHeld = keyboardPlayer === 1 && hasKey('KeyV');
     let sneak = hasKey('ShiftLeft') || hasKey('ShiftRight') || hasKey('ControlLeft') || hasKey('ControlRight');
     const k = (...codes: string[]) => codes.some(hasKey);
     // While a name is being typed, letters, Space and Backspace are text, not menu moves.
@@ -309,7 +319,7 @@ export class InputManager {
       }
 
       const rightTrigger = pad.buttons[7]?.value ?? 0;
-      const fireButton = pad.buttons[0]?.pressed ?? false;
+      const fireButton = this.padAFires && (pad.buttons[0]?.pressed ?? false);
       if (rightTrigger > 0.2 || fireButton) {
         firing = true;
         usingGamepad = true;
@@ -325,6 +335,8 @@ export class InputManager {
       rocketHeld ||= pad.buttons[4]?.pressed ?? false; // LB / L1
       aaHeld ||= pad.buttons[5]?.pressed ?? false; // RB / R1
       megaJamHeld ||= pad.buttons[2]?.pressed ?? false; // X / Square
+      useHeld ||= pad.buttons[0]?.pressed ?? false; // A / Cross
+      scopeHeld ||= pad.buttons[1]?.pressed ?? false; // B / Circle
       sneak ||= (pad.buttons[5]?.pressed ?? false) || (pad.buttons[10]?.pressed ?? false); // RB / R1 or the left stick's click
 
       const btn = (i: number) => pad.buttons[i]?.pressed ?? false;
@@ -343,6 +355,10 @@ export class InputManager {
     latches.aa = aaHeld;
     const megaJamPressed = megaJamHeld && !latches.megaJam;
     latches.megaJam = megaJamHeld;
+    const usePressed = useHeld && !latches.use;
+    latches.use = useHeld;
+    const scopePressed = scopeHeld && !latches.scope;
+    latches.scope = scopeHeld;
 
     if (camButtonHeld && !latches.cameraPad) cameraTogglePressed = true;
     latches.cameraPad = camButtonHeld;
@@ -374,6 +390,8 @@ export class InputManager {
       rocketPressed,
       aaPressed,
       megaJamPressed,
+      usePressed,
+      scopePressed,
       sneak,
       usingGamepad,
       pointerLocked: this.pointerLocked,

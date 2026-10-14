@@ -524,6 +524,48 @@ map at all. Find the lot for a fanfare. The music changes to a bongo-and-marimba
   finds them and runs the gadgets), `src/moon/RoadWorks.ts` (the road-building scene), `src/moon/Maze.ts`
   and `src/moon/SkiRobot.ts`.
 
+## New: Trench Jungle (on trial)
+
+A new level designed by Cooper, on trial: it's at the bottom of the level select as **New: Trench
+Jungle** (or open the game with `?mission=8`), not numbered and not part of the run of levels, so
+winning another level never leads to it. Single player, on foot, and **tougher than the others**.
+
+Our trench line runs across a strip of jungle, facing theirs across a muddy no man's land of shell
+holes, stumps and barbed wire. Each trench has a sandbagged parapet too tall to see over, a fire
+step to stand on to shoot over it, duckboards and a parados at the back. Medics (white helmets with
+red crosses) are never shot at, by either side.
+
+1. **The big gun.** You start at our field gun at the back. Walk up to it and press **A** (**G**)
+   to aim it from a spotter's view: the red ring is where the shell lands. Six shells; they hit the
+   soldiers in their trench (not the trees: the lane in front of the gun is already clear) while
+   their officers shelter in the dugouts.
+2. **The front line.** Go down the lane into our trench and press **A** (**G**) at the parapet to
+   climb onto the fire step (again to get down). Their men pop up to shoot and duck back down, and
+   so do ours. There's a **sniper rifle** on a rack along the step left of the middle: on the fire
+   step, **B** (**V**) is the scope. The **machine gun** on the step to the right takes **A** (**G**).
+   Their officers wear **peaked caps with a red band** and only look over now and then.
+3. **Gas!** A while after you reach the front line they let off gas, and again every so often. Press
+   **X** for your gas mask (and again to take it off). You don't start with one: the fallen
+   soldier by the middle gap into our trench has one, with some ammunition.
+4. **Pick things up from the fallen**, on both sides: rifle rounds, grenades, sniper rounds, a Lewis
+   gun or a gas mask. Walk over it to take it.
+5. **The ammo dump**, in the dugout behind the right-hand gap at the back of our trench: a full
+   load of rifle rounds, a Lewis gun and grenades (**LB** / **F** / right click to throw).
+6. **Over the top.** Once you've stocked up, press **A** (**G**) at a ladder to blow the whistle.
+   Our guns put down a barrage on their trench while fifty of our men go over: more of them
+   grenade throwers, who get close and lob grenades into their trench, and the rest riflemen, who
+   stop and cover them. Then everyone storms in through the breaches in their parapet.
+7. **Their five officers** are yours to find: our men leave them be. Three are in their trench and
+   one is in each of the dugouts behind it. Get all five and the trench is ours.
+
+**No healing.** Health doesn't come back on this level. Get hit too often and the stretcher
+bearers carry you back: you wake at the aid post by the big gun and have to make your way to the
+front again (after the whistle, over the top from a ladder).
+
+- Code is in `src/trench/` (`TrenchGame` is the level, `Layout` the trenches and the routes between
+  them, `Troops` both sides' soldiers, `Gas` the gas cloud, `Figures` the officers and medics).
+  The design came from the "new level" meeting notes in Notion.
+
 ## Bonus: Under Siege
 
 A second bonus level, in the level select as **6 · Bonus: Under Siege**: the castle mission with

@@ -61,6 +61,8 @@ export class PlayerSoldier {
   private fallSpeed = 0;
   private settling = false;
   private hopPhase = 0;
+  /** Health comes back by itself after a while without a hit (not on the trench level). */
+  regenerates = true;
   /** Creeping along this frame (the sneak button held). */
   sneaking = false;
   private fireCooldown = 0;
@@ -184,7 +186,7 @@ export class PlayerSoldier {
       return false;
     }
     this.sinceHit += dt;
-    if (this.sinceHit > REGEN_DELAY) this.health = Math.min(MAX_HEALTH, this.health + REGEN_RATE * dt);
+    if (this.regenerates && this.sinceHit > REGEN_DELAY) this.health = Math.min(MAX_HEALTH, this.health + REGEN_RATE * dt);
     this.yaw -= input.aimYawDelta;
     this.pitch = clamp(this.pitch - input.aimPitchDelta, PITCH_MIN, PITCH_MAX);
 

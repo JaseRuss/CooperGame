@@ -13,6 +13,7 @@ interface Grenade {
   mesh: THREE.Mesh;
   vel: THREE.Vector3;
   age: number;
+  byPlayer: boolean;
 }
 
 export interface Bomb {
@@ -27,6 +28,8 @@ export interface Blast {
   radius: number;
   /** A grenade or a bomb. */
   kind: 'grenade' | 'bomb';
+  /** Thrown or fired by the player himself (not one of his men). */
+  byPlayer: boolean;
 }
 
 const grenadeGeo = new THREE.SphereGeometry(0.2, 8, 6);
@@ -43,11 +46,11 @@ export class Explosives {
 
   constructor(private readonly scene: THREE.Scene, private readonly world: RAPIER.World) {}
 
-  launch(origin: THREE.Vector3, dir: THREE.Vector3, speed = 24): void {
+  launch(origin: THREE.Vector3, dir: THREE.Vector3, speed = 24, byPlayer = true): void {
     const mesh = new THREE.Mesh(grenadeGeo, grenadeMat);
     mesh.position.copy(origin);
     this.scene.add(mesh);
-    this.grenades.push({ mesh, vel: dir.clone().normalize().multiplyScalar(speed), age: 0 });
+    this.grenades.push({ mesh, vel: dir.clone().normalize().multiplyScalar(speed), age: 0, byPlayer });
   }
 
   /** A bomb set down at `pos`, ticking. */
@@ -96,7 +99,7 @@ export class Explosives {
       if (Math.random() < 0.5) trail(g.mesh.position);
       if (hit || g.age > FUSE) {
         if (g.mesh.position.y < 0.2) g.mesh.position.y = 0.2;
-        burst({ at: g.mesh.position.clone(), radius: GRENADE_RADIUS, kind: 'grenade' });
+        burst({ at: g.mesh.position.clone(), radius: GRENADE_RADIUS, kind: 'grenade', byPlayer: g.byPlayer });
         this.scene.remove(g.mesh);
         this.grenades.splice(i, 1);
       }
@@ -108,7 +111,7 @@ export class Explosives {
       const rate = b.left < 2 ? 22 : b.left < 4 ? 10 : 4;
       b.light.visible = Math.sin((BOMB_FUSE - b.left) * rate) > -0.2;
       if (b.left > 0) continue;
-      burst({ at: b.pos.clone().setY(0.6), radius: BOMB_RADIUS, kind: 'bomb' });
+      burst({ at: b.pos.clone().setY(0.6), radius: BOMB_RADIUS, kind: 'bomb', byPlayer: true });
       this.scene.remove(b.mesh);
       this.bombs.splice(i, 1);
     }
