@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { Trooper } from '../jungle/Trooper';
-import { STEP_H, STEP_Z, FLOOR_Z, PARAPET_Z, BREACHES, zoneOf } from './Layout';
+import { STEP_H, PARAPET_Z, BREACHES, zoneOf, lineAt } from './Layout';
 
 export type Phase = 'artillery' | 'front' | 'assault' | 'won';
 /** Holds the line from the fire step, an officer, or (in the assault) a grenade thrower or a rifleman. */
@@ -25,6 +25,10 @@ export interface Man {
   t: Trooper;
   role: Role;
   mode: Mode;
+  /** Which line he holds: ours is 0, theirs 0 (front), 1 (support) or 2 (reserve). */
+  line: number;
+  /** Ours, in the assault: one of the bombing party that goes on up their trenches with the player. */
+  party: boolean;
   /** His place on the fire step (x), or in a dugout. */
   post: THREE.Vector2;
   timer: number;
@@ -36,8 +40,8 @@ export interface Man {
   stopZ: number;
 }
 
-/** Ducked down behind the parapet (out of sight, out of the line of fire), from the walkway. */
-const DUCK_Z = STEP_Z + 1.15;
+/** Ducked down behind the parapet (out of sight, out of the line of fire), this far back from the step. */
+const DUCK_BACK = 1.15;
 /** How far the line can shoot across no man's land, and the close fighting range. */
 const LINE_RANGE = 95;
 const CLOSE_RANGE = 24;
@@ -48,6 +52,9 @@ const RUN = 5.2;
 const WALK = 2.6;
 /** How far a soldier can lob a grenade. */
 const THROW_RANGE = 24;
+/** Ours in the bombing party that follows the player up their trenches (the rest hold their front line), and the fewest it's let get down to before more join. */
+const PARTY_EVERY = 7;
+const PARTY_MIN = 6;
 
 const sideOf = (t: Trooper) => (t.side === 'friend' ? 1 : -1);
 
@@ -62,13 +69,15 @@ const sideOf = (t: Trooper) => (t.side === 'friend' ? 1 : -1);
 export class Troops {
   readonly men: Man[] = [];
 
-  /** Adds a soldier: on the line at x, in a dugout (their officers), or (ours) waiting in reserve where he stands. */
-  add(t: Trooper, role: Role, x: number, dugout?: THREE.Vector3, reserve = false): Man {
+  /** Adds a soldier: on a line at x, in a dugout (their officers), or (ours) waiting in reserve where he stands. */
+  add(t: Trooper, role: Role, x: number, dugout?: THREE.Vector3, reserve = false, line = 0): Man {
     const m: Man = {
       t,
       role,
       mode: reserve ? 'reserve' : dugout ? 'dugout' : 'duck',
-      post: dugout ? new THREE.Vector2(dugout.x, dugout.z) : new THREE.Vector2(x, sideOf(t) * STEP_Z),
+      line,
+      party: false,
+      post: dugout ? new THREE.Vector2(dugout.x, dugout.z) : new THREE.Vector2(x, sideOf(t) * lineAt(line).step),
       timer: Math.random() * 6,
       fire: 0.5 + Math.random() * 1.5,
       scan: Math.random() * 0.4,
@@ -100,7 +109,7 @@ export class Troops {
   private duck(m: Man): void {
     const s = sideOf(m.t);
     if (m.t.lift > 0) m.t.setLift(0);
-    m.t.warp(m.post.x, s * DUCK_Z);
+    m.t.warp(m.post.x, s * (lineAt(m.line).step + DUCK_BACK));
     m.t.crouch(true, true);
     m.t.yaw = s > 0 ? 0 : Math.PI;
     m.mode = 'duck';
@@ -109,7 +118,7 @@ export class Troops {
   private standUp(m: Man): void {
     const s = sideOf(m.t);
     m.t.setLift(STEP_H);
-    m.t.warp(m.post.x, s * STEP_Z);
+    m.t.warp(m.post.x, s * lineAt(m.line).step);
     m.t.crouch(false);
     m.t.yaw = s > 0 ? 0 : Math.PI;
     m.mode = 'up';
@@ -119,7 +128,7 @@ export class Troops {
   private getDown(m: Man): void {
     if (m.t.lift > 0) {
       m.t.setLift(0);
-      m.t.warp(m.t.pos.x, sideOf(m.t) * FLOOR_Z);
+      m.t.warp(m.t.pos.x, sideOf(m.t) * lineAt(m.line).floor);
     }
     m.t.crouch(false);
     m.mode = 'fight';
@@ -138,7 +147,9 @@ export class Troops {
       t.crouch(false);
       t.warp(t.pos.x + (Math.random() - 0.5) * 1.5, PARAPET_Z - 1.2 - Math.random() * 1.6);
       m.role = n % 5 < 3 ? 'grenadier' : 'rifleman';
-      m.grenades = m.role === 'grenadier' ? 2 : 0;
+      m.party = n % PARTY_EVERY === 0 || n % PARTY_EVERY === 3;
+      // Grenade throwers keep one back for bombing along their trenches.
+      m.grenades = m.role === 'grenadier' ? 3 : 0;
       m.stopZ = m.role === 'grenadier' ? -PARAPET_Z + 14 + Math.random() * 4 : -2 + Math.random() * 8;
       m.mode = 'over';
       m.timer = Math.random() * 0.8; // they don't all leave the ladder at once
@@ -147,6 +158,7 @@ export class Troops {
   }
 
   update(dt: number, front: Front): void {
+    if (front.phase === 'assault') this.topUpParty(front);
     for (const m of this.men) {
       m.t.update(dt);
       if (!m.t.active) continue;
@@ -156,6 +168,25 @@ export class Troops {
       if (m.t.side === 'friend') this.thinkFriend(m, dt, front);
       else this.thinkEnemy(m, dt, front);
     }
+  }
+
+  /** Men from their captured front line join the bombing party when it's down to a handful. */
+  private topUpParty(front: Front): void {
+    let party = 0;
+    for (const m of this.men) if (m.party && m.t.active) party++;
+    if (party >= PARTY_MIN) return;
+    const p = front.player.pos;
+    let best: Man | null = null;
+    let bestD = Infinity;
+    for (const m of this.men) {
+      if (m.t.side !== 'friend' || m.party || !m.t.active || m.mode !== 'fight' || zoneOf(m.t.pos.x, m.t.pos.z) < 3) continue;
+      const d = Math.hypot(m.t.pos.x - p.x, m.t.pos.z - p.z);
+      if (d < bestD) {
+        bestD = d;
+        best = m;
+      }
+    }
+    if (best) best.party = true;
   }
 
   private thinkFriend(m: Man, dt: number, front: Front): void {
@@ -195,8 +226,8 @@ export class Troops {
         return;
       }
       if (m.timer <= 0) {
-        const at = this.grenadeTarget(m);
-        if (!at || m.grenades <= 0) {
+        const at = this.grenadeTarget(m, front);
+        if (!at || m.grenades <= 1) {
           m.mode = 'fight';
           return;
         }
@@ -207,12 +238,27 @@ export class Troops {
       }
       return;
     }
-    // Fight: shoot anyone in sight close by, otherwise go for the nearest of theirs in their trench
-    // (through a breach). Once it's clear, they hold it near where they are.
+    // Fight: shoot anyone in sight close by, or lob a grenade round the next corner, otherwise go
+    // for the nearest of theirs (in through a breach, then on up the communication trenches to
+    // their support and reserve lines). Once it's clear, they hold it near where they are.
     if (this.shootIfSeen(m, dt, front, CLOSE_RANGE, 0.02, 0.001)) return;
-    const foe = this.nearestFoe(m);
+    if (m.grenades > 0 && m.timer <= 0) {
+      const at = this.grenadeTarget(m, front);
+      if (at) {
+        m.grenades--;
+        m.timer = 2.5 + Math.random() * 2;
+        t.faceToward(at.x, at.z, 1, 99);
+        front.throwGrenade(t.chest().setY(1.8), at);
+        return;
+      }
+    }
+    // They take their front line on their own, but push on into their trench system no further than
+    // one step past the player: up the communication trenches with him, not miles ahead of him.
+    const p = front.player.pos;
+    const reach = m.party && !front.player.down ? Math.max(3, zoneOf(p.x, p.z) + 1) : 3;
+    const foe = this.nearestFoe(m, reach);
     if (foe) t.stepToward(foe.t.pos.x, foe.t.pos.z, RUN, dt);
-    else if (zoneOf(t.pos.z) !== 3) t.stepToward(m.post.x, -FLOOR_Z, RUN, dt);
+    else if (zoneOf(t.pos.x, t.pos.z) < 3) t.stepToward(m.post.x, -lineAt(0).floor, RUN, dt);
   }
 
   private thinkEnemy(m: Man, dt: number, front: Front): void {
@@ -223,6 +269,12 @@ export class Troops {
       this.shootIfSeen(m, dt, front, PISTOL_RANGE, 0.025, 0.0012);
       return;
     }
+    // His own line, and the communication trenches either side of it: what he defends.
+    const home = 3 + m.line * 2;
+    const defends = (p: THREE.Vector3) => {
+      const z = zoneOf(p.x, p.z);
+      return z >= 3 && Math.abs(z - home) <= 1;
+    };
     if (front.phase === 'assault') {
       if (front.barrage && m.mode !== 'fight') {
         if (m.mode !== 'duck') this.duck(m);
@@ -232,17 +284,22 @@ export class Troops {
       if (m.mode === 'fight') {
         if (this.shootIfSeen(m, dt, front, m.role === 'officer' ? PISTOL_RANGE : CLOSE_RANGE, 0.02, 0.0012)) return;
         const foe = this.nearestFoe(m);
-        // Defend the trench, don't leave it.
-        if (foe && zoneOf(foe.pos.z) >= 3 && Math.hypot(foe.pos.x - t.pos.x, foe.pos.z - t.pos.z) < 30) t.stepToward(foe.pos.x, foe.pos.z, WALK + 1, dt);
+        // Defend the trench (down the communication trench to meet them, if need be), don't leave it.
+        if (foe && defends(foe.pos) && Math.hypot(foe.pos.x - t.pos.x, foe.pos.z - t.pos.z) < 30) t.stepToward(foe.pos.x, foe.pos.z, WALK + 1, dt);
         return;
       }
       const close = this.nearestFoe(m);
-      const near = close && (Math.hypot(close.pos.x - t.pos.x, close.pos.z - t.pos.z) < DEFEND_CLOSE || (zoneOf(close.pos.z) >= 3 && Math.abs(close.pos.x - t.pos.x) < 26));
+      const near = close && (Math.hypot(close.pos.x - t.pos.x, close.pos.z - t.pos.z) < DEFEND_CLOSE || (defends(close.pos) && Math.abs(close.pos.x - t.pos.x) < 26));
       if (near || m.role === 'officer') {
         this.getDown(m);
         return;
       }
       this.holdTheLine(m, dt, front, 2 + Math.random() * 2, 2 + Math.random() * 2);
+      return;
+    }
+    // Their support and reserve lines keep their heads down until we come over.
+    if (m.line > 0) {
+      if (m.mode !== 'duck') this.duck(m);
       return;
     }
     if (m.role === 'officer') {
@@ -307,7 +364,7 @@ export class Troops {
     for (const o of this.men) {
       if (o.t.side === t.side || !o.t.active || o.t.inCover) continue;
       // Nobody but the player fights in or out of the dugouts: the officers in there are his to find.
-      if (zoneOf(o.t.pos.z) === 4 || m.mode === 'dugout') continue;
+      if (o.mode === 'dugout' || m.mode === 'dugout') continue;
       const d = Math.hypot(o.t.pos.x - t.pos.x, o.t.pos.z - t.pos.z);
       if (d < range) options.push({ d, at: o.t.chest() });
     }
@@ -321,13 +378,14 @@ export class Troops {
     return null;
   }
 
-  private nearestFoe(m: Man): { t: Trooper; pos: THREE.Vector3 } | null {
+  /** The nearest foe (for ours: not in a dugout, and in zone `reach` or nearer). */
+  private nearestFoe(m: Man, reach = 8): { t: Trooper; pos: THREE.Vector3 } | null {
     const t = m.t;
     let best: { t: Trooper; pos: THREE.Vector3 } | null = null;
     let bestD = Infinity;
     for (const o of this.men) {
-      // Ours don't go into the dugouts behind their trench: the officers in there are the player's to find.
-      if (o.t.side === t.side || !o.t.active || (t.side === 'friend' && zoneOf(o.t.pos.z) === 4)) continue;
+      // Ours don't go into their dugouts: the officers in there are the player's to find.
+      if (o.t.side === t.side || !o.t.active || (t.side === 'friend' && (o.mode === 'dugout' || zoneOf(o.t.pos.x, o.t.pos.z) > reach))) continue;
       const d = Math.hypot(o.t.pos.x - t.pos.x, o.t.pos.z - t.pos.z);
       if (d < bestD) {
         bestD = d;
@@ -337,15 +395,16 @@ export class Troops {
     return best;
   }
 
-  /** Somewhere in their trench to lob a grenade: one of their men within reach, give or take. */
-  private grenadeTarget(m: Man): THREE.Vector3 | null {
+  /** Somewhere in their trenches to lob a grenade: one of their men within reach, give or take, and not too near the player. */
+  private grenadeTarget(m: Man, front: Front): THREE.Vector3 | null {
     const t = m.t;
+    const p = front.player.pos;
     let best: THREE.Vector3 | null = null;
     let bestD = THROW_RANGE;
     for (const o of this.men) {
-      if (o.t.side === 'friend' || !o.t.active || o.role === 'officer') continue;
+      if (o.t.side === 'friend' || !o.t.active || o.role === 'officer' || o.mode === 'dugout') continue;
       const d = Math.hypot(o.t.pos.x - t.pos.x, o.t.pos.z - t.pos.z);
-      if (d < bestD && zoneOf(o.t.pos.z) === 3) {
+      if (d < bestD && zoneOf(o.t.pos.x, o.t.pos.z) >= 3 && Math.hypot(o.t.pos.x - p.x, o.t.pos.z - p.z) > 9) {
         bestD = d;
         best = o.t.pos;
       }
