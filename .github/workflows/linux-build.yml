@@ -1,0 +1,47 @@
+name: Linux desktop build
+
+# Packages the game as a Linux AppImage (Electron) and attaches it to the "linux-latest" release,
+# replacing the previous build. Runs on every push to main, alongside the Pages deploy.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: linux-build
+  cancel-in-progress: true
+
+jobs:
+  appimage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            desktop/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - run: npm ci
+        working-directory: desktop
+      - run: npm run dist
+        working-directory: desktop
+      - name: Publish to the linux-latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          notes="Linux build of ${GITHUB_SHA::7}. Download the AppImage, mark it executable (chmod +x) and run it. Add it to Steam as a non-Steam game to play from Game Mode. Starts fullscreen; F11 toggles, --windowed starts in a window."
+          if gh release view linux-latest >/dev/null 2>&1; then
+            gh release edit linux-latest --notes "$notes"
+          else
+            gh release create linux-latest --title "Linux build (latest)" --notes "$notes" --target "$GITHUB_SHA"
+          fi
+          git tag -f linux-latest "$GITHUB_SHA"
+          git push -f origin refs/tags/linux-latest
+          gh release upload linux-latest desktop/release/*.AppImage --clobber

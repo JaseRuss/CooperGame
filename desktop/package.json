@@ -1,0 +1,46 @@
+{
+  "name": "coopers-tank-army",
+  "productName": "Coopers Tank Army",
+  "version": "1.0.0",
+  "description": "Cooper's Tank Army desktop build",
+  "private": true,
+  "main": "main.cjs",
+  "scripts": {
+    "prepare-app": "rm -rf app && cp -r ../dist app",
+    "start": "npm run prepare-app && electron .",
+    "dist": "npm run prepare-app && electron-builder --linux AppImage"
+  },
+  "build": {
+    "appId": "io.github.jaseruss.coopergame",
+    "productName": "Coopers Tank Army",
+    "artifactName": "CoopersTankArmy-${arch}.AppImage",
+    "files": [
+      "main.cjs",
+      "app/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Game",
+      "icon": "build/icon.png",
+      "syncDesktopName": true,
+      "desktop": {
+        "entry": {
+          "Name": "Cooper's Tank Army"
+        }
+      }
+    },
+    "publish": null
+  },
+  "devDependencies": {
+    "electron": "^44.7.2",
+    "electron-builder": "^26.15.3"
+  },
+  "desktopName": "coopers-tank-army.desktop",
+  "repository": "github:JaseRuss/CooperGame"
+}
