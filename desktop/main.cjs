@@ -1,4 +1,6 @@
-// Desktop wrapper: runs the built web game (dist/, copied to ./app) in its own Chromium window.
+// Desktop wrapper: runs the live web game (GitHub Pages) in its own Chromium window, so every
+// push to main reaches the desktop app without a new download. With no connection it falls back
+// to the copy of dist/ bundled in ./app. Settings and saves are kept separately for each copy.
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { app, BrowserWindow, net, protocol, shell } = require('electron');
@@ -13,6 +15,8 @@ protocol.registerSchemesAsPrivileged([
 ]);
 
 const root = path.join(__dirname, 'app');
+const LIVE_URL = 'https://jaseruss.github.io/CooperGame/';
+const BUNDLED_URL = 'app://game/index.html';
 
 app.whenReady().then(() => {
   protocol.handle('app', (request) => {
@@ -43,7 +47,12 @@ app.whenReady().then(() => {
       event.preventDefault();
     }
   });
-  win.loadURL('app://game/index.html');
+  // Offline, or the site is unreachable: load the bundled copy, keeping the mission in the query.
+  win.webContents.on('did-fail-load', (_event, code, _description, url, isMainFrame) => {
+    if (!isMainFrame || code === -3 || !url.startsWith(LIVE_URL)) return; // -3: aborted by a newer load
+    win.loadURL(BUNDLED_URL + new URL(url).search);
+  });
+  win.loadURL(process.argv.includes('--offline') ? BUNDLED_URL : LIVE_URL);
 });
 
 app.on('window-all-closed', () => app.quit());
