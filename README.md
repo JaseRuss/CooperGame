@@ -20,6 +20,28 @@ Works in Chrome, Edge or Firefox on a computer. Plug in a controller, or use the
 keyboard and mouse. The site rebuilds itself automatically whenever changes are
 pushed to the `main` branch.
 
+## Linux desktop build (Steam Machine / Steam Deck)
+
+Every push to `main` also builds a Linux AppImage and attaches it to the
+[`linux-latest` release](https://github.com/JaseRuss/CooperGame/releases/tag/linux-latest).
+It's the same game in its own window (Electron), so it runs offline, starts
+fullscreen and plays sound without a click first.
+
+1. Download `CoopersTankArmy-x86_64.AppImage`, then make it executable
+   (right-click → Properties → Permissions → "Is executable", or `chmod +x`).
+2. On SteamOS, add it to Steam with **Add a Non-Steam Game** (Desktop Mode)
+   and launch it from Game Mode.
+3. F11 toggles fullscreen. Add `--windowed` to the launch options to start in
+   a window.
+
+Controllers are read the same way Chrome reads them. If Steam has taken over a
+controller (it does this with 8BitDo, Xbox and PlayStation pads), set Steam
+Input for the shortcut to a gamepad layout, or turn it off, in the shortcut's
+controller settings.
+
+To build it yourself: `npm run build`, then `cd desktop && npm install && npm run dist`.
+The AppImage lands in `desktop/release/`.
+
 ## Running it on your own computer
 
 ### 1. Install the tools (one time)
