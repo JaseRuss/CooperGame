@@ -560,11 +560,14 @@ winning another level never leads to it. Single player, on foot, and **tougher t
 
 Our trench line runs across a strip of jungle, facing theirs across a muddy no man's land of shell
 holes, stumps and barbed wire. Each trench has a sandbagged parapet too tall to see over, a fire
-step to stand on to shoot over it, duckboards and a parados at the back. Medics (white helmets with
+step to stand on to shoot over it, duckboards and a parados at the back. Theirs is a whole trench
+system: a front line, a support line behind it and a reserve line behind that, joined by doglegged
+communication trenches. The jungle between their lines is shut in, so the only way back through
+them is along the communication trenches. Medics (white helmets with
 red crosses) are never shot at, by either side.
 
 **A fixed number of soldiers on each side.** Nobody is replaced and nobody gets back up: they have
-26 riflemen and 5 officers, and we have 50 (18 on the fire step, 32 in reserve kneeling behind the
+35 riflemen (18 in the front line, 10 in support, 7 in reserve) and 5 officers, and we have 50 (18 on the fire step, 32 in reserve kneeling behind the
 trench until the whistle). Every man of theirs who falls stays down, so even if you're not a great
 shot the battle can always be won in the end. The panel shows how many each side has left.
 
@@ -588,16 +591,24 @@ shot the battle can always be won in the end. The panel shows how many each side
    Our guns put down a barrage on their trench while fifty of our men go over: more of them
    grenade throwers, who get close and lob grenades into their trench, and the rest riflemen, who
    stop and cover them. Then everyone storms in through the breaches in their parapet.
-7. **Their five officers.** Three are in their trench: our men fight them too, but officers are
-   tough and go down far quicker to your shots. The other two are in the dugouts behind their
-   trench, and they're yours alone: our men don't go in. Get all five and the trench is ours.
+7. **Up the communication trenches.** Once their front line is taken most of our men hold it, and
+   a bombing party of about a dozen goes on with you: wherever you go in their trench system,
+   they push one step ahead of you (up the next communication trench, into the next line), lobbing
+   grenades round the corners. Their support and reserve lines keep their heads down until we come
+   over, then come down the communication trenches to meet you. If the party gets thin, more of
+   our men come up from the front line to join it.
+8. **Their five officers.** Two are in their front line and one in their support line: our men
+   fight them too, but officers are tough and go down far quicker to your shots. The other two are
+   in dugouts, one off the back of the support line and their headquarters off the back of the
+   reserve line, and they're yours alone: our men don't go in. Get all five and the trenches are
+   ours.
 
 **No healing.** Health doesn't come back on this level. Get hit too often and the stretcher
 bearers carry you back: you wake at the aid post by the big gun and have to make your way to the
 front again (after the whistle, over the top from a ladder).
 
-- Code is in `src/trench/` (`TrenchGame` is the level, `Layout` the trenches and the routes between
-  them, `Troops` both sides' soldiers, `Gas` the gas cloud, `Figures` the officers and medics).
+- Code is in `src/trench/` (`TrenchGame` is the level, `Layout` the trenches, communication
+  trenches and the routes between them, `Troops` both sides' soldiers, `Gas` the gas cloud, `Figures` the officers and medics).
   The design came from the "new level" meeting notes in Notion.
 
 ## Bonus: Under Siege

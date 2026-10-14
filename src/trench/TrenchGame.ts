@@ -19,8 +19,8 @@ import { Forest } from '../jungle/Forest';
 import { Solids } from '../jungle/Props';
 import { Explosives, type Blast } from '../jungle/Explosives';
 import {
-  X_HALF, PARAPET_Z, STEP_H, STEP_Z, FLOOR_Z, LADDERS, BREACHES, GUN, AID_POST, RESPAWN, AMMO_DUMP, DUGOUTS, MG_AT, SNIPER_RACK, OUR_GAPS,
-  zoneOf, onStep, route, clearings, buildBattlefield,
+  X_HALF, PARAPET_Z, STEP_H, STEP_Z, FLOOR_Z, LADDERS, BREACHES, GUN, AID_POST, RESPAWN, AMMO_DUMP, DUGOUTS, MG_AT, SNIPER_RACK, OUR_GAPS, COMMS,
+  zoneOf, onStep, route, clearings, buildBattlefield, lineAt,
 } from './Layout';
 import { Troops, type Man, type Phase, type Front } from './Troops';
 import { Medic, officerCap, fallenFigure } from './Figures';
@@ -36,8 +36,15 @@ const ENEMY_HP = 2;
 const OFFICER_HP = 3;
 const OFFICER_VS_TROOPS = 0.12;
 const OUR_HP = 3;
-const OFFICERS_IN_TRENCH = [-31, 6, 35];
-const ENEMY_LINE = 26;
+/** Their officers out in their trenches: two in the front line and one in the support line (the other two are in the dugouts). */
+const OFFICERS_IN_TRENCH = [
+  { x: -31, line: 0 },
+  { x: 35, line: 0 },
+  { x: 14, line: 1 },
+];
+/** Their riflemen in the front, support and reserve lines. */
+const ENEMY_LINES_MEN = [18, 10, 7];
+const ENEMY_MEN = ENEMY_LINES_MEN.reduce((a, b) => a + b, 0) + OFFICERS_IN_TRENCH.length + DUGOUTS.length;
 const OUR_LINE = 18;
 /**
  * Both sides have a fixed number of men: nobody is replaced and nobody gets back up, so every man
@@ -312,14 +319,18 @@ export class TrenchGame {
     this.scene.add(this.player.root);
     this.cam = new ShoulderCam(this.camera, this.world);
 
-    // Their line, their officers (three in the trench, one in each dugout) and their medics.
-    for (let i = 0; i < ENEMY_LINE; i++) {
-      let x = -X_HALF + 4 + (i / (ENEMY_LINE - 1)) * (X_HALF * 2 - 8) + (Math.random() - 0.5) * 2;
-      for (const b of BREACHES) if (Math.abs(x - b) < 3) x = b + Math.sign(x - b || 1) * 3;
-      this.addMan('enemy', 'line', x, ENEMY_HP);
+    // Their three lines, their officers (three in the trenches, one in each dugout) and their medics.
+    // Nobody stands on the step where it's broken by a breach or a communication trench.
+    for (const [line, count] of ENEMY_LINES_MEN.entries()) {
+      const gaps = line === 0 ? BREACHES : COMMS.filter((c) => c.zone === 2 + line * 2).map((c) => c.pts[c.pts.length - 1].x);
+      for (let i = 0; i < count; i++) {
+        let x = -X_HALF + 4 + ((i + 0.5) / count) * (X_HALF * 2 - 8) + (Math.random() - 0.5) * 2;
+        for (const b of gaps) if (Math.abs(x - b) < 3) x = b + Math.sign(x - b || 1) * 3;
+        this.addMan('enemy', 'line', x, ENEMY_HP, '', undefined, undefined, line);
+      }
     }
-    for (const x of OFFICERS_IN_TRENCH) this.addOfficer(x);
-    for (const d of DUGOUTS) this.addOfficer(d.x, new THREE.Vector3(d.x + (Math.random() - 0.5) * 2, 0, d.z - 0.2));
+    for (const o of OFFICERS_IN_TRENCH) this.addOfficer(o.x, undefined, o.line);
+    for (const d of DUGOUTS) this.addOfficer(d.at.x, new THREE.Vector3(d.at.x + (Math.random() - 0.5) * 2, 0, d.at.z - 0.2));
     for (const x of [-26, 28]) this.addMedic(ARMY_TAN, x, -FLOOR_Z, 28);
     // Ours: the squad (by name) in the middle, the rest of the garrison along the line.
     const names = this.settings.buddyNames;
@@ -395,19 +406,19 @@ export class TrenchGame {
 
   // ---------- people ----------
 
-  private addMan(side: 'friend' | 'enemy', role: 'line' | 'officer', x: number, hp: number, name = '', dugout?: THREE.Vector3, reserve?: THREE.Vector3): Man {
-    const z = (side === 'friend' ? 1 : -1) * (STEP_Z + 1.15);
+  private addMan(side: 'friend' | 'enemy', role: 'line' | 'officer', x: number, hp: number, name = '', dugout?: THREE.Vector3, reserve?: THREE.Vector3, line = 0): Man {
+    const z = (side === 'friend' ? 1 : -1) * (lineAt(line).step + 1.15);
     const at = reserve ?? dugout;
     const t = new Trooper(this.world, at ? at.x : x, at ? at.z : z, side, side === 'friend' ? ARMY_GREEN : ARMY_TAN, hp, name);
     this.scene.add(t.root);
-    const m = this.troops.add(t, role, x, dugout, !!reserve);
+    const m = this.troops.add(t, role, x, dugout, !!reserve, line);
     this.byHandle.set(t.collider.handle, m);
     if (dugout) t.yaw = 0;
     return m;
   }
 
-  private addOfficer(x: number, dugout?: THREE.Vector3): void {
-    const m = this.addMan('enemy', 'officer', x, OFFICER_HP, '', dugout);
+  private addOfficer(x: number, dugout?: THREE.Vector3, line = 0): void {
+    const m = this.addMan('enemy', 'officer', x, OFFICER_HP, '', dugout, undefined, line);
     m.t.extras.add(officerCap(ARMY_TAN));
   }
 
@@ -902,7 +913,7 @@ export class TrenchGame {
       this.hud.showCallout('AIM WITH THE STICK OR MOUSE · FIRE WITH RT OR CLICK · A (G) TO LEAVE', '#ffd24a');
       return;
     }
-    const zone = zoneOf(p.z);
+    const zone = zoneOf(p.x, p.z);
     const step = onStep(p.x, p.z, p.y);
     if (step && Math.hypot(p.x - MG_AT.x, p.z - MG_AT.z) < USE_REACH) {
       if (this.mgBelt <= 0) {
@@ -976,7 +987,7 @@ export class TrenchGame {
     this.hop(ladder, PARAPET_Z - 4, 0); // far enough out that the camera's not stuck behind the parapet
     this.whistle(2900, 2700, 1.6, 0.35, true);
     this.sound.music.stinger();
-    this.hud.showBanner('OVER THE TOP!', "Grenade throwers go close and lob them into their trench while the riflemen cover them. Then in through the breaches and find their five officers!");
+    this.hud.showBanner('OVER THE TOP!', 'Grenade throwers lob them into their trench while the riflemen cover them. In through the breaches, then up the communication trenches to their support and reserve lines: find their five officers!');
   }
 
   private updateMedics(dt: number): void {
@@ -984,7 +995,7 @@ export class TrenchGame {
     // fight for good: nobody comes back, on either side).
     const m = this.trenchMedic;
     if (m.kneeling <= 0) {
-      const hurt = this.troops.friends().find((f) => f.t.down && zoneOf(f.t.pos.z) === 1 && f.t.stateTime > 2 && !this.tended.has(f));
+      const hurt = this.troops.friends().find((f) => f.t.down && zoneOf(f.t.pos.x, f.t.pos.z) === 1 && f.t.stateTime > 2 && !this.tended.has(f));
       if (hurt) {
         m.goal = new THREE.Vector3(hurt.t.pos.x + 0.6, 0, FLOOR_Z);
         if (m.update(dt, 4)) {
@@ -1054,7 +1065,7 @@ export class TrenchGame {
     const p = this.player.position;
     const x = THREE.MathUtils.clamp(p.x + (Math.random() - 0.5) * 26, -X_HALF + 2, X_HALF - 2);
     // At our trench, or at the men crossing no man's land.
-    const z = this.phase === 'assault' && zoneOf(p.z) === 2 ? p.z + (Math.random() - 0.5) * 16 : PARAPET_Z + 1 + Math.random() * 5;
+    const z = this.phase === 'assault' && zoneOf(p.x, p.z) === 2 ? p.z + (Math.random() - 0.5) * 16 : PARAPET_Z + 1 + Math.random() * 5;
     this.fireShell(new THREE.Vector3(0, 30, -140), new THREE.Vector3(x, 0, z), false, 3.2);
   }
 
@@ -1070,7 +1081,7 @@ export class TrenchGame {
 
     const p = this.player.position;
     // Reaching the front line moves the battle on.
-    if (!this.reachedFront && zoneOf(p.z) === 1) {
+    if (!this.reachedFront && zoneOf(p.x, p.z) === 1) {
       this.reachedFront = true;
       if (this.phase === 'artillery') {
         this.phase = 'front';
@@ -1102,7 +1113,7 @@ export class TrenchGame {
     // Ours still in our trench once the whistle's gone: up the nearest ladder and over.
     if (this.phase === 'assault') {
       for (const m of this.troops.friends()) {
-        if (!m.t.active || zoneOf(m.t.pos.z) !== 1) continue;
+        if (!m.t.active || zoneOf(m.t.pos.x, m.t.pos.z) !== 1) continue;
         if (LADDERS.some((x) => Math.abs(m.t.pos.x - x) < 1.2) && m.t.pos.z < 36.6) m.t.warp(m.t.pos.x, PARAPET_Z - 1.4);
       }
     }
@@ -1181,7 +1192,7 @@ export class TrenchGame {
   private waypoint(): HUDState['waypoint'] {
     if (this.hud.paused || this.phase === 'won' || this.manning || this.scoped || this.player.isDown) return null;
     const p = this.player.position;
-    const zone = zoneOf(p.z);
+    const zone = zoneOf(p.x, p.z);
     const dist = (x: number, z: number) => `${Math.round(Math.hypot(x - p.x, z - p.z))} m`;
     if (this.phase === 'artillery' && this.gunShells === SHELLS) return this.waypointTo(GUN.clone().setY(3), 'THE BIG GUN');
     if (this.phase === 'assault') {
@@ -1196,6 +1207,13 @@ export class TrenchGame {
       if (zone === 2) {
         const b = BREACHES.reduce((a, c) => (Math.abs(c - o.t.pos.x) + Math.abs(c - p.x) < Math.abs(a - o.t.pos.x) + Math.abs(a - p.x) ? c : a));
         return this.waypointTo(new THREE.Vector3(b, 2, -PARAPET_Z), `BREACH ${dist(b, -PARAPET_Z)}`);
+      }
+      // Through their trenches: the next turn on the way to him, if he's not straight ahead.
+      const next = route(p.x, p.z, o.t.pos.x, o.t.pos.z);
+      if (Math.hypot(next.x - o.t.pos.x, next.z - o.t.pos.z) > 0.1) {
+        const officerZone = zoneOf(o.t.pos.x, o.t.pos.z);
+        const label = officerZone === zone ? (o.mode === 'dugout' ? 'DUGOUT' : 'THIS WAY') : zone === 8 ? 'THIS WAY' : 'COMMUNICATION TRENCH';
+        return this.waypointTo(new THREE.Vector3(next.x, 2, next.z), `${label} ${dist(next.x, next.z)}`);
       }
       return this.waypointTo(o.t.pos.clone().setY(2.6), `OFFICER ${dist(o.t.pos.x, o.t.pos.z)}`);
     }
@@ -1229,7 +1247,7 @@ export class TrenchGame {
     if (this.manning === 'mg') return `Machine gun: ${this.mgBelt} rounds · ${a} to leave`;
     if (this.scoped) return `Scope: aim and fire · ${usingGamepad ? 'B' : 'V'} to put it down · ${this.sniper} rounds`;
     if (this.gas.at(p.z) > 0.2 && !this.maskOn) return this.hasMask ? 'GAS! Press X for your gas mask!' : 'GAS! You have no mask: get out of it!';
-    const zone = zoneOf(p.z);
+    const zone = zoneOf(p.x, p.z);
     const breech = GUN.clone().add(new THREE.Vector3(Math.sin(this.gunYaw) * 1.6, 0, Math.cos(this.gunYaw) * 1.6));
     if (this.gunShells > 0 && Math.hypot(p.x - breech.x, p.z - breech.z) < 3) return `Press ${a} to fire the big gun`;
     if (zone !== 1) return null;
@@ -1260,7 +1278,7 @@ export class TrenchGame {
     const status = [
       `Rifle ${this.rifle} · Sniper ${this.hasSniper ? this.sniper : '—'} · Lewis gun ${this.lewis || '—'}`,
       `Gas mask: ${this.hasMask ? (this.maskOn ? 'ON' : 'off (X)') : 'none'}`,
-      `Ours left ${friends} / ${OUR_LINE + OUR_RESERVE} · Theirs left ${foes} / ${ENEMY_LINE + 5}`,
+      `Ours left ${friends} / ${OUR_LINE + OUR_RESERVE} · Theirs left ${foes} / ${ENEMY_MEN}`,
       'No healing here: hit too often and you wake at the aid post',
     ];
     if (this.wakeUps) status.push(`Woken at the aid post ${this.wakeUps} time${this.wakeUps === 1 ? '' : 's'}`);
