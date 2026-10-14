@@ -24,8 +24,11 @@ pushed to the `main` branch.
 
 Every push to `main` also builds a Linux AppImage and attaches it to the
 [`linux-latest` release](https://github.com/JaseRuss/CooperGame/releases/tag/linux-latest).
-It's the same game in its own window (Electron), so it runs offline, starts
-fullscreen and plays sound without a click first.
+It's the game in its own window (Electron). It loads the live site, so it's
+always the latest version without downloading again, and falls back to the copy
+bundled in the AppImage when there's no connection (`--offline` forces that).
+Settings and saves are kept separately for the live and bundled copies. It
+starts fullscreen and plays sound without a click first.
 
 1. Download `CoopersTankArmy-x86_64.AppImage`, then make it executable
    (right-click → Properties → Permissions → "Is executable", or `chmod +x`).
