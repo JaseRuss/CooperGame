@@ -35,7 +35,8 @@
         }
       }
     },
-    "publish": null
+    "publish": null,
+    "afterPack": "build/after-pack.cjs"
   },
   "devDependencies": {
     "electron": "^44.7.2",

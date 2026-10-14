@@ -8,6 +8,19 @@ const { app, BrowserWindow, net, protocol, shell } = require('electron');
 // Play sound straight away; a browser would wait for a click or key press.
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 
+// Log startup and crashes to ~/.config/Coopers Tank Army/launch.log, since Game Mode shows no console.
+const fs = require('node:fs');
+function log(message) {
+  try {
+    fs.appendFileSync(path.join(app.getPath('userData'), 'launch.log'), `${new Date().toISOString()} ${message}\n`);
+  } catch {
+    // Nowhere to write; carry on.
+  }
+}
+log(`start args=${process.argv.slice(1).join(' ')} desktop=${process.env.XDG_CURRENT_DESKTOP ?? ''} wayland=${process.env.WAYLAND_DISPLAY ?? ''} display=${process.env.DISPLAY ?? ''}`);
+app.on('child-process-gone', (_event, details) => log(`child gone: ${details.type} ${details.reason} ${details.exitCode}`));
+process.on('uncaughtException', (error) => log(`error: ${error.stack ?? error}`));
+
 // Serve the game from app:// rather than file://, so fetch() of models and sounds works and
 // localStorage (settings, siege saves) has a stable origin.
 protocol.registerSchemesAsPrivileged([
@@ -48,7 +61,10 @@ app.whenReady().then(() => {
     }
   });
   // Offline, or the site is unreachable: load the bundled copy, keeping the mission in the query.
-  win.webContents.on('did-fail-load', (_event, code, _description, url, isMainFrame) => {
+  win.webContents.on('render-process-gone', (_event, details) => log(`renderer gone: ${details.reason} ${details.exitCode}`));
+  win.webContents.on('did-finish-load', () => log(`loaded ${win.webContents.getURL()}`));
+  win.webContents.on('did-fail-load', (_event, code, description, url, isMainFrame) => {
+    if (isMainFrame) log(`failed ${code} ${description} ${url}`);
     if (!isMainFrame || code === -3 || !url.startsWith(LIVE_URL)) return; // -3: aborted by a newer load
     win.loadURL(BUNDLED_URL + new URL(url).search);
   });

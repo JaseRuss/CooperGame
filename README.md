@@ -37,6 +37,9 @@ starts fullscreen and plays sound without a click first.
 3. F11 toggles fullscreen. Add `--windowed` to the launch options to start in
    a window.
 
+If it doesn't start, `~/.config/Coopers Tank Army/launch.log` records each
+launch, its options and any crash.
+
 Controllers are read the same way Chrome reads them. If Steam has taken over a
 controller (it does this with 8BitDo, Xbox and PlayStation pads), set Steam
 Input for the shortcut to a gamepad layout, or turn it off, in the shortcut's
