@@ -9,7 +9,7 @@ import { ImpactEffects } from '../combat/ImpactEffects';
 import { JamCannon } from '../combat/JamCannon';
 import { AssetLibrary } from '../world/AssetLibrary';
 import { loadSettings, saveSettings, AIM_SPEED_SCALE, GRAPHICS_QUALITY, type Settings } from '../core/Settings';
-import { MISSIONS, MISSION, startMission } from '../core/config';
+import { MISSION, levelNumber, nextMission, startMission } from '../core/config';
 import { PlayerSoldier, MAX_HEALTH } from '../prison/PlayerSoldier';
 import { ShoulderCam } from '../prison/ShoulderCam';
 import { FRIEND_SHOTS, ENEMY_SHOTS, WALLS_ONLY } from '../prison/groups';
@@ -375,7 +375,7 @@ export class JungleGame {
     this.ready = true;
     this.sound.music.start();
     this.clock.start();
-    this.hud.showBanner('MISSION 2: JUNGLE PATROL', 'On foot with your squad. Cross the river by a bridge, scout from a lookout tower, wreck the airbase jets, and blow up the ammo dumps at the three enemy outposts');
+    this.hud.showBanner(`LEVEL ${levelNumber(MISSION)}: JUNGLE PATROL`, 'On foot with your squad. Cross the river by a bridge, scout from a lookout tower, wreck the airbase jets, and blow up the ammo dumps at the three enemy outposts');
     if (import.meta.env.DEV) (window as unknown as { jungle: JungleGame }).jungle = this;
     requestAnimationFrame(this.animate);
   }
@@ -856,8 +856,8 @@ export class JungleGame {
     }
     this.cookOff.update(dt);
     if (this.victoryAt !== null && this.time - this.victoryAt > VICTORY_DELAY) {
-      const next = MISSIONS.find((m) => m.mission === MISSION + 1 && !m.bonus);
-      if (next) startMission(next.mission);
+      const next = nextMission();
+      if (next) startMission(next);
       this.victoryAt = null;
     }
     if (input.cameraTogglePressed) this.cam.toggle();

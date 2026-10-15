@@ -54,7 +54,7 @@ import { CameraRig } from '../camera/CameraRig';
 import { HUD, type HUDState } from '../ui/HUD';
 import { WorldMap, type MapMarker, type MapView } from '../ui/WorldMap';
 import { AimGuide, type AimTarget } from '../ui/AimGuide';
-import { FRIENDLY_BASES, FORTRESS_HALF, nearestFriendlyBase, BASE_RADIUS, MISSION, MISSIONS, NIGHT, JUNGLE, KNIGHTS, ZOMBIES, SIEGE, startMission, type FriendlyBase, type Mission } from '../core/config';
+import { FRIENDLY_BASES, FORTRESS_HALF, nearestFriendlyBase, BASE_RADIUS, MISSION, MISSIONS, levelNumber, nextMission, NIGHT, JUNGLE, KNIGHTS, ZOMBIES, SIEGE, startMission, type FriendlyBase, type Mission } from '../core/config';
 import { ZombieWaves } from '../world/ZombieWaves';
 import { OverrunTowns } from '../world/OverrunTowns';
 import { FlamePit, FLAME_RANGE, FLAME_HALF_ANGLE } from '../world/FlamePit';
@@ -203,8 +203,8 @@ const CREW_SURRENDER_CHANCE = 0.7;
 /** The castle garrison counter shows when the player is this close to a castle. */
 const GARRISON_SHOWN_WITHIN = 260;
 const NEXT_MISSION_DELAY = 12; // after winning a mission, the next one starts this long after the victory screen
-/** The mission that follows this one, if any (the bonus level is only picked from the level select). */
-const nextMission = MISSIONS.find((m) => m.mission === MISSION + 1 && !m.bonus);
+/** The mission that follows this one, if any (the bonus levels are only picked from the level select). */
+const NEXT_MISSION = nextMission();
 /** Where the jungle haze turns fully opaque. */
 const JUNGLE_FOG_FAR = 950;
 const DAY_FOG_FAR = 1700;
@@ -778,10 +778,10 @@ export class Game {
 
     this.loadingLabel.remove();
     this.ready = true;
-    if (MISSION === 2) this.hud.showBanner('MISSION 2: JUNGLE STRIKE', 'The enemy is hiding in the jungle. Drive or blast through the trees to find their bases!');
+    if (MISSION === 2) this.hud.showBanner(`LEVEL ${levelNumber(2)}: JUNGLE STRIKE`, 'The enemy is hiding in the jungle. Drive or blast through the trees to find their bases!');
     else if (MISSION === 6) this.hud.showBanner('BONUS: UNDER SIEGE', 'Beaten knights surrender. Our wagons take them to our prisons; free ours from theirs!');
-    else if (MISSION === 3) this.hud.showBanner('MISSION 3: CASTLE SIEGE', 'Knights, cannons and dragons! Knock down their castles, then the Great Castle');
-    else if (MISSION === 4) this.hud.showBanner('MISSION 4: ZOMBIE ATTACK!', 'Every army together! Keep the zombies away from the Fortress wall');
+    else if (MISSION === 3) this.hud.showBanner(`LEVEL ${levelNumber(3)}: CASTLE SIEGE`, 'Knights, cannons and dragons! Knock down their castles, then the Great Castle');
+    else if (MISSION === 4) this.hud.showBanner(`LEVEL ${levelNumber(4)}: ZOMBIE ATTACK!`, 'Every army together! Keep the zombies away from the Fortress wall');
     else this.hud.showBanner('GREEN & RED ARE FRIENDS', 'Tan and blue are the enemy. Knock out their bases before the sun goes down, or find the parts to build a bomb tanker!');
     if (import.meta.env.DEV) {
       (window as unknown as { game: Game }).game = this;
@@ -2210,19 +2210,19 @@ export class Game {
         8: '',
       };
       const bombed = MISSION === 1 && this.tanker?.active;
-      this.hud.showVictory(bombed ? 'The bomb tanker blew the Fortress sky-high! The toy box is saved!' : message[MISSION], nextMission ? '' : 'Keep driving around and enjoy it!');
+      this.hud.showVictory(bombed ? 'The bomb tanker blew the Fortress sky-high! The toy box is saved!' : message[MISSION], NEXT_MISSION ? '' : 'Keep driving around and enjoy it!');
       this.sound.music.fanfare();
-      this.victoryTimer = nextMission ? NEXT_MISSION_DELAY : VICTORY_SCREEN_TIME;
+      this.victoryTimer = NEXT_MISSION ? NEXT_MISSION_DELAY : VICTORY_SCREEN_TIME;
     }
     if (this.victoryTimer > 0) {
       this.victoryTimer -= dt;
-      if (nextMission) {
+      if (NEXT_MISSION) {
         this.hud.setVictoryFooter(
-          `Get ready for Mission ${nextMission.mission}: the ${nextMission.title}! Starting in ${Math.max(1, Math.ceil(this.victoryTimer))}…`,
+          `Get ready for Level ${levelNumber(NEXT_MISSION)}: the ${MISSIONS[levelNumber(NEXT_MISSION) - 1].title}! Starting in ${Math.max(1, Math.ceil(this.victoryTimer))}…`,
         );
       }
       if (this.victoryTimer <= 0) {
-        if (nextMission) startMission(nextMission.mission);
+        if (NEXT_MISSION) startMission(NEXT_MISSION);
         else this.hud.hideVictory();
       }
     }

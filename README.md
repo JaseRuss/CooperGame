@@ -8,6 +8,9 @@ family base to repair. You can't be destroyed, so there's no game over, except
 in the last level, where the zombies can break into the Fortress before you
 escape to the Moon.
 
+The game now starts with **Level 1: Trench Jungle**, a tougher level on foot designed by Cooper
+(see [below](#level-1-trench-jungle)); win it and the tank battle, Day to Night, is next.
+
 Built with [Three.js](https://threejs.org/), [Rapier](https://rapier.rs/) physics,
 TypeScript and [Vite](https://vite.dev/). See [Credits](#credits) for where the ready-made
 models and font came from.
@@ -161,7 +164,7 @@ sound on.
   marching on the nearest enemy base to soften it up (they can't take it on
   their own), and you'll hear when they get there so you can go and help.
   Knock out enemy bases and the raids dry up.
-- **Day to night:** the first mission starts in bright sunshine, and every base you
+- **Day to night:** Day to Night starts in bright sunshine, and every base you
   take sends the sun lower: orange dusk, then dark. By the final assault (or the
   bomb tanker's run) it's a night raid: stars, flares over the troops, tracer from
   the guns and a barrage of explosions round the Fortress. Your tank's headlight
@@ -247,9 +250,9 @@ sound on.
   factory goes down in 7 shells instead of 13.
 - The pause map shows where the enemy is gathered as a red glow.
 
-## The bomb tanker (Mission 1)
+## The bomb tanker (Day to Night)
 
-The Fortress on the first mission sits in the far top-left corner of the map, and its gates
+The Fortress in Day to Night sits in the far top-left corner of the map, and its gates
 don't open when the bases fall. You get in by building a **bomb tanker** and driving it there.
 
 - **Destroy the bases for the parts.** Each of the five enemy bases drops one part into its
@@ -344,9 +347,9 @@ rocket down each side.
 - After **3 minutes** (it uses the **Jeep time** option) it turns back into the
   tank. Drive through a motorbike station to top the time back up.
 
-## Mission 2: Jungle Strike
+## Level 3: Jungle Strike
 
-Win the first mission and the jungle is next, and this one is **entirely on foot**: a
+Win Day to Night and the jungle is next, and this one is **entirely on foot**: a
 very dense patch of jungle (about 4,800 trees) with a **river** across the middle, ponds and rock outcrops, you, and a **squad** of four green soldiers who
 follow you, shoot at what they can see, and get back up after being knocked down. Press **X** to
 make them hold their ground or follow you again.
@@ -376,7 +379,7 @@ make them hold their ground or follow you again.
 - You can also use the rifle (click) and the checkpoint (R). The enemy shoots back and calls for help
   once they've seen you, so scout first, then pick the outposts off one at a time.
 
-## Mission 3: Castle Siege
+## Level 4: Castle Siege
 
 Win the jungle and you're back in your tank in the land of knights,
 but the enemy bases are stone **castles** with towers, a gatehouse, a keep, a
@@ -388,7 +391,7 @@ tanks are old **cannons** pushed about by two gunners, and their helicopters are
 The pillboxes are stone guardhouses with a ballista. The villages are thatched
 cottages on dirt tracks, and the Fortress in the middle is the **Great Castle**.
 
-## Mission 4: Zombie Attack
+## Level 5: Zombie Attack
 
 The last level, at night. Green, red, tan and blue have all joined up to defend
 the **Fortress**, and waves of glow-in-the-dark plastic **zombies** are coming. A
@@ -492,13 +495,13 @@ beams and the far sharks, pulls the fog in and refreshes the vision cones less o
 Run about as a green army man (he hops, like all the toy soldiers) and aim over his shoulder.
 Move with the left stick or W A S D, aim with the right stick or mouse, fire with RT or a
 click, creep with RB / Shift, Y / C swaps to first person and Back / R goes back to the last
-checkpoint. It's in the level select as **5 · Bonus: Prison Break**. The plan is in
+checkpoint. It's in the level select as **6 · Bonus: Prison Break**. The plan is in
 `docs/plans/prison-break.md`.
 
 ## Epilogue: Moon Buggy
 
 The zombie mission's happy ending now leads on (press A / Enter on the "Mission Accomplished"
-screen), and it's in the level select as **7 · Epilogue: Moon Buggy**. The armies made it to the Moon;
+screen), and it's in the level select as **8 · Epilogue: Moon Buggy**. The armies made it to the Moon;
 you drive a moon buggy with low gravity (a jump keeps you up for about five seconds, and a hard
 landing can shake a crate off the bed).
 
@@ -552,11 +555,22 @@ map at all. Find the lot for a fanfare. The music changes to a bongo-and-marimba
   finds them and runs the gadgets), `src/moon/RoadWorks.ts` (the road-building scene), `src/moon/Maze.ts`
   and `src/moon/SkiRobot.ts`.
 
-## New: Trench Jungle (on trial)
+## Level 1: Trench Jungle
 
-A new level designed by Cooper, on trial: it's at the bottom of the level select as **New: Trench
-Jungle** (or open the game with `?mission=8`), not numbered and not part of the run of levels, so
-winning another level never leads to it. Single player, on foot, and **tougher than the others**.
+The first level, designed by Cooper: it's where the game starts, first in the level select as
+**1 · Trench Jungle**, and `?mission=8` opens it too. Win it and Level 2 (Day to Night) starts. Single
+player, on foot, and **tougher than the others**.
+
+**It looks like a huge front.** Both trench lines, their wire and no man's land carry on far beyond
+the part you fight in, with our men kneeling in the trench out there and shells bursting along the
+line, and the jungle goes on all round. The fighting area is fenced off with **barbed wire**:
+heavy coils of it on iron pickets where it crosses the trenches and no man's land, and a post-and-wire
+fence back in the jungle.
+
+**The big gun** is a proper WWI field gun: spoked wheels with iron tyres, seats on the axle, a box
+trail and spade, an armoured shield, the barrel on its cradle with the recoil buffer and
+recuperator, a breech block, a dial sight and handwheels. The barrel slams back when it fires. It
+has an ammunition limber and a stack of shells, and two of its crew (theirs is the same, in tan).
 
 Our trench line runs across a strip of jungle, facing theirs across a muddy no man's land of shell
 holes, stumps and barbed wire. Each trench has a sandbagged parapet too tall to see over, a fire
@@ -613,7 +627,7 @@ front again (after the whistle, over the top from a ladder).
 
 ## Bonus: Under Siege
 
-A second bonus level, in the level select as **6 · Bonus: Under Siege**: the castle mission with
+A second bonus level, in the level select as **7 · Bonus: Under Siege**: the castle mission with
 prisoners. Single player (there is no co-op on this level).
 
 - **Surrender.** Knights who are beaten but not blasted flat often surrender: they drop their
@@ -672,7 +686,10 @@ The plan is in `docs/plans/under-siege.md`.
 
 Pause, open **Options** and pick a level under **Level select** at the bottom,
 then press A or Enter (or click it). It starts that mission from the beginning.
-You can also open the game with `?mission=2` up to `?mission=6`.
+You can also open the game with `?mission=1` up to `?mission=8`. Those numbers are fixed ids, not
+the level numbers: 1 is Day to Night, 2 the jungle, 3 the castles, 4 the zombies, 5 the prison
+break, 6 Under Siege, 7 the Moon and 8 the trenches. The level numbers come from the order in the
+level select.
 
 ## Credits
 
