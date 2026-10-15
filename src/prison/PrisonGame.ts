@@ -958,7 +958,6 @@ export class PrisonGame {
       if (Math.floor(this.raftTimer * 2) !== Math.floor((this.raftTimer - dt) * 2)) this.sound.play('poof', { volume: 0.35, rate: 1.7 + t * 0.6, minGap: 0.2 });
       this.hud.setFade(0);
       if (t >= 1) this.sailing();
-      this.sound.updateEngine(0, 'chopper', false);
       return;
     }
     if (this.raftPhase === 'sinking') {
@@ -983,6 +982,8 @@ export class PrisonGame {
       return;
     }
     r.update(dt, this.time, input, this.gear.has('paddles'));
+    // The crew's paddles splashing in (softer by hand, with the paddles lost).
+    for (const side of r.strokes) this.sound.paddle(this.gear.has('paddles') ? 0.7 : 0.45, side * 0.35);
     this.raftCam.update(this.camera, r, input, dt);
     this.updateAir(input, dt);
     const mist = this.sea.mistAt(r.position.x, r.position.z);
@@ -1011,9 +1012,6 @@ export class PrisonGame {
       this.hud.showBanner(`BUOY ${this.buoysPassed} OF ${this.sea.buoys.length}`, 'A spare life jacket was tied to it. The next buoy is further up the course');
       this.sound.play('uiConfirm', { volume: 0.6 });
     }
-    // The rotors, heard from further off than seen.
-    const near = Math.min(report.nearest, 400);
-    this.sound.updateEngine(24, 'chopper', true, Math.pow(Math.max(0, 1 - near / 320), 1.5) * 1.6);
     if (r.position.z < landingZ) this.landOnShore();
   }
 
@@ -1070,7 +1068,6 @@ export class PrisonGame {
     }
     this.guards.setSector('shore');
     this.helis.setActive(false);
-    this.sound.updateEngine(0, 'chopper', false);
     this.checkpoint = { ...SHORE_CHECKPOINTS[0], x };
     this.shoreCheckpoint = 0;
     this.shoreSince = this.time;
@@ -1610,7 +1607,6 @@ export class PrisonGame {
     const kbMenu = this.input.keyboardMenu();
     input.mapTogglePressed ||= kbMenu.mapTogglePressed;
     if (this.hud.paused) {
-      this.sound.updateEngine(0, 'chopper', false);
       const menu = {
         up: input.menu.up || kbMenu.menu.up || (p2Input?.menu.up ?? false),
         down: input.menu.down || kbMenu.menu.down || (p2Input?.menu.down ?? false),

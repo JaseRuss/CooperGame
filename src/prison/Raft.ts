@@ -47,6 +47,10 @@ export class Raft {
   private readonly tarp: THREE.Mesh;
   private readonly crew: THREE.Group[] = [];
   private readonly paddles: THREE.Group[] = [];
+  /** Which side each paddle is on (-1 left, 1 right). */
+  private readonly paddleSides: number[] = [];
+  /** The sides of the paddles that dipped into the water this frame (for the splashes). */
+  readonly strokes: number[] = [];
   private phase = 0;
   /** Blown up enough for the crew to climb in. */
   private manned = false;
@@ -97,6 +101,7 @@ export class Raft {
   setCrew(buddyNames: string[], showTags: boolean): void {
     for (const c of this.crew) this.body.remove(c);
     for (const p of this.paddles) this.body.remove(p);
+    this.paddleSides.length = 0;
     this.crew.length = 0;
     this.paddles.length = 0;
     const wood = new THREE.MeshStandardMaterial({ color: 0xb08a52, roughness: 0.7, metalness: 0 });
@@ -126,6 +131,7 @@ export class Raft {
       paddle.rotation.z = side * 0.45;
       this.body.add(paddle);
       this.paddles.push(paddle);
+      this.paddleSides.push(side);
     });
   }
 
@@ -145,6 +151,7 @@ export class Raft {
   /** Everyone's off: an empty raft. */
   clearCrew(): void {
     for (const c of [...this.crew, ...this.paddles]) this.body.remove(c);
+    this.paddleSides.length = 0;
     this.crew.length = 0;
     this.paddles.length = 0;
   }
@@ -191,7 +198,16 @@ export class Raft {
     if (over > 0) {
       this.position.x -= Math.sign(this.position.x) * Math.min(over, 6 * dt + over * dt);
     }
+    const before = this.phase;
     this.phase += dt * (1.8 + Math.max(0, this.speed) * 1.4);
+    // A stroke each time a paddle's swing comes round, but only while they're really paddling (not drifting or lying flat).
+    this.strokes.length = 0;
+    if (this.manned && this.flat < 0.5 && Math.abs(forward) > 0.1) {
+      for (let i = 0; i < this.paddles.length; i++) {
+        const lap = (a: number) => Math.floor((a + i * 1.6) / (Math.PI * 2));
+        if (lap(this.phase) !== lap(before)) this.strokes.push(this.paddleSides[i]);
+      }
+    }
     this.apply(time);
   }
 

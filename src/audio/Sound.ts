@@ -68,6 +68,7 @@ export class Sound {
   private readonly listenerRight = new THREE.Vector3(1, 0, 0);
   private voices = 0;
   private sfxLevel = 1;
+  private noise: AudioBuffer | null = null;
   private engine: { a: OscillatorNode; b: OscillatorNode; filter: BiquadFilterNode; gain: GainNode; clatter: GainNode; lfo: OscillatorNode } | null = null;
 
   constructor(mission: Mission) {
@@ -200,9 +201,58 @@ export class Sound {
   }
 
   /**
+   * A paddle stroke: the blade slapping in, then the swirl of the pull. `pan` is -1 (left) to 1 (right).
+   */
+  paddle(volume = 1, pan = 0): void {
+    const out = this.synthOut();
+    if (!out) return;
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+    if (!this.noise) {
+      this.noise = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
+      const data = this.noise.getChannelData(0);
+      for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+    }
+    const v = volume * (0.8 + Math.random() * 0.4);
+    const panner = ctx.createStereoPanner();
+    panner.pan.value = clamp(pan, -1, 1);
+    panner.connect(out);
+    // The slap: a short, bright splash as the blade goes in.
+    const slap = ctx.createBufferSource();
+    slap.buffer = this.noise;
+    const slapFilter = ctx.createBiquadFilter();
+    slapFilter.type = 'bandpass';
+    slapFilter.Q.value = 1.2;
+    slapFilter.frequency.value = 1500 + Math.random() * 600;
+    const slapGain = ctx.createGain();
+    slapGain.gain.setValueAtTime(0.0001, now);
+    slapGain.gain.exponentialRampToValueAtTime(0.32 * v, now + 0.012);
+    slapGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.16);
+    slap.connect(slapFilter).connect(slapGain).connect(panner);
+    slap.start(now, Math.random() * 0.6);
+    slap.stop(now + 0.18);
+    // The pull: a lower whoosh of water dragged past the blade, falling away.
+    const pull = ctx.createBufferSource();
+    pull.buffer = this.noise;
+    const pullFilter = ctx.createBiquadFilter();
+    pullFilter.type = 'bandpass';
+    pullFilter.Q.value = 2;
+    pullFilter.frequency.setValueAtTime(700 + Math.random() * 150, now + 0.04);
+    pullFilter.frequency.exponentialRampToValueAtTime(260, now + 0.45);
+    const pullGain = ctx.createGain();
+    pullGain.gain.setValueAtTime(0.0001, now + 0.03);
+    pullGain.gain.exponentialRampToValueAtTime(0.22 * v, now + 0.1);
+    pullGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.48);
+    pull.connect(pullFilter).connect(pullGain).connect(panner);
+    pull.start(now + 0.03, Math.random() * 0.4);
+    pull.stop(now + 0.5);
+    pull.onended = () => panner.disconnect();
+  }
+
+  /**
    * The player's engine: a low, clanking rumble for the tank, a higher buzz for the jeep and the
    * chopper's thudding rotor, rising with speed. Silent while `running` is false (paused, rocket cam).
-   * `loudness` scales the chopper's rotor (the prison level's search helicopters, heard from afar).
+   * `loudness` scales the chopper's rotor (heard from afar).
    */
   updateEngine(speed: number, vehicle: Vehicle, running: boolean, loudness = 1): void {
     if (this.ctx.state !== 'running') return;
