@@ -56,8 +56,6 @@ export interface HeliReport {
   /** They lost it (it hid in the mist long enough) this frame. */
   lost: boolean;
   hits: HeliHit[];
-  /** Distance to the nearest gunship (for the rotor noise). */
-  nearest: number;
 }
 
 const beamGeometry = new THREE.CylinderGeometry(0.2, POOL, 1, 22, 1, true).translate(0, -0.5, 0).rotateX(-Math.PI / 2);
@@ -166,7 +164,7 @@ export class SearchHelis {
 
   update(dt: number, raft: THREE.Vector3, hidden: number, flat: number, progress: number): HeliReport {
     this.time += dt;
-    const report: HeliReport = { exposure: 0, lit: false, hunting: this.hunting, alarm: false, lost: false, hits: [], nearest: Infinity };
+    const report: HeliReport = { exposure: 0, lit: false, hunting: this.hunting, alarm: false, lost: false, hits: [] };
     if (!this.active) return report;
     const t = this.time;
     // The roamer joins once the crossing's under way.
@@ -243,7 +241,6 @@ export class SearchHelis {
         h.exposure = Math.max(0, h.exposure - dt * 0.9);
       }
       report.exposure = Math.max(report.exposure, this.hunting ? 1 : h.exposure);
-      report.nearest = Math.min(report.nearest, Math.hypot(h.pos.x - raft.x, h.pos.z - raft.z));
       if (!this.hunting && h.exposure >= 1) {
         this.hunting = true;
         this.huntLeft = HUNT_TIME;
