@@ -4,6 +4,7 @@ import { plastic, shade } from '../utils/plastic';
 import type { Solids } from '../jungle/Props';
 import type { Clearing } from '../jungle/Forest';
 import { mulberry32 } from '../utils/rng';
+import { createFigureMesh, createPoseFigure, CARRY_CRATE_AT } from '../entities/Soldier';
 
 /*
  * The trench level's ground plan. Our trench line runs across the map (along X) on the south (+Z)
@@ -21,11 +22,16 @@ import { mulberry32 } from '../utils/rng';
  * lines, and a gap in the reserve line's parados leads out to their big gun.
  */
 
-/** The lines run across x in [-X_HALF, X_HALF]; walls just beyond close the ends. */
+/** The fighting is across x in [-X_HALF, X_HALF]; barbed wire just beyond closes the ends. */
 export const X_HALF = 72;
 export const SIDE_WALL = X_HALF + 2;
-/** The map's back edges. */
+/** The map's back edges (wire again). */
 export const Z_HALF = 132;
+/**
+ * The trenches, the wire and no man's land carry on this far either side, beyond the wire, so the
+ * front looks like it goes on for miles (the jungle carries on all round too).
+ */
+export const SCENERY_HALF = 190;
 /** The middle of each front parapet (ours at +PARAPET_Z, theirs at -PARAPET_Z), and its size. */
 export const PARAPET_Z = 34;
 const PARAPET_HALF_T = 0.5;
@@ -326,13 +332,17 @@ const MUD = 0x4a3b2a;
 
 /** A low-poly sandbag (there are thousands): about 0.9 m long, 0.3 tall and 0.4 deep. */
 const BAG = new THREE.CapsuleGeometry(0.2, 0.5, 2, 6).rotateZ(Math.PI / 2).scale(1, 0.72, 1);
+/** The same sandbag as a plain block, for the stretches out beyond the wire where nobody gets close. */
+const FAR_BAG = new THREE.BoxGeometry(0.86, 0.27, 0.36);
+/** The sandbag to use at x. */
+const bagAt = (x: number) => (Math.abs(x) > SIDE_WALL + 4 ? FAR_BAG : BAG);
 
 /**
  * Builds both trench lines, no man's land, the guns, dugouts, the ammo dump and the aid post:
  * merged meshes in the scene and fixed colliders in `solids`. Returns the stumps in no man's
  * land (cover) for the map, and the gun groups to aim.
  */
-export function buildBattlefield(scene: THREE.Scene, solids: Solids, ourColor: number, theirColor: number): { gun: THREE.Group; barrel: THREE.Object3D } {
+export function buildBattlefield(scene: THREE.Scene, solids: Solids, ourColor: number, theirColor: number): { gun: THREE.Group; barrel: THREE.Object3D; recoil: THREE.Object3D } {
   const rng = mulberry32(1914);
   const earth = plastic(EARTH);
   const bagMat = plastic(SANDBAG);
@@ -347,7 +357,7 @@ export function buildBattlefield(scene: THREE.Scene, solids: Solids, ourColor: n
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(600, 600).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0x3c5a2c, roughness: 1 }));
   ground.receiveShadow = true;
   scene.add(ground);
-  const mud = new THREE.Mesh(new THREE.PlaneGeometry(SIDE_WALL * 2 + 60, 92).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: MUD, roughness: 1 }));
+  const mud = new THREE.Mesh(new THREE.PlaneGeometry(SCENERY_HALF * 2 + 40, 92).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: MUD, roughness: 1 }));
   mud.position.y = 0.01;
   mud.receiveShadow = true;
   scene.add(mud);
@@ -358,17 +368,18 @@ export function buildBattlefield(scene: THREE.Scene, solids: Solids, ourColor: n
     scene.add(strip);
   }
   solids.box(0, -0.5, 0, 300, 0.5, 300);
-  solids.box(-SIDE_WALL, 10, 0, 0.5, 10, Z_HALF + 1);
-  solids.box(SIDE_WALL, 10, 0, 0.5, 10, Z_HALF + 1);
-  solids.box(0, 10, -Z_HALF - 1, SIDE_WALL, 10, 0.5);
-  solids.box(0, 10, Z_HALF + 1, SIDE_WALL, 10, 0.5);
+  // The edges, where the barbed wire is: as tall as the wire, so shots fly on over it.
+  solids.box(-SIDE_WALL, 1.1, 0, 0.6, 1.1, Z_HALF + 1);
+  solids.box(SIDE_WALL, 1.1, 0, 0.6, 1.1, Z_HALF + 1);
+  solids.box(0, 1.1, -Z_HALF - 1, SIDE_WALL, 1.1, 0.6);
+  solids.box(0, 1.1, Z_HALF + 1, SIDE_WALL, 1.1, 0.6);
 
   // Shell holes all over no man's land (just dark patches with a lip: nothing to trip on).
   const craterMat = new THREE.MeshStandardMaterial({ color: 0x2e2419, roughness: 1 });
   const lipMat = new THREE.MeshStandardMaterial({ color: 0x5a4733, roughness: 1 });
-  for (let i = 0; i < 60; i++) {
+  for (let i = 0; i < 150; i++) {
     const r = 1.2 + rng() * 2.8;
-    const x = (rng() * 2 - 1) * (X_HALF - 2);
+    const x = i < 60 ? (rng() * 2 - 1) * (X_HALF - 2) : Math.sign(rng() - 0.5) * (SIDE_WALL + 3 + rng() * (SCENERY_HALF - SIDE_WALL - 3));
     const z = (rng() * 2 - 1) * 29;
     p.add(new THREE.CircleGeometry(r, 14).rotateX(-Math.PI / 2), craterMat, x, 0.02 + i * 0.0003, z);
     p.add(new THREE.TorusGeometry(r, 0.22, 4, 14).rotateX(Math.PI / 2).scale(1, 1, 0.5), lipMat, x, 0.04, z);
@@ -383,6 +394,15 @@ export function buildBattlefield(scene: THREE.Scene, solids: Solids, ourColor: n
     p.add(new THREE.ConeGeometry(r * 0.7, 0.5, 5), woodDark, x, h + 0.2, z, 0, rng() * 3, 0.3);
     solids.cylinder(x, z, r, h);
   }
+  // More stumps out beyond the wire (scenery only).
+  for (let i = 0; i < 26; i++) {
+    const x = Math.sign(rng() - 0.5) * (SIDE_WALL + 4 + rng() * (SCENERY_HALF - SIDE_WALL - 6));
+    const z = (rng() * 2 - 1) * 24;
+    const h = 1.2 + rng() * 3;
+    const r = 0.35 + rng() * 0.25;
+    p.add(new THREE.CylinderGeometry(r * 0.7, r, h, 7), woodDark, x, h / 2, z, (rng() - 0.5) * 0.15, rng() * 3, (rng() - 0.5) * 0.15);
+    p.add(new THREE.ConeGeometry(r * 0.7, 0.5, 5), woodDark, x, h + 0.2, z, 0, rng() * 3, 0.3);
+  }
 
   /**
    * One trench line, `s` 1 for ours (south) and -1 for theirs, its parapet `base` out from the
@@ -396,7 +416,7 @@ export function buildBattlefield(scene: THREE.Scene, solids: Solids, ourColor: n
     const stepZ = at(STEP_Z);
     const paradosZ = at(PARADOS_Z);
     const floorZ = at(FLOOR_Z);
-    for (const [x0, x1] of spans(SIDE_WALL, frontGaps)) {
+    for (const [x0, x1] of spans(SCENERY_HALF, frontGaps)) {
       const len = x1 - x0;
       const cx = (x0 + x1) / 2;
       solids.box(cx, PARAPET_H / 2, parapetZ, len / 2, PARAPET_H / 2, PARAPET_HALF_T);
@@ -408,7 +428,7 @@ export function buildBattlefield(scene: THREE.Scene, solids: Solids, ourColor: n
           for (const dz of [-0.22, 0.22]) {
             const jx = x + (row ? 0.43 : 0) + (rng() - 0.5) * 0.06;
             if (jx > x1 - 0.3) continue;
-            p.add(BAG, (row + (dz > 0 ? 1 : 0)) % 2 ? bagMat : bagDark, jx, 1.18 + row * 0.27, parapetZ + dz, 0, (rng() - 0.5) * 0.1, 0);
+            p.add(bagAt(jx), (row + (dz > 0 ? 1 : 0)) % 2 ? bagMat : bagDark, jx, 1.18 + row * 0.27, parapetZ + dz, 0, (rng() - 0.5) * 0.1, 0);
           }
         }
       }
@@ -419,22 +439,22 @@ export function buildBattlefield(scene: THREE.Scene, solids: Solids, ourColor: n
       p.add(box(len, STEP_H, 1), wood, cx, STEP_H / 2, stepZ);
       p.add(box(len, 0.05, 1.04), woodDark, cx, STEP_H + 0.01, stepZ);
     }
-    for (const [x0, x1] of spans(SIDE_WALL, backGaps)) {
+    for (const [x0, x1] of spans(SCENERY_HALF, backGaps)) {
       const len = x1 - x0;
       const cx = (x0 + x1) / 2;
       solids.box(cx, PARADOS_H / 2, paradosZ, len / 2, PARADOS_H / 2, PARADOS_HALF_T);
       p.add(box(len, PARADOS_H - 0.25, 1.3), earth, cx, (PARADOS_H - 0.25) / 2, paradosZ);
-      for (let x = x0 + 0.45; x < x1 - 0.3; x += 0.86) p.add(BAG, bagMat, x + (rng() - 0.5) * 0.06, PARADOS_H - 0.12, paradosZ, 0, (rng() - 0.5) * 0.12, 0);
+      for (let x = x0 + 0.45; x < x1 - 0.3; x += 0.86) p.add(bagAt(x), bagMat, x + (rng() - 0.5) * 0.06, PARADOS_H - 0.12, paradosZ, 0, (rng() - 0.5) * 0.12, 0);
       p.add(box(len, PARADOS_H - 0.3, 0.06), woodDark, cx, (PARADOS_H - 0.3) / 2, paradosZ - s * (PARADOS_HALF_T + 0.03));
     }
     // Mud and duckboards all along the walkway.
     if (!frontLine) {
-      const strip = new THREE.Mesh(new THREE.PlaneGeometry(SIDE_WALL * 2, 7.4).rotateX(-Math.PI / 2), mudMat);
+      const strip = new THREE.Mesh(new THREE.PlaneGeometry(SCENERY_HALF * 2, 7.4).rotateX(-Math.PI / 2), mudMat);
       strip.position.set(0, 0.011, at(FLOOR_Z - 0.4));
       strip.receiveShadow = true;
       scene.add(strip);
     }
-    for (let x = -SIDE_WALL + 0.6; x < SIDE_WALL - 0.5; x += 1.25) {
+    for (let x = -SCENERY_HALF + 0.6; x < SCENERY_HALF - 0.5; x += 1.25) {
       p.add(box(1.15, 0.06, 1.3), woodDark, x, 0.04, floorZ);
       for (const dz of [-0.45, 0, 0.45]) p.add(box(1.15, 0.03, 0.16), wood, x, 0.085, floorZ + dz);
     }
@@ -442,7 +462,7 @@ export function buildBattlefield(scene: THREE.Scene, solids: Solids, ourColor: n
     // Barbed wire in front: two rows of posts with strands between, cut where they've been breached.
     for (const row of [27.5, 30]) {
       let prev: THREE.Vector3 | null = null;
-      for (let x = -X_HALF + 1; x <= X_HALF - 1; x += 3.4) {
+      for (let x = -SCENERY_HALF + 1; x <= SCENERY_HALF - 1; x += 3.4) {
         const cut = !ours && BREACHES.some((b) => Math.abs(b - x) < 4);
         const post = new THREE.Vector3(x + (rng() - 0.5) * 0.6, 0, s * (row + (rng() - 0.5) * 0.6));
         if (cut) {
@@ -517,6 +537,77 @@ export function buildBattlefield(scene: THREE.Scene, solids: Solids, ourColor: n
       }
     }
   }
+  // The edges of the fighting are wired off. Across the trenches and no man's land it's a thick
+  // entanglement (three coils of concertina wire stacked on iron pickets); back in the jungle, a
+  // fence of posts and strands.
+  const ring = new THREE.TorusGeometry(0.46, 0.016, 3, 7);
+  const rust = new THREE.MeshStandardMaterial({ color: 0x4d4038, roughness: 0.75, metalness: 0.35 });
+  const entanglement = (x0: number, z0: number, x1: number, z1: number) => {
+    const len = Math.hypot(x1 - x0, z1 - z0);
+    const dx = (x1 - x0) / len;
+    const dz = (z1 - z0) / len;
+    const yaw = Math.atan2(dx, dz); // turns a ring's axis (+Z) to point along the line
+    for (let s = 0; s < len; s += 0.75) {
+      const x = x0 + dx * s;
+      const z = z0 + dz * s;
+      for (const [side, y] of [[-0.48, 0.46], [0.48, 0.46], [0, 1.2]]) {
+        p.add(ring, wire, x - dz * side + (rng() - 0.5) * 0.08, y + (rng() - 0.5) * 0.08, z + dx * side, (rng() - 0.5) * 0.35, yaw + (rng() - 0.5) * 0.35, 0);
+      }
+    }
+    for (let s = 0; s <= len; s += 3) {
+      const x = x0 + dx * s;
+      const z = z0 + dz * s;
+      // A pair of crossed iron pickets, and strands along the top and the bottom.
+      for (const lean of [-0.25, 0.25]) p.add(box(0.06, 1.9, 0.06), rust, x - dz * lean, 0.9, z + dx * lean, lean * dx, 0, -lean * dz);
+      if (s + 3 <= len) for (const h of [0.15, 1.75]) p.beam(new THREE.Vector3(x, h, z), new THREE.Vector3(x + dx * 3, h, z + dz * 3), 0.02, wire);
+    }
+  };
+  const fence = (x0: number, z0: number, x1: number, z1: number) => {
+    const len = Math.hypot(x1 - x0, z1 - z0);
+    const dx = (x1 - x0) / len;
+    const dz = (z1 - z0) / len;
+    for (let s = 0; s <= len; s += 3.2) {
+      const a = new THREE.Vector3(x0 + dx * s, 0, z0 + dz * s);
+      p.add(new THREE.CylinderGeometry(0.06, 0.07, 1.7, 5), woodDark, a.x, 0.85, a.z, (rng() - 0.5) * 0.12, 0, (rng() - 0.5) * 0.12);
+      if (s + 3.2 > len) continue;
+      const b = new THREE.Vector3(a.x + dx * 3.2, 0, a.z + dz * 3.2);
+      for (const h of [0.3, 0.7, 1.1, 1.5]) p.beam(a.clone().setY(h), b.clone().setY(h + (rng() - 0.5) * 0.15), 0.022, wire);
+      p.beam(a.clone().setY(0.2), b.clone().setY(1.5), 0.02, wire);
+      p.beam(a.clone().setY(1.5), b.clone().setY(0.2), 0.02, wire);
+    }
+  };
+  const OPEN_FROM = -(lineAt(2).back + 18);
+  const OPEN_TO = 58;
+  for (const sx of [-SIDE_WALL, SIDE_WALL]) {
+    entanglement(sx, OPEN_FROM, sx, OPEN_TO);
+    fence(sx, OPEN_TO, sx, Z_HALF + 0.6);
+    fence(sx, -Z_HALF - 0.6, sx, OPEN_FROM);
+  }
+  for (const sz of [-Z_HALF - 0.6, Z_HALF + 0.6]) fence(-SIDE_WALL, sz, SIDE_WALL, sz);
+
+  // Our line carries on beyond the wire: men kneeling in the trench, and a few up on the fire step
+  // (scenery: one instanced mesh for each pose).
+  const kneelers: THREE.Matrix4[] = [];
+  const standers: THREE.Matrix4[] = [];
+  for (const sx of [-1, 1]) {
+    for (let x = SIDE_WALL + 3; x < SCENERY_HALF - 2; x += 6 + rng() * 5) {
+      const up = rng() < 0.2;
+      const m = new THREE.Matrix4().compose(
+        new THREE.Vector3(sx * x, up ? STEP_H : 0, up ? STEP_Z : STEP_Z + 1.15),
+        new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), (rng() - 0.5) * 0.5),
+        new THREE.Vector3(1, 1, 1),
+      );
+      (up ? standers : kneelers).push(m);
+    }
+  }
+  for (const [pose, list] of [[1, kneelers], [0, standers]] as const) {
+    const fig = createFigureMesh(pose, ourColor);
+    const mesh = new THREE.InstancedMesh(fig.geometry, fig.material as THREE.Material, list.length);
+    list.forEach((m, i) => mesh.setMatrixAt(i, m));
+    mesh.castShadow = true;
+    scene.add(mesh);
+  }
+
   // Rubble of sandbags in their breaches.
   for (const b of BREACHES) {
     for (let i = 0; i < 9; i++) p.add(BAG, bagDark, b + (rng() - 0.5) * 5, 0.12 + rng() * 0.1, -PARAPET_Z + (rng() - 0.5) * 2.6, rng() * 0.4, rng() * 3, 0);
@@ -597,52 +688,163 @@ export function buildBattlefield(scene: THREE.Scene, solids: Solids, ourColor: n
   p.add(box(1.2, 0.08, 0.12), wood, SNIPER_RACK.x, STEP_H + 1.2, SNIPER_RACK.z + 0.25);
   p.buildInto(scene, false, true);
 
-  // Our field gun (aimed by the player), and theirs (scenery).
+  // Our field gun (aimed by the player), and theirs (scenery), each with its limber, shells and crew.
   const gun = fieldGun(ourColor);
   gun.position.copy(GUN);
   gun.rotation.y = 0;
   scene.add(gun);
-  solids.box(GUN.x, 0.8, GUN.z + 0.6, 1.3, 0.8, 1.6);
+  solids.box(GUN.x, 0.9, GUN.z + 1.3, 1.3, 0.9, 2.3);
+  gunPit(scene, solids, GUN, -1, ourColor);
   const theirs = fieldGun(theirColor);
   theirs.position.copy(ENEMY_GUN);
   theirs.rotation.y = Math.PI;
   scene.add(theirs);
+  gunPit(scene, solids, ENEMY_GUN, 1, theirColor);
   // The machine gun on its tripod.
   const mg = machineGun();
   mg.position.copy(MG_AT);
   scene.add(mg);
-  return { gun, barrel: gun.getObjectByName('barrel') as THREE.Object3D };
+  return { gun, barrel: gun.getObjectByName('barrel') as THREE.Object3D, recoil: gun.getObjectByName('recoil') as THREE.Object3D };
 }
 
-/** A toy field gun facing -Z: two spoked wheels, a shield, the barrel on a cradle (named "barrel", pivoting at the trunnions) and the trail. */
+/** The big gun's barrel pivots this high, and its muzzle is this far out in front of the pivot. */
+export const GUN_PIVOT_Y = 1.32;
+export const GUN_MUZZLE = 3.45;
+
+/**
+ * A toy WWI field gun facing -Z: big spoked wheels with iron tyres on a steel axle, a pair of
+ * axle-tree seats, a box trail back to the spade, an armoured shield with a sight window and a
+ * barrel slot, and the barrel on its cradle with the recoil buffer under it and the recuperator
+ * over it, a breech block, a dial sight and the elevating and traversing handwheels. The cradle
+ * group is named "barrel" (it pivots at the trunnions to elevate); inside it, the part named
+ * "recoil" (barrel and breech) slides back along +Z when the gun fires.
+ */
 export function fieldGun(color: number): THREE.Group {
   const g = new THREE.Group();
   const body = plastic(color);
-  const dark = plastic(shade(color, 0.6));
+  const dark = plastic(shade(color, 0.62));
   const steel = plastic(0x4a4d50);
+  const black = plastic(0x1e2022);
   const p = new PartBuilder();
-  for (const x of [-1.05, 1.05]) {
-    p.add(tubeX(0.75, 0.14, 18), dark, x, 0.75, 0);
-    p.add(tubeX(0.2, 0.3, 10), steel, x, 0.75, 0);
-    for (let k = 0; k < 6; k++) p.add(new THREE.BoxGeometry(0.06, 1.4, 0.06), dark, x, 0.75, 0, (k / 6) * Math.PI, 0, 0);
+  const box = (w: number, h: number, d: number) => new THREE.BoxGeometry(w, h, d);
+  const WHEEL_R = 0.85;
+  // The wheels: an iron tyre round a wooden rim, fourteen spokes, a hub and its cap.
+  for (const x of [-1.08, 1.08]) {
+    p.add(new THREE.TorusGeometry(WHEEL_R - 0.03, 0.05, 6, 28), steel, x, WHEEL_R, 0, 0, Math.PI / 2, 0);
+    p.add(new THREE.TorusGeometry(WHEEL_R - 0.11, 0.065, 5, 28), dark, x, WHEEL_R, 0, 0, Math.PI / 2, 0);
+    for (let k = 0; k < 7; k++) p.add(box(0.05, (WHEEL_R - 0.1) * 2, 0.08), dark, x, WHEEL_R, 0, (k / 7) * Math.PI, 0, 0);
+    p.add(tubeX(0.17, 0.34, 12), steel, x, WHEEL_R, 0);
+    p.add(tubeX(0.1, 0.46, 10), black, x, WHEEL_R, 0);
   }
-  p.add(tubeX(0.08, 2.2), steel, 0, 0.75, 0);
-  p.add(new THREE.BoxGeometry(2, 1.3, 0.08), body, 0, 1.3, -0.35);
-  p.add(new THREE.BoxGeometry(0.5, 0.4, 0.1), dark, 0, 1.85, -0.36);
-  // The trail back to the spade.
-  p.beam(new THREE.Vector3(0, 0.75, 0.2), new THREE.Vector3(0, 0.12, 3), 0.28, body);
-  p.add(new THREE.BoxGeometry(0.7, 0.35, 0.12), steel, 0, 0.12, 3.05);
+  p.add(tubeX(0.075, 2.3, 10), steel, 0, WHEEL_R, 0);
+  // Axle-tree seats for two of the crew, either side of the cradle.
+  for (const x of [-0.66, 0.66]) {
+    p.add(box(0.36, 0.06, 0.32), dark, x, 1.22, 0.3);
+    p.add(box(0.36, 0.32, 0.05), dark, x, 1.4, 0.47, -0.15, 0, 0);
+    p.beam(new THREE.Vector3(x, WHEEL_R, 0.1), new THREE.Vector3(x, 1.2, 0.3), 0.05, steel);
+  }
+  // The carriage cheeks under the cradle, then the box trail tapering back to the spade.
+  for (const x of [-0.3, 0.3]) p.add(box(0.1, 0.5, 1.3), body, x, 1.0, 0.05);
+  for (const x of [-0.24, 0.24]) p.beam(new THREE.Vector3(x, 0.98, 0.5), new THREE.Vector3(x * 0.45, 0.2, 3.55), 0.22, body);
+  for (const z of [1.2, 2.2, 3.0]) {
+    const k = (z - 0.5) / 3.05;
+    p.add(box(0.48 * (1 - k * 0.55), 0.12, 0.12), dark, 0, 0.98 - k * 0.78, z);
+  }
+  p.add(box(0.95, 0.5, 0.08), steel, 0, 0.2, 3.62, -0.35, 0, 0);
+  p.add(new THREE.TorusGeometry(0.11, 0.03, 4, 10), steel, 0, 0.32, 3.45, Math.PI / 2, 0, 0);
+  for (const sx of [-1, 1]) p.beam(new THREE.Vector3(sx * 0.12, 0.35, 3.2), new THREE.Vector3(sx * 0.65, 0.45, 3.35), 0.05, dark);
+  // The shield: the main plate, a top plate leaned back, an apron between the wheels, rivets.
+  p.add(box(2.15, 1.15, 0.06), body, 0, 1.55, -0.62);
+  p.add(box(2.15, 0.36, 0.06), body, 0, 2.27, -0.58, -0.25, 0, 0);
+  p.add(box(1.75, 0.5, 0.05), body, 0, 0.62, -0.66);
+  for (const sx of [-1, 1]) p.add(box(0.35, 1.45, 0.06), body, sx * 1.2, 1.55, -0.5, 0, -sx * 0.5, 0);
+  p.add(box(0.42, 0.55, 0.08), black, 0, 1.34, -0.62);
+  p.add(box(0.24, 0.12, 0.08), black, -0.5, 1.82, -0.62);
+  for (let i = 0; i < 9; i++) {
+    for (const y of [1.0, 2.1]) p.add(new THREE.SphereGeometry(0.025, 5, 4), dark, -0.96 + i * 0.24, y, -0.66);
+  }
+  // Handwheels: elevation on the left, traverse on the right.
+  for (const sx of [-1, 1]) {
+    p.add(new THREE.TorusGeometry(0.16, 0.022, 4, 12), steel, sx * 0.48, 1.18, 0.55, 0, Math.PI / 2, 0);
+    p.add(box(0.03, 0.3, 0.03), steel, sx * 0.48, 1.18, 0.55);
+    p.add(box(0.03, 0.03, 0.3), steel, sx * 0.48, 1.18, 0.55);
+    p.add(tubeX(0.025, 0.18, 6), steel, sx * 0.4, 1.18, 0.55);
+  }
   p.buildInto(g);
-  const barrel = new THREE.Group();
-  barrel.name = 'barrel';
-  barrel.position.set(0, 1.2, 0);
-  const b = new PartBuilder();
-  b.add(tubeZ(0.11, 0.15, 3), steel, 0, 0, -1.2);
-  b.add(tubeZ(0.16, 0.16, 0.25), steel, 0, 0, -2.6);
-  b.add(new THREE.BoxGeometry(0.4, 0.34, 1.6), body, 0, -0.08, 0.2);
-  b.buildInto(barrel);
-  g.add(barrel);
+
+  const cradle = new THREE.Group();
+  cradle.name = 'barrel';
+  cradle.position.set(0, GUN_PIVOT_Y, 0);
+  const c = new PartBuilder();
+  c.add(box(0.44, 0.3, 2.3), body, 0, -0.17, -0.25);
+  c.add(tubeZ(0.11, 0.11, 2.1, 12), dark, 0, -0.36, -0.45);
+  c.add(tubeZ(0.095, 0.095, 1.9, 12), body, 0, 0.27, -0.75);
+  c.add(box(0.12, 0.08, 1.7), dark, 0, 0.17, -0.75);
+  c.add(tubeX(0.08, 0.7, 10), steel, 0, -0.08, 0.05);
+  // The dial sight on its bracket, on the left.
+  c.add(box(0.06, 0.32, 0.06), steel, -0.3, 0.1, 0.25);
+  c.add(tubeZ(0.045, 0.045, 0.22, 8), black, -0.3, 0.3, 0.25);
+  c.add(new THREE.SphereGeometry(0.06, 8, 6), steel, -0.3, 0.32, 0.38);
+  c.buildInto(cradle);
+  const recoil = new THREE.Group();
+  recoil.name = 'recoil';
+  const r = new PartBuilder();
+  r.add(tubeZ(0.12, 0.165, 3.0, 16), steel, 0, 0.05, -1.75);
+  r.add(tubeZ(0.185, 0.185, 1.1, 16), steel, 0, 0.05, -0.65);
+  r.add(tubeZ(0.15, 0.15, 0.2, 16), steel, 0, 0.05, -GUN_MUZZLE + 0.12);
+  r.add(tubeZ(0.08, 0.08, 0.06, 12), black, 0, 0.05, -GUN_MUZZLE);
+  r.add(box(0.42, 0.42, 0.5), dark, 0, 0.05, 0.22);
+  r.add(box(0.06, 0.06, 0.35), steel, 0.24, 0.12, 0.42, 0, 0, 0.6);
+  r.add(new THREE.SphereGeometry(0.05, 6, 4), black, 0.33, 0.18, 0.58);
+  r.buildInto(recoil);
+  cradle.add(recoil);
+  g.add(cradle);
   return g;
+}
+
+/** A gun's ammunition limber (a two-wheeled box on a pole), a stack of shells, and two of its crew, round a gun at `gun` facing `face` (-1: -Z). */
+function gunPit(scene: THREE.Scene, solids: Solids, gun: THREE.Vector3, face: number, color: number): void {
+  const g = new THREE.Group();
+  g.position.copy(gun);
+  g.rotation.y = face < 0 ? 0 : Math.PI;
+  const body = plastic(color);
+  const dark = plastic(shade(color, 0.62));
+  const steel = plastic(0x4a4d50);
+  const brass = plastic(0xc9a144);
+  const p = new PartBuilder();
+  // The limber, off to the left behind the gun.
+  p.add(new THREE.BoxGeometry(1.5, 0.9, 1), body, -4.6, 1.05, 6.5);
+  p.add(new THREE.BoxGeometry(1.56, 0.08, 1.06), dark, -4.6, 1.52, 6.5);
+  for (const x of [-5.5, -3.7]) {
+    p.add(new THREE.TorusGeometry(0.58, 0.05, 5, 20), steel, x, 0.6, 6.5, 0, Math.PI / 2, 0);
+    for (let k = 0; k < 5; k++) p.add(new THREE.BoxGeometry(0.04, 1.05, 0.06), dark, x, 0.6, 6.5, (k / 5) * Math.PI, 0, 0);
+  }
+  p.add(tubeX(0.05, 2.1, 8), steel, -4.6, 0.6, 6.5);
+  p.beam(new THREE.Vector3(-4.6, 0.7, 5.95), new THREE.Vector3(-4.6, 0.12, 3.6), 0.08, dark);
+  // Shells stacked on a pallet to the right: brass cases with grey noses.
+  p.add(new THREE.BoxGeometry(1.4, 0.12, 0.9), dark, 3.4, 0.06, 3.2);
+  for (let i = 0; i < 5; i++) {
+    for (const z of [2.95, 3.2, 3.45]) {
+      const x = 2.9 + i * 0.25;
+      p.add(new THREE.CylinderGeometry(0.075, 0.075, 0.42, 10), brass, x, 0.33, z);
+      p.add(new THREE.ConeGeometry(0.075, 0.2, 10), steel, x, 0.64, z);
+    }
+  }
+  p.buildInto(g);
+  // Two of the crew: one bringing up a shell, one kneeling by the trail.
+  const loader = createPoseFigure(color, 'carry');
+  const shell = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.075, 0.55, 10).rotateX(Math.PI / 2), brass);
+  shell.position.copy(CARRY_CRATE_AT);
+  loader.add(shell);
+  loader.position.set(1.7, 0, 2.6);
+  const kneeler = createPoseFigure(color, 'kneel');
+  kneeler.position.set(-1.4, 0, 1.8);
+  kneeler.rotation.y = 0.3;
+  g.add(loader, kneeler);
+  scene.add(g);
+  const at = (x: number, z: number) => new THREE.Vector3(x, 0, z).applyAxisAngle(new THREE.Vector3(0, 1, 0), g.rotation.y).add(gun);
+  const limber = at(-4.6, 6.5);
+  solids.box(limber.x, 0.75, limber.z, 1.2, 0.75, 0.8);
 }
 
 /** A water-cooled machine gun on a tripod, pointing -Z. */

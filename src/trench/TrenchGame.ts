@@ -8,7 +8,7 @@ import { Sound } from '../audio/Sound';
 import { ImpactEffects } from '../combat/ImpactEffects';
 import { AssetLibrary } from '../world/AssetLibrary';
 import { loadSettings, saveSettings, AIM_SPEED_SCALE, GRAPHICS_QUALITY, type Settings } from '../core/Settings';
-import { MISSION, startMission } from '../core/config';
+import { MISSION, MISSIONS, levelNumber, nextMission, startMission } from '../core/config';
 import { PlayerSoldier, MAX_HEALTH } from '../prison/PlayerSoldier';
 import { ShoulderCam } from '../prison/ShoulderCam';
 import { FRIEND_SHOTS, ENEMY_SHOTS, WALLS_ONLY } from '../prison/groups';
@@ -20,13 +20,16 @@ import { Solids } from '../jungle/Props';
 import { Explosives, type Blast } from '../jungle/Explosives';
 import {
   X_HALF, PARAPET_Z, STEP_H, STEP_Z, FLOOR_Z, LADDERS, BREACHES, GUN, AID_POST, RESPAWN, AMMO_DUMP, DUGOUTS, MG_AT, SNIPER_RACK, OUR_GAPS, COMMS,
-  zoneOf, onStep, route, clearings, buildBattlefield, lineAt,
+  GUN_PIVOT_Y, GUN_MUZZLE, SCENERY_HALF, SIDE_WALL, zoneOf, onStep, route, clearings, buildBattlefield, lineAt,
 } from './Layout';
 import { Troops, type Man, type Phase, type Front } from './Troops';
 import { Medic, officerCap, fallenFigure } from './Figures';
 import { Gas } from './Gas';
 
 const SHADOW_HALF = 40;
+/** The level after this one, started this many seconds after the victory screen. */
+const NEXT = nextMission();
+const VICTORY_DELAY = 12;
 const SHOT_RANGE = 160;
 const TRACER_TIME = 0.06;
 /** What one of their rounds takes off the player (there's no healing here). */
@@ -170,6 +173,9 @@ export class TrenchGame {
   private cam!: ShoulderCam;
   private gunModel!: THREE.Group;
   private gunBarrel!: THREE.Object3D;
+  /** The barrel's slide back on firing (1 just fired, easing back to 0). */
+  private gunRecoil!: THREE.Object3D;
+  private gunKick = 0;
   private readonly troops = new Troops();
   private readonly byHandle = new Map<number, Man>();
   private readonly medics: Medic[] = [];
@@ -213,6 +219,7 @@ export class TrenchGame {
   private gasWarned = false;
   private nextEnemyShell = 18;
   private barrageLeft = 0;
+  private nextDistantShell = 3;
   private nextBarrage = 0;
   private hurtFlashLevel = 0;
   private cough = 0;
@@ -300,7 +307,8 @@ export class TrenchGame {
     const built = buildBattlefield(this.scene, solids, ARMY_GREEN, ARMY_TAN);
     this.gunModel = built.gun;
     this.gunBarrel = built.barrel;
-    this.forest = new Forest(this.world, this.scene, assets, 140, clearings(), 19141918);
+    this.gunRecoil = built.recoil;
+    this.forest = new Forest(this.world, this.scene, assets, SCENERY_HALF + 10, clearings(), 19141918);
     Trooper.route = route;
     this.gas = new Gas(this.scene);
 
@@ -476,7 +484,7 @@ export class TrenchGame {
     }
     this.phase = 'won';
     this.victoryAt = this.time;
-    this.hud.showVictory("Their trench is ours! All five of their officers are down.", 'Pick another level from the pause menu (Start / M)');
+    this.hud.showVictory("Their trench is ours! All five of their officers are down.", NEXT ? '' : 'Pick another level from the pause menu (Start / M)');
     this.sound.music.fanfare();
     this.scoped = false;
     this.manning = null;
@@ -757,7 +765,8 @@ export class TrenchGame {
     if (this.gunShells <= 0) return;
     this.gunShells--;
     this.cooldown = 1.6;
-    const muzzle = new THREE.Vector3(0, 0, -2.8).applyEuler(new THREE.Euler(this.gunBarrel.rotation.x, this.gunYaw, 0, 'YXZ')).add(GUN).setY(1.2 + 2.8 * Math.sin(this.gunBarrel.rotation.x));
+    const muzzle = new THREE.Vector3(0, 0, -GUN_MUZZLE).applyEuler(new THREE.Euler(this.gunBarrel.rotation.x, this.gunYaw, 0, 'YXZ')).add(GUN).setY(GUN_PIVOT_Y + GUN_MUZZLE * Math.sin(this.gunBarrel.rotation.x));
+    this.gunKick = 1;
     const to = this.gunTarget().add(new THREE.Vector3((Math.random() - 0.5) * 5, 0, (Math.random() - 0.5) * 5));
     this.fireShell(muzzle, to, true, 1.4 + this.gunRange / 80);
     this.impacts.muzzleFlash(muzzle, new THREE.Vector3(-Math.sin(this.gunYaw), 0.3, -Math.cos(this.gunYaw)), 2);
@@ -1046,6 +1055,24 @@ export class TrenchGame {
     this.gasWasOn = this.gas.active;
   }
 
+  /**
+   * The battle carries on all along the front beyond the wire: now and then a shell bursts out
+   * there in no man's land or on one of the lines (scenery: it doesn't touch anyone).
+   */
+  private updateDistantBattle(dt: number): void {
+    if (this.phase === 'won') return;
+    this.nextDistantShell -= dt;
+    if (this.nextDistantShell > 0) return;
+    this.nextDistantShell = 1.5 + Math.random() * 3.5;
+    const side = Math.random() < 0.5 ? -1 : 1;
+    const x = side * (SIDE_WALL + 12 + Math.random() * (SCENERY_HALF - SIDE_WALL - 20));
+    const z = (Math.random() * 2 - 1) * 40;
+    const at = new THREE.Vector3(x, 0.6, z);
+    this.impacts.explode(at, 2.6 + Math.random() * 1.6);
+    if (Math.random() < 0.4) this.impacts.addSmokeSource(at.clone().setY(0.4), 1.2, 8);
+    this.sound.play('boom', { at, volume: 0.7, rate: 0.7 + Math.random() * 0.3, minGap: 0.3 });
+  }
+
   /** Our guns covering the assault: shells all along their trench while our men cross. */
   private updateBarrage(dt: number): void {
     if (this.barrageLeft <= 0) return;
@@ -1073,6 +1100,15 @@ export class TrenchGame {
     if (input.mapTogglePressed) this.hud.toggleBigMap();
     this.time += dt;
     this.phaseTime += dt;
+    // Won: on to the next level after a while.
+    if (this.victoryAt !== null && NEXT) {
+      const left = VICTORY_DELAY - (this.time - this.victoryAt);
+      this.hud.setVictoryFooter(`Get ready for Level ${levelNumber(NEXT)}: ${MISSIONS[levelNumber(NEXT) - 1].title}! Starting in ${Math.max(1, Math.ceil(left))}…`);
+      if (left <= 0) {
+        this.victoryAt = null;
+        startMission(NEXT);
+      }
+    }
     if (input.cameraTogglePressed && !this.scoped) this.cam.toggle();
     if (input.usePressed) this.use();
     if (input.scopePressed) this.toggleScope();
@@ -1129,6 +1165,10 @@ export class TrenchGame {
     this.updateEnemyGuns(dt);
     this.updateBarrage(dt);
     this.updateShells(dt);
+    this.updateDistantBattle(dt);
+    // The barrel slams back when the gun fires, then runs out again.
+    this.gunKick = Math.max(0, this.gunKick - dt * 1.4);
+    this.gunRecoil.position.z = 0.7 * Math.min(1, this.gunKick * 3) * this.gunKick;
     this.explosives.update(dt, (b) => this.onBlast(b), (pt) => this.impacts.trailPuff(pt));
     this.forest.update(dt);
     this.world.step();
@@ -1242,6 +1282,7 @@ export class TrenchGame {
   private prompt(usingGamepad: boolean): string | null {
     const p = this.player.position;
     const a = usingGamepad ? 'A' : 'G';
+    if (this.phase === 'won') return null;
     if (this.player.downFor > 0) return `Hit! Waking up at the aid post in ${Math.ceil(this.player.downFor)}…`;
     if (this.manning === 'gun') return `Aim the gun (the red ring is where it lands) · ${usingGamepad ? 'RT' : 'click'} to fire · ${a} to leave · ${this.gunShells} shells`;
     if (this.manning === 'mg') return `Machine gun: ${this.mgBelt} rounds · ${a} to leave`;
@@ -1445,7 +1486,7 @@ export class TrenchGame {
         enemiesDown: this.enemiesDown,
         health: this.player.health,
         wakeUps: this.wakeUps,
-        victory: this.victoryAt !== null,
+        victory: this.phase === 'won',
       }),
     };
   }

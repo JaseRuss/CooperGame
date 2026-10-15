@@ -1106,7 +1106,7 @@ export class HUD {
     MISSIONS.forEach((level, n) => {
       const playing = level.mission === MISSION;
       const line = el('div', `opt level${n === this.levelIndex ? ' sel' : ''}`, this.levelList);
-      el('div', 'name', line, level.preview ? level.title : `${level.mission} · ${level.title}`);
+      el('div', 'name', line, `${n + 1} · ${level.title}`);
       el('b', playing ? 'pen' : '', el('div', 'val', line), playing ? 'PLAYING' : 'START ▶');
       line.addEventListener('mouseenter', () => {
         if (this.levelIndex === n) return;
