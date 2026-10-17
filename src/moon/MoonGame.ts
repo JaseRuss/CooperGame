@@ -52,7 +52,7 @@ const CONTROLS =
   '<span><b>Camera</b> Y · C</span><span><b>Back to the main base</b> Back · R</span>' +
   '<span><b>Load up</b> drive into an army\'s supply bay at the main base</span><span><b>Drop off</b> drive into the glowing ring at their camp</span>';
 const CONTROLS_P2 =
-  '<span><b>Drive</b> arrow keys · <b>Aim</b> mouse in your view or numpad 4/6 and 8/2</span>' +
+  '<span><b>Drive</b> arrow keys</span>' +
   '<span><b>Jump</b> numpad 0 · <b>Handbrake</b> Shift · <b>In the air</b> up/down tip the nose, left/right spin</span>' +
   '<span><b>Camera</b> numpad 9 · <b>Return to main base</b> numpad decimal · <b>Pause / map</b> numpad enter</span>' +
   '<span><b>Load up</b> drive into an army supply bay · <b>Drop off</b> drive into the glowing ring at camp</span>';
