@@ -1,7 +1,7 @@
 export interface InputState {
   /** Which local keyboard layout produced this state. */
   keyboardPlayer: 1 | 2;
-  /** True when this player is assigned to keyboard controls, even on an idle frame. */
+  /** True when keyboard/mouse is the displayed control source; automatic mode follows last use. */
   keyboardEnabled: boolean;
   /** -1 (reverse) .. 1 (forward) */
   throttle: number;
