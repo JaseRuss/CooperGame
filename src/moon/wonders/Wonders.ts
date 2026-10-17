@@ -101,7 +101,7 @@ export class WonderValley {
   private doorCool = 0;
   private cannonCool = 0;
   /** The cannon the buggy is sitting in, and how long until it goes off. */
-  private loaded: { cannon: Cannon; fuse: number } | null = null;
+  private loaded: { cannon: Cannon; fuse: number; buggy: Buggy } | null = null;
   /** Finding things only starts once the road's open. */
   open = false;
   private readonly inv = new THREE.Quaternion();
@@ -171,11 +171,12 @@ export class WonderValley {
   }
 
   /** Hides the tableaux too far from the camera to matter, so the far side of the valley costs nothing to draw. */
-  cull(camera: THREE.Vector3): void {
+  cull(camera: THREE.Vector3, camera2?: THREE.Vector3): void {
     if (!this.root.visible) return;
     for (const e of this.entries) {
       const g = e.group;
-      g.visible = !!e.def.always || Math.hypot(g.position.x - camera.x, g.position.z - camera.z) < VIEW_RANGE;
+      g.visible = !!e.def.always || Math.hypot(g.position.x - camera.x, g.position.z - camera.z) < VIEW_RANGE
+        || (!!camera2 && Math.hypot(g.position.x - camera2.x, g.position.z - camera2.z) < VIEW_RANGE);
     }
   }
 
@@ -184,18 +185,19 @@ export class WonderValley {
     return this.loaded !== null;
   }
 
-  update(dt: number, buggy: Buggy, fx: WonderFx): void {
+  update(dt: number, buggyOrBuggies: Buggy | readonly Buggy[], fx: WonderFx): void {
+    const buggies: readonly Buggy[] = Array.isArray(buggyOrBuggies) ? buggyOrBuggies as readonly Buggy[] : [buggyOrBuggies as Buggy];
     this.time += dt;
     this.bounceCool = Math.max(0, this.bounceCool - dt);
     this.doorCool = Math.max(0, this.doorCool - dt);
     this.cannonCool = Math.max(0, this.cannonCool - dt);
     if (!this.root.visible) return;
-    this.animate(dt, buggy, fx);
+    this.animate(dt, buggies, fx);
     if (!this.open) return;
-    this.gadgets(dt, buggy, fx);
+    this.gadgets(dt, buggies, fx);
     for (const e of this.entries) {
       if (e.found) continue;
-      const d = Math.hypot(e.group.position.x - buggy.pos.x, e.group.position.z - buggy.pos.z);
+      const d = Math.min(...buggies.map((buggy) => Math.hypot(e.group.position.x - buggy.pos.x, e.group.position.z - buggy.pos.z)));
       if (d > (e.def.find ?? e.def.r + 24)) continue;
       e.found = true;
       fx.confetti(e.group.position.clone().setY(e.group.position.y + 8));
@@ -203,10 +205,11 @@ export class WonderValley {
     }
   }
 
-  private animate(dt: number, buggy: Buggy, fx: WonderFx): void {
+  private animate(dt: number, buggies: readonly Buggy[], fx: WonderFx): void {
     for (const e of this.entries) {
       if (!e.anim) continue;
       const g = e.group;
+      const buggy = buggies.reduce((nearest, candidate) => Math.hypot(g.position.x - candidate.pos.x, g.position.z - candidate.pos.z) < Math.hypot(g.position.x - nearest.pos.x, g.position.z - nearest.pos.z) ? candidate : nearest);
       const dist = Math.hypot(g.position.x - buggy.pos.x, g.position.z - buggy.pos.z);
       if (dist > ANIMATE_RANGE && !e.def.always) continue;
       const ctx = (e.ctx ??= this.makeCtx(g, fx));
@@ -238,12 +241,18 @@ export class WonderValley {
     };
   }
 
-  private gadgets(dt: number, b: Buggy, fx: WonderFx): void {
+  private gadgets(dt: number, buggies: readonly Buggy[], fx: WonderFx): void {
+    // World gadget timers tick once; each buggy gets an interaction pass against that shared world.
+    for (const b of buggies) this.gadgetForBuggy(dt, b, fx);
+  }
+
+  private gadgetForBuggy(dt: number, b: Buggy, fx: WonderFx): void {
     const p = b.pos;
     const ground = this.terrain.heightAt(p.x, p.z);
     const low = p.y - ground < RIDE + 0.6;
     // Sitting in the cannon with the fuse fizzing.
     if (this.loaded) {
+      if (this.loaded.buggy !== b) return;
       const c = this.loaded.cannon;
       this.loaded.fuse -= dt;
       b.vel.set(0, 0, 0);
@@ -267,7 +276,7 @@ export class WonderValley {
     }
     for (const c of this.cannons) {
       if (this.cannonCool > 0 || !low || Math.hypot(p.x - c.x, p.z - c.z) > c.r) continue;
-      this.loaded = { cannon: c, fuse: 1.1 };
+      this.loaded = { cannon: c, fuse: 1.1, buggy: b };
       fx.say('FUSE LIT… HOLD ON!', '#ffd24a');
       fx.sound('launch', c.muzzle, 0.5, 1.6);
       return;

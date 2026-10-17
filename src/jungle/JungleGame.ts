@@ -152,9 +152,11 @@ interface Crate {
 export class JungleGame {
   private readonly renderer: THREE.WebGLRenderer;
   private readonly scene = new THREE.Scene();
-  private readonly camera: THREE.PerspectiveCamera;
+  private camera: THREE.PerspectiveCamera;
+  private readonly camera2: THREE.PerspectiveCamera;
   private readonly input: InputManager;
-  private readonly hud: HUD;
+  private hud: HUD;
+  private readonly hud2: HUD;
   private readonly sound = new Sound(MISSION);
   private readonly sun: THREE.DirectionalLight;
   private readonly hemi: THREE.HemisphereLight;
@@ -167,6 +169,7 @@ export class JungleGame {
   private world!: RAPIER.World;
   private impacts!: ImpactEffects;
   private jam!: JamCannon;
+  private jam2!: JamCannon;
   private forest!: Forest;
   private terrain!: Terrain;
   private roads!: Roads;
@@ -179,7 +182,9 @@ export class JungleGame {
   /** The cutscene of an ammo dump going up, while it runs. */
   private cut: { t: number; outpost: Outpost; angle: number } | null = null;
   private player!: PlayerSoldier;
+  private player2: PlayerSoldier | null = null;
   private cam!: ShoulderCam;
+  private cam2!: ShoulderCam;
   private squad = new Squad();
   private enemies = new Enemies();
   private battle!: Battle;
@@ -193,14 +198,20 @@ export class JungleGame {
   private checkpoint = { x: START.x, z: START.z - 3, yaw: START.yaw };
   private time = 0;
   private jamTank = 1;
+  private jamTank2 = 1;
   private jamCooldown = 0;
+  private jamCooldown2 = 0;
   private grenades = GRENADES;
   private reload = 0;
   private bombs = BOMBS_AT_START;
   private climb: Climb | null = null;
+  private climb2: Climb | null = null;
   private onTower: Lookout | null = null;
+  private onTower2: Lookout | null = null;
   private hatchDwell = 0;
+  private hatchDwell2 = 0;
   private ladderCooldown = 0;
+  private ladderCooldown2 = 0;
   private scouted = false;
   private airSupportCalled = false;
   private victoryAt: number | null = null;
@@ -208,6 +219,7 @@ export class JungleGame {
   private mapView: MapView = NO_MAP;
   private reinforcements = 0;
   private downTime = 0;
+  private downTime2 = 0;
   private readonly stats = { enemiesDown: 0, treesFelled: 0, grenadesFired: 0 };
   private readonly tracers: { line: THREE.Line; age: number }[] = [];
   private readonly friendTracer = new THREE.LineBasicMaterial({ color: 0xffe7a0, transparent: true });
@@ -226,8 +238,12 @@ export class JungleGame {
     container.appendChild(this.renderer.domElement);
 
     this.camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 600);
+    this.camera2 = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 600);
     this.input = new InputManager(this.renderer.domElement);
     this.hud = new HUD(container);
+    this.hud2 = new HUD(container, true);
+    this.hud.setMirror(this.hud2);
+    this.hud2.setActive(false);
     this.hud.setSoundHook((kind) => this.sound.play(kind === 'move' ? 'uiMove' : kind === 'change' ? 'uiChange' : kind === 'back' ? 'uiBack' : kind === 'open' ? 'uiOpen' : 'uiConfirm', { volume: 0.5, minGap: 0 }));
 
     this.loadingLabel = document.createElement('div');
@@ -260,6 +276,7 @@ export class JungleGame {
     this.world = createWorld();
     this.impacts = new ImpactEffects(this.scene);
     this.jam = new JamCannon(this.scene, () => 0, FRIEND_SHOTS);
+    this.jam2 = new JamCannon(this.scene, () => 0, FRIEND_SHOTS);
     this.explosives = new Explosives(this.scene, this.world);
     this.drops = new Drops(this.scene, (kind, at) => this.landed(kind, at));
     const assets = new AssetLibrary();
@@ -326,6 +343,11 @@ export class JungleGame {
     this.player = new PlayerSoldier(this.world, START.x, START.z, START.yaw);
     this.scene.add(this.player.root);
     this.cam = new ShoulderCam(this.camera, this.world);
+    if (this.settings.player2Controller !== -2) {
+      this.player2 = new PlayerSoldier(this.world, START.x + 1.8, START.z, START.yaw);
+      this.scene.add(this.player2.root);
+      this.cam2 = new ShoulderCam(this.camera2, this.world);
+    }
     const names = this.settings.buddyNames;
     for (let i = 0; i < SQUAD_SIZE; i++) this.addSquadMate(START.x + 0.4, START.z + (i < 2 ? -2.2 - i * 1.7 : 2.2 + (i - 2) * 1.7), names[i] ?? `Buddy ${i + 1}`);
 
@@ -364,6 +386,9 @@ export class JungleGame {
       saveSettings(s);
       this.applySettings();
     });
+    this.hud2.setOnFoot(CONTROLS, { legend: '<span><i style="background:#4b7a2e"></i>You and your squad</span><span><i style="background:#c4a468"></i>Tan army</span><span><i style="background:#3f6fb0"></i>Blue army</span>' });
+    this.hud.setCoopLayout(!!this.player2);
+    this.hud2.setActive(!!this.player2);
     this.applySettings();
     this.hud.setMissionStart((m) => startMission(m));
     for (const o of this.outposts) o.dump.onDestroyed = () => this.onDumpDestroyed(o);
@@ -394,12 +419,47 @@ export class JungleGame {
     }
     this.input.setAimScale(AIM_SPEED_SCALE[this.settings.aimSpeed]);
     this.sound.setVolumes(this.settings.sfxVolume, this.settings.musicVolume);
+    this.syncPlayer2();
     this.pausedRendered = false;
+  }
+
+  private syncPlayer2(): void {
+    if (!this.player || !this.world) return;
+    const enabled = this.settings.player2Controller !== -2;
+    if (enabled && !this.player2) {
+      this.player2 = new PlayerSoldier(this.world, this.player.position.x + 1.8, this.player.position.z, this.player.yaw);
+      this.scene.add(this.player2.root);
+      this.cam2 = new ShoulderCam(this.camera2, this.world);
+    } else if (!enabled && this.player2) {
+      this.scene.remove(this.player2.root);
+      this.player2.dispose();
+      this.player2 = null;
+    }
+    this.hud.setCoopLayout(!!this.player2);
+    this.hud2.setActive(!!this.player2);
+  }
+
+  private withPlayer2<T>(run: () => T): T {
+    if (!this.player2) return run();
+    const player = this.player, camera = this.camera, cam = this.cam, hud = this.hud;
+    const jam = this.jam, jamTank = this.jamTank, jamCooldown = this.jamCooldown;
+    const climb = this.climb, onTower = this.onTower, hatchDwell = this.hatchDwell, ladderCooldown = this.ladderCooldown;
+    this.player = this.player2; this.camera = this.camera2; this.cam = this.cam2; this.hud = this.hud2;
+    this.jam = this.jam2; this.jamTank = this.jamTank2; this.jamCooldown = this.jamCooldown2;
+    this.climb = this.climb2; this.onTower = this.onTower2; this.hatchDwell = this.hatchDwell2; this.ladderCooldown = this.ladderCooldown2;
+    try { return run(); }
+    finally {
+      this.jam2 = this.jam; this.jamTank2 = this.jamTank; this.jamCooldown2 = this.jamCooldown;
+      this.climb2 = this.climb; this.onTower2 = this.onTower; this.hatchDwell2 = this.hatchDwell; this.ladderCooldown2 = this.ladderCooldown;
+      this.player = player; this.camera = camera; this.cam = cam; this.hud = hud;
+      this.jam = jam; this.jamTank = jamTank; this.jamCooldown = jamCooldown;
+      this.climb = climb; this.onTower = onTower; this.hatchDwell = hatchDwell; this.ladderCooldown = ladderCooldown;
+    }
   }
 
   private onResize(): void {
     this.renderer.setSize(window.innerWidth, window.innerHeight);
-    this.hud.setViewport({ left: 0, top: 0, width: window.innerWidth, height: window.innerHeight });
+    if (!this.player2) this.hud.setViewport({ left: 0, top: 0, width: window.innerWidth, height: window.innerHeight });
     this.pausedRendered = false;
   }
 
@@ -441,6 +501,14 @@ export class JungleGame {
         get sneaking() {
           return game.player.sneaking;
         },
+      },
+      get players() {
+        return game.player2 ? [game.player, game.player2].map((soldier) => ({
+          pos: soldier.position,
+          chest: soldier.position.clone().setY(soldier.position.y + 1.15),
+          down: soldier.isDown,
+          sneaking: soldier.sneaking,
+        })) : undefined;
       },
       fireAt: (shooter, aim) => this.troopFire(shooter, aim),
       squad: () => this.squad.list.filter((b) => b.t.active).map((b) => b.t),
@@ -489,12 +557,14 @@ export class JungleGame {
       return;
     }
     this.impacts.dustPuff(end);
-    if (handle === this.player.collider.handle) {
-      const wasUp = !this.player.isDown;
-      this.player.takeDamage(ENEMY_DAMAGE);
-      this.cam.addShake(0.22);
+    if (handle === this.player.collider.handle || handle === this.player2?.collider.handle) {
+      const second = handle === this.player2?.collider.handle;
+      const target = second ? this.player2! : this.player;
+      const wasUp = !target.isDown;
+      target.takeDamage(ENEMY_DAMAGE);
+      (second ? this.cam2 : this.cam).addShake(0.22);
       this.sound.play('thud', { volume: 0.45, rate: 1.6, minGap: 0.1 });
-      if (wasUp && this.player.isDown) this.downTime = 0;
+      if (wasUp && target.isDown) { if (second) this.downTime2 = 0; else this.downTime = 0; }
       return;
     }
     const f = this.byHandle.get(handle);
@@ -650,6 +720,15 @@ export class JungleGame {
       this.player.takeDamage(power * (1 - dp / b.radius));
       if (wasUp && this.player.isDown) this.downTime = 0;
     }
+    if (this.player2) {
+      const p2 = this.player2.position;
+      const d2 = Math.hypot(p2.x - b.at.x, p2.z - b.at.z);
+      if (d2 < b.radius && !this.player2.isDown) {
+        const wasUp = !this.player2.isDown;
+        this.player2.takeDamage(power * (1 - d2 / b.radius));
+        if (wasUp && this.player2.isDown) this.downTime2 = 0;
+      }
+    }
     for (const s of this.squad.list) {
       const dist = Math.hypot(s.t.pos.x - b.at.x, s.t.pos.z - b.at.z);
       if (dist < b.radius && !s.t.down) s.t.hurt(power * (1 - dist / b.radius));
@@ -771,7 +850,10 @@ export class JungleGame {
     this.player.teleport(this.checkpoint.x, this.checkpoint.z, this.checkpoint.yaw);
     this.onTower = null;
     this.climb = null;
-    this.downTime = 0;
+    this.hatchDwell = 0;
+    this.ladderCooldown = 0;
+    if (this.player === this.player2) this.downTime2 = 0;
+    else this.downTime = 0;
   }
 
   private recordTrail(): void {
@@ -792,10 +874,10 @@ export class JungleGame {
   }
 
   private updateSupplies(): void {
-    const p = this.player.position;
     for (let i = this.crates.length - 1; i >= 0; i--) {
       const c = this.crates[i];
-      if (Math.hypot(p.x - c.pos.x, p.z - c.pos.z) > 2.2) continue;
+      const collector = [this.player, this.player2].find((player) => player && !player.isDown && Math.hypot(player.position.x - c.pos.x, player.position.z - c.pos.z) <= 2.2);
+      if (!collector) continue;
       this.grenades = GRENADES;
       this.reload = 0;
       this.bombs = Math.min(MAX_BOMBS, this.bombs + 1);
@@ -846,8 +928,8 @@ export class JungleGame {
     this.hud.showBanner('BOMB ARMED!', 'Get clear: it goes off in seven seconds. The squad is running too');
   }
 
-  private step(input: InputState, dt: number): void {
-    if (input.mapTogglePressed) this.hud.toggleBigMap();
+  private step(input: InputState, dt: number, input2: InputState | null = null): void {
+    if (input.mapTogglePressed || input2?.mapTogglePressed) this.hud.toggleBigMap();
     this.time += dt;
     this.updateWeather(dt);
     if (this.cut) {
@@ -892,6 +974,36 @@ export class JungleGame {
         }
       }
     }
+    if (this.player2 && input2) this.withPlayer2(() => {
+      if (this.player.isDown) this.downTime2 += dt;
+      if (input2.cameraTogglePressed) this.cam.toggle();
+      const p2 = this.player.position;
+      if (this.climb) this.updateClimb(dt);
+      else {
+        const wasDown = this.player.isDown;
+        if (this.player.step(input2, dt)) this.firePlayerRifle();
+        if (input2.resetPressed || (wasDown && !this.player.isDown && this.player.health === 0)) this.toCheckpoint();
+        this.updateJam(input2, dt);
+        if (input2.rocketPressed) this.fireGrenade();
+        if (input2.aaPressed) this.plantBomb();
+        if (!this.player.isDown) {
+          if (this.onTower) {
+            const h = this.onTower.hatch;
+            if (Math.hypot(p2.x - h.x, p2.z - h.z) < 0.9) {
+              this.hatchDwell += dt;
+              if (this.hatchDwell > HATCH_DWELL) this.startClimb(this.onTower, false);
+            } else this.hatchDwell = 0;
+          } else {
+            this.ladderCooldown = Math.max(0, this.ladderCooldown - dt);
+            if (this.ladderCooldown === 0) {
+              for (const l of this.lookouts) if (Math.hypot(p2.x - l.foot.x, p2.z - l.foot.z) < LADDER_REACH) this.startClimb(l, true);
+            }
+          }
+        }
+      }
+      if (this.onTower && !this.climb && this.player.position.y < this.onTower.top - 3) this.onTower = null;
+      this.map.reveal(this.player.position.x, this.player.position.z, WALK_REVEAL);
+    });
     // Off the platform somehow (a fall, a jam knock): he's on the ground, so he's not "on the tower".
     if (this.onTower && !this.climb && this.player.position.y < this.onTower.top - 3) this.onTower = null;
     if (!this.onTower) this.recordTrail();
@@ -916,6 +1028,7 @@ export class JungleGame {
     // The map: a patch round the player wherever he walks, the lookouts' circles, who's in view.
     this.map.reveal(p.x, p.z, WALK_REVEAL);
     this.cam.update(this.player, dt);
+    if (this.player2) this.cam2.update(this.player2, dt);
     this.impacts.update(dt);
     this.updateTracers(dt);
     this.updateAtmosphere();
@@ -943,9 +1056,11 @@ export class JungleGame {
     d.player = { x: p.x, z: p.z, yaw: this.player.yaw };
     d.squad = this.squad.list.map((b) => ({ x: b.t.pos.x, z: b.t.pos.z, down: b.t.down }));
     // Enemies show when someone of ours is near them, or from a lookout within its circle.
-    const watch = [p, ...this.squad.list.filter((b) => b.t.active).map((b) => b.t.pos)];
+    const player2 = this.player2?.position;
+    const watch = [p, ...(player2 ? [player2] : []), ...this.squad.list.filter((b) => b.t.active).map((b) => b.t.pos)];
+    const towers = [this.onTower, this.onTower2].filter((tower): tower is Lookout => !!tower);
     d.enemies = this.enemies.list
-      .filter((b) => b.t.active && (watch.some((w) => Math.hypot(w.x - b.t.pos.x, w.z - b.t.pos.z) < 48 * this.weather.visibility + 8) || (this.onTower && Math.hypot(this.onTower.x - b.t.pos.x, this.onTower.z - b.t.pos.z) < SCOUT_RADIUS * (0.55 + 0.45 * this.weather.visibility))))
+      .filter((b) => b.t.active && (watch.some((w) => Math.hypot(w.x - b.t.pos.x, w.z - b.t.pos.z) < 48 * this.weather.visibility + 8) || towers.some((tower) => Math.hypot(tower.x - b.t.pos.x, tower.z - b.t.pos.z) < SCOUT_RADIUS * (0.55 + 0.45 * this.weather.visibility))))
       .map((b) => ({ x: b.t.pos.x, z: b.t.pos.z }));
     d.outposts = this.outposts.map((o) => ({ x: o.x, z: o.z, army: o.army, destroyed: !o.dump.alive }));
     d.towers = this.lookouts.map((l) => ({ x: l.x, z: l.z }));
@@ -1088,6 +1203,15 @@ export class JungleGame {
   }
 
   private hudState(input: InputState): HUDState {
+    const split = !!this.player2;
+    const vertical = this.settings.splitOrientation === 'vertical';
+    const localWidth = split && vertical
+      ? this.player === this.player2 ? window.innerWidth - Math.floor(window.innerWidth / 2) : Math.floor(window.innerWidth / 2)
+      : window.innerWidth;
+    const localHeight = split && !vertical
+      ? this.player === this.player2 ? Math.floor(window.innerHeight / 2) : window.innerHeight - Math.floor(window.innerHeight / 2)
+      : window.innerHeight;
+    const position = this.player.position;
     return {
       zombies: null,
       health: this.player.health,
@@ -1098,8 +1222,8 @@ export class JungleGame {
       cameraMode: this.cam.mode,
       usingGamepad: input.usingGamepad,
       insideBase: null,
-      map: this.mapView,
-      aimScreen: this.hud.paused ? null : { x: window.innerWidth / 2, y: window.innerHeight / 2 },
+      map: this.player === this.player2 ? { ...this.mapView, playerX: position.x, playerZ: position.z, playerYaw: this.player.yaw } : this.mapView,
+      aimScreen: this.hud.paused ? null : { x: localWidth / 2, y: localHeight / 2 },
       aimRange: null,
       aimTarget: 'none',
       rocketCharge: 0,
@@ -1134,12 +1258,25 @@ export class JungleGame {
   private render(): void {
     const w = window.innerWidth;
     const h = window.innerHeight;
-    this.hud.setViewport({ left: 0, top: 0, width: w, height: h });
     this.renderer.shadowMap.needsUpdate = true;
-    this.camera.aspect = w / h;
-    this.camera.updateProjectionMatrix();
-    this.renderer.setViewport(0, 0, w, h);
-    this.renderer.render(this.scene, this.camera);
+    this.renderer.setScissorTest(!!this.player2);
+    if (!this.player2) {
+      this.hud.setViewport({ left: 0, top: 0, width: w, height: h });
+      this.camera.aspect = w / h; this.camera.updateProjectionMatrix();
+      this.renderer.setViewport(0, 0, w, h); this.renderer.render(this.scene, this.camera);
+      return;
+    }
+    const half = Math.floor((this.settings.splitOrientation === 'vertical' ? w : h) / 2);
+    const v1 = this.settings.splitOrientation === 'vertical' ? { left: 0, top: 0, width: half, height: h } : { left: 0, top: 0, width: w, height: h - half };
+    const v2 = this.settings.splitOrientation === 'vertical' ? { left: half, top: 0, width: w - half, height: h } : { left: 0, top: h - half, width: w, height: half };
+    this.hud.setViewport(v1); this.hud2.setViewport(v2);
+    for (const [camera, v] of [[this.camera, v1], [this.camera2, v2]] as const) {
+      camera.aspect = v.width / v.height; camera.updateProjectionMatrix();
+      const bottom = h - v.top - v.height;
+      this.renderer.setViewport(v.left, bottom, v.width, v.height); this.renderer.setScissor(v.left, bottom, v.width, v.height);
+      this.renderer.render(this.scene, camera);
+    }
+    this.renderer.setScissorTest(false);
   }
 
   private readonly animate = (): void => {
@@ -1149,22 +1286,26 @@ export class JungleGame {
     this.input.textEntry = this.hud.editingText;
     this.input.beginFrame();
     const pads = Array.from(navigator.getGamepads?.() ?? []);
-    const input = this.input.update(dt, -2, 1, this.settings.splitOrientation, false, pads, 1);
+    const p2Index = this.player2 ? this.settings.player2Controller : -3;
+    const p1Index = !this.player2 ? -2 : this.settings.player1Controller === -2 ? (pads.find((pad) => pad && pad.index !== p2Index)?.index ?? -1) : this.settings.player1Controller;
+    const input = this.input.update(dt, p1Index, 1, this.settings.splitOrientation, !!this.player2 && p2Index === -1, pads, this.player2 && p2Index === -1 ? 2 : 1);
+    const input2 = this.player2 ? this.input.update(dt, p2Index, 2, this.settings.splitOrientation, false, pads, this.player2 && p2Index === -1 ? 2 : 1) : null;
     const kbMenu = this.input.keyboardMenu();
     input.mapTogglePressed ||= kbMenu.mapTogglePressed;
     if (this.hud.paused) {
       this.sound.updateEngine(0, 'chopper', false);
       this.hud.handleMenu({
-        up: input.menu.up || kbMenu.menu.up,
-        down: input.menu.down || kbMenu.menu.down,
-        left: input.menu.left || kbMenu.menu.left,
-        right: input.menu.right || kbMenu.menu.right,
-        confirm: input.menu.confirm || kbMenu.menu.confirm,
-        back: input.menu.back || kbMenu.menu.back,
-        options: input.menu.options || kbMenu.menu.options,
+        up: input.menu.up || kbMenu.menu.up || !!input2?.menu.up,
+        down: input.menu.down || kbMenu.menu.down || !!input2?.menu.down,
+        left: input.menu.left || kbMenu.menu.left || !!input2?.menu.left,
+        right: input.menu.right || kbMenu.menu.right || !!input2?.menu.right,
+        confirm: input.menu.confirm || kbMenu.menu.confirm || !!input2?.menu.confirm,
+        back: input.menu.back || kbMenu.menu.back || !!input2?.menu.back,
+        options: input.menu.options || kbMenu.menu.options || !!input2?.menu.options,
       });
-      if (input.mapTogglePressed && this.hud.paused) this.hud.toggleBigMap();
+      if ((input.mapTogglePressed || input2?.mapTogglePressed) && this.hud.paused) this.hud.toggleBigMap();
       this.hud.update(this.hudState(input));
+      if (input2 && this.player2) this.withPlayer2(() => this.hud2.update(this.hudState(input2)));
       if (!this.pausedRendered) {
         this.render();
         this.pausedRendered = true;
@@ -1172,9 +1313,10 @@ export class JungleGame {
       return;
     }
     this.pausedRendered = false;
-    this.step(input, dt);
+    this.step(input, dt, input2);
     this.sound.setListener(this.camera);
     this.hud.update(this.hudState(input));
+    if (input2 && this.player2) this.withPlayer2(() => this.hud2.update(this.hudState(input2)));
     this.render();
     this.hud.recordFrame();
   };

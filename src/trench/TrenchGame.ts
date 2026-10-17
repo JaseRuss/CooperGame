@@ -148,9 +148,12 @@ const PICKUP_COLOR: Record<PickupKind, number> = { ammo: 0xc9a24a, grenades: 0x4
 export class TrenchGame {
   private readonly renderer: THREE.WebGLRenderer;
   private readonly scene = new THREE.Scene();
-  private readonly camera: THREE.PerspectiveCamera;
+  private camera: THREE.PerspectiveCamera;
+  private readonly camera2: THREE.PerspectiveCamera;
   private readonly input: InputManager;
-  private readonly hud: HUD;
+  private hud: HUD;
+  private primaryHud!: HUD;
+  private readonly hud2: HUD;
   private readonly sound = new Sound(MISSION);
   private readonly sun: THREE.DirectionalLight;
   private readonly hemi: THREE.HemisphereLight;
@@ -170,7 +173,9 @@ export class TrenchGame {
   private forest!: Forest;
   private gas!: Gas;
   private player!: PlayerSoldier;
+  private player2: PlayerSoldier | null = null;
   private cam!: ShoulderCam;
+  private cam2!: ShoulderCam;
   private gunModel!: THREE.Group;
   private gunBarrel!: THREE.Object3D;
   /** The barrel's slide back on firing (1 just fired, easing back to 0). */
@@ -197,7 +202,11 @@ export class TrenchGame {
   private phaseTime = 0;
   /** What he's using: nothing (on foot), the big gun or the machine gun. */
   private manning: 'gun' | 'mg' | null = null;
+  private manning2: 'gun' | 'mg' | null = null;
+  private gunOwner: PlayerSoldier | null = null;
+  private mgOwner: PlayerSoldier | null = null;
   private scoped = false;
+  private scoped2 = false;
   private gunShells = SHELLS;
   private gunYaw = 0;
   private gunRange = 136;
@@ -209,9 +218,11 @@ export class TrenchGame {
   private grenades = 2;
   private hasMask = false;
   private maskOn = false;
+  private maskOn2 = false;
   private resupplied = false;
   private reachedFront = false;
   private cooldown = 0;
+  private cooldown2 = 0;
   private officersDown = 0;
   private enemiesDown = 0;
   private wakeUps = 0;
@@ -263,10 +274,15 @@ export class TrenchGame {
       '</svg>';
 
     this.camera = new THREE.PerspectiveCamera(FOV, window.innerWidth / window.innerHeight, 0.1, 700);
+    this.camera2 = new THREE.PerspectiveCamera(FOV, window.innerWidth / window.innerHeight, 0.1, 700);
     this.input = new InputManager(this.renderer.domElement);
     // A is for climbing and using things here; the right trigger fires.
     this.input.padAFires = false;
     this.hud = new HUD(container);
+    this.primaryHud = this.hud;
+    this.hud2 = new HUD(container, true);
+    this.hud.setMirror(this.hud2);
+    this.hud2.setActive(false);
     this.hud.setSoundHook((kind) => this.sound.play(kind === 'move' ? 'uiMove' : kind === 'change' ? 'uiChange' : kind === 'back' ? 'uiBack' : kind === 'open' ? 'uiOpen' : 'uiConfirm', { volume: 0.5, minGap: 0 }));
 
     this.loadingLabel = document.createElement('div');
@@ -326,6 +342,12 @@ export class TrenchGame {
     this.player.regenerates = false;
     this.scene.add(this.player.root);
     this.cam = new ShoulderCam(this.camera, this.world);
+    this.player2 = this.settings.player2Controller === -2 ? null : new PlayerSoldier(this.world, RESPAWN.x + 1.8, RESPAWN.z, RESPAWN.yaw);
+    if (this.player2) {
+      this.player2.regenerates = false;
+      this.scene.add(this.player2.root);
+      this.cam2 = new ShoulderCam(this.camera2, this.world);
+    }
 
     // Their three lines, their officers (three in the trenches, one in each dugout) and their medics.
     // Nobody stands on the step where it's broken by a breach or a communication trench.
@@ -370,6 +392,9 @@ export class TrenchGame {
 
     this.front = this.makeFront();
     this.hud.setOnFoot(CONTROLS);
+    this.hud2.setOnFoot(CONTROLS);
+    this.hud.setCoopLayout(!!this.player2);
+    this.hud2.setActive(!!this.player2);
     this.hud.setSettings(this.settings, (s) => {
       this.settings = s;
       saveSettings(s);
@@ -403,7 +428,49 @@ export class TrenchGame {
     }
     this.input.setAimScale(AIM_SPEED_SCALE[this.settings.aimSpeed]);
     this.sound.setVolumes(this.settings.sfxVolume, this.settings.musicVolume);
+    this.syncPlayer2();
     this.pausedRendered = false;
+  }
+
+  private syncPlayer2(): void {
+    if (!this.player || !this.world) return;
+    const enabled = this.settings.player2Controller !== -2;
+    if (enabled && !this.player2) {
+      this.player2 = new PlayerSoldier(this.world, this.player.position.x + 1.8, this.player.position.z, this.player.yaw);
+      this.player2.regenerates = false;
+      this.scene.add(this.player2.root);
+      this.cam2 = new ShoulderCam(this.camera2, this.world);
+    } else if (!enabled && this.player2) {
+      this.scene.remove(this.player2.root);
+      this.player2.dispose();
+      this.player2 = null;
+    }
+    this.hud.setCoopLayout(!!this.player2);
+    this.hud2.setActive(!!this.player2);
+  }
+
+  private withPlayer2<T>(run: () => T): T {
+    if (!this.player2) return run();
+    const player = this.player, camera = this.camera, cam = this.cam;
+    const manning = this.manning, scoped = this.scoped, maskOn = this.maskOn, hud = this.hud;
+    const cooldown = this.cooldown;
+    const phaseBefore = this.phase;
+    this.player = this.player2; this.camera = this.camera2; this.cam = this.cam2;
+    this.manning = this.manning2; this.scoped = this.scoped2; this.maskOn = this.maskOn2; this.hud = this.hud2;
+    this.cooldown = this.cooldown2;
+    try { return run(); }
+    finally {
+      this.manning2 = this.manning; this.scoped2 = this.scoped; this.maskOn2 = this.maskOn;
+      this.cooldown2 = this.cooldown;
+      this.player = player; this.camera = camera; this.cam = cam;
+      this.manning = manning; this.scoped = scoped; this.maskOn = maskOn; this.hud = hud;
+      this.cooldown = cooldown;
+      if (phaseBefore !== 'assault' && this.phase === 'assault') {
+        this.manning = this.manning2 = null;
+        this.scoped = this.scoped2 = false;
+        this.gunOwner = this.mgOwner = null;
+      }
+    }
   }
 
   private onResize(): void {
@@ -459,6 +526,13 @@ export class TrenchGame {
           return game.player.isDown;
         },
       },
+      get players() {
+        return game.player2 ? [game.player, game.player2].map((soldier) => ({
+          pos: soldier.position,
+          chest: soldier.position.clone().setY(soldier.position.y + 1.15),
+          down: soldier.isDown,
+        })) : undefined;
+      },
       fireAt: (shooter, aim, spread) => this.troopFire(shooter, aim, spread),
       throwGrenade: (from, at) => this.lob(from, at),
     };
@@ -479,14 +553,15 @@ export class TrenchGame {
     const left = 5 - this.officersDown;
     this.sound.music.stinger();
     if (left > 0) {
-      this.hud.showCallout(`OFFICER DOWN! ${left} TO GO`, '#ffd24a');
+      this.announceCallout(`OFFICER DOWN! ${left} TO GO`, '#ffd24a');
       return;
     }
     this.phase = 'won';
     this.victoryAt = this.time;
-    this.hud.showVictory("Their trench is ours! All five of their officers are down.", NEXT ? '' : 'Pick another level from the pause menu (Start / M)');
+    this.announceVictory("Their trench is ours! All five of their officers are down.", NEXT ? '' : 'Pick another level from the pause menu (Start / M)');
     this.sound.music.fanfare();
     this.scoped = false;
+    this.releaseMountedWeapon();
     this.manning = null;
   }
 
@@ -515,8 +590,10 @@ export class TrenchGame {
     if (!hit) return;
     this.impacts.dustPuff(end);
     const handle = hit.collider.handle;
-    if (side === 'enemy' && handle === this.player.collider.handle) {
-      this.hitPlayer(ENEMY_DAMAGE);
+    if (side === 'enemy' && (handle === this.player.collider.handle || handle === this.player2?.collider.handle)) {
+      const target = handle === this.player.collider.handle ? this.player : this.player2!;
+      if (target === this.player) this.hitPlayer(ENEMY_DAMAGE);
+      else this.withPlayer2(() => this.hitPlayer(ENEMY_DAMAGE));
       return;
     }
     const m = this.byHandle.get(handle);
@@ -533,10 +610,31 @@ export class TrenchGame {
     this.hurtFlashLevel = Math.min(1, this.hurtFlashLevel + 0.45);
     this.sound.play('thud', { volume: 0.45, rate: 1.6, minGap: 0.1 });
     if (this.player.isDown) {
+      this.releaseMountedWeapon();
       this.scoped = false;
       this.manning = null;
       this.hud.showCallout("YOU'RE HIT! THE STRETCHER BEARERS ARE CARRYING YOU BACK…", '#ff8a7a');
     }
+  }
+
+  private releaseMountedWeapon(): void {
+    if (this.gunOwner === this.player) this.gunOwner = null;
+    if (this.mgOwner === this.player) this.mgOwner = null;
+  }
+
+  private announceCallout(text: string, color: string): void {
+    this.primaryHud.showCallout(text, color);
+    if (this.hud !== this.primaryHud) this.hud.showCallout(text, color);
+  }
+
+  private announceBanner(title: string, subtitle: string): void {
+    this.primaryHud.showBanner(title, subtitle);
+    if (this.hud !== this.primaryHud) this.hud.showBanner(title, subtitle);
+  }
+
+  private announceVictory(message: string, footer: string): void {
+    this.primaryHud.showVictory(message, footer);
+    if (this.hud !== this.primaryHud) this.hud.showVictory(message, footer);
   }
 
   /** A soldier fires at `aim`, with scatter. */
@@ -672,6 +770,12 @@ export class TrenchGame {
     const dp = Math.hypot(p.x - b.at.x, p.z - b.at.z);
     if (dp < b.radius && this.blastReaches(b.at, 1, this.front.player.chest)) this.hitPlayer(45 * (1 - dp / b.radius));
     this.cam.addShake(0.35 * Math.min(1, 10 / Math.max(1, dp)));
+    if (this.player2) {
+      const p2 = this.player2.position;
+      const d2 = Math.hypot(p2.x - b.at.x, p2.z - b.at.z);
+      const chest2 = p2.clone().setY(p2.y + 1.15);
+      if (d2 < b.radius && this.blastReaches(b.at, 1, chest2)) this.withPlayer2(() => this.hitPlayer(45 * (1 - d2 / b.radius)));
+    }
   }
 
   private fireShell(from: THREE.Vector3, to: THREE.Vector3, ours: boolean, dur: number): void {
@@ -719,6 +823,12 @@ export class TrenchGame {
       return;
     }
     if (dp < ENEMY_SHELL_RADIUS && this.blastReaches(at, 2.5, this.front.player.chest)) this.hitPlayer(55 * (1 - dp / ENEMY_SHELL_RADIUS));
+    if (this.player2) {
+      const p2 = this.player2.position;
+      const d2 = Math.hypot(p2.x - at.x, p2.z - at.z);
+      const chest2 = p2.clone().setY(p2.y + 1.15);
+      if (d2 < ENEMY_SHELL_RADIUS && this.blastReaches(at, 2.5, chest2)) this.withPlayer2(() => this.hitPlayer(55 * (1 - d2 / ENEMY_SHELL_RADIUS)));
+    }
     for (const m of this.troops.friends()) {
       if (m.t.down) continue;
       const d = Math.hypot(m.t.pos.x - at.x, m.t.pos.z - at.z);
@@ -774,8 +884,9 @@ export class TrenchGame {
     this.sound.play('cannon', { volume: 1, rate: 0.7 });
     this.cam.addShake(0.5);
     if (this.gunShells === 0) {
+      this.releaseMountedWeapon();
       this.manning = null;
-      this.hud.showBanner('OUT OF SHELLS', 'Head down the lane to the front line');
+      this.announceBanner('OUT OF SHELLS', 'Head down the lane to the front line');
     } else this.hud.showCallout(`${this.gunShells} SHELL${this.gunShells === 1 ? '' : 'S'} LEFT`, '#ffd24a');
   }
 
@@ -830,13 +941,17 @@ export class TrenchGame {
   }
 
   private updatePickups(dt: number): void {
-    const p = this.player.position;
     for (let i = this.pickups.length - 1; i >= 0; i--) {
       const it = this.pickups[i];
       if (it.kind !== 'sniper') it.mesh.rotation.y += dt * 1.5;
       const reach = it.kind === 'sniper' ? 1.4 : 1.3;
-      if (Math.hypot(p.x - it.pos.x, p.z - it.pos.z) > reach || this.player.isDown) continue;
-      if (it.kind === 'sniper' && !onStep(p.x, p.z, p.y) && Math.abs(p.z - STEP_Z) > 1.6) continue;
+      const collector = [this.player, this.player2].find((player) => {
+        if (!player || player.isDown) return false;
+        const p = player.position;
+        return Math.hypot(p.x - it.pos.x, p.z - it.pos.z) <= reach
+          && (it.kind !== 'sniper' || onStep(p.x, p.z, p.y) || Math.abs(p.z - STEP_Z) <= 1.6);
+      });
+      if (!collector) continue;
       switch (it.kind) {
         case 'ammo':
           this.rifle += 15;
@@ -866,7 +981,7 @@ export class TrenchGame {
       this.sound.play('uiConfirm', { volume: 0.6 });
     }
     // The ammo dump: walk in for a full load.
-    if (!this.resupplied && Math.hypot(p.x - AMMO_DUMP.x, p.z - AMMO_DUMP.z) < 3.6) {
+    if (!this.resupplied && [this.player, this.player2].some((player) => !!player && !player.isDown && Math.hypot(player.position.x - AMMO_DUMP.x, player.position.z - AMMO_DUMP.z) < 3.6)) {
       this.resupplied = true;
       this.rifle = Math.max(this.rifle, 120);
       this.grenades = GRENADE_MAX;
@@ -893,6 +1008,7 @@ export class TrenchGame {
     this.player.teleport(RESPAWN.x, RESPAWN.z, RESPAWN.yaw);
     this.maskOn = false;
     this.scoped = false;
+    this.releaseMountedWeapon();
     this.manning = null;
     for (const [i, m] of this.medics.filter((x) => x !== this.trenchMedic && x.home.z > 90).entries()) {
       m.pos.set(RESPAWN.x + (i ? 1.1 : -1.1), 0, RESPAWN.z + 0.8);
@@ -907,17 +1023,23 @@ export class TrenchGame {
     if (this.player.isDown || this.phase === 'won') return;
     const p = this.player.position;
     if (this.manning) {
+      this.releaseMountedWeapon();
       this.manning = null;
       this.aimMarker.visible = false;
       return;
     }
     const breech = GUN.clone().add(new THREE.Vector3(Math.sin(this.gunYaw) * 1.6, 0, Math.cos(this.gunYaw) * 1.6));
     if (Math.hypot(p.x - breech.x, p.z - breech.z) < 3) {
+      if (this.gunOwner && this.gunOwner !== this.player) {
+        this.hud.showCallout('THE BIG GUN IS IN USE BY THE OTHER PLAYER', '#ffd24a');
+        return;
+      }
       if (this.gunShells <= 0) {
         this.hud.showCallout('NO SHELLS LEFT FOR THE BIG GUN', '#ff8a7a');
         return;
       }
       this.manning = 'gun';
+      this.gunOwner = this.player;
       this.scoped = false;
       this.hud.showCallout('AIM WITH THE STICK OR MOUSE · FIRE WITH RT OR CLICK · A (G) TO LEAVE', '#ffd24a');
       return;
@@ -925,11 +1047,16 @@ export class TrenchGame {
     const zone = zoneOf(p.x, p.z);
     const step = onStep(p.x, p.z, p.y);
     if (step && Math.hypot(p.x - MG_AT.x, p.z - MG_AT.z) < USE_REACH) {
+      if (this.mgOwner && this.mgOwner !== this.player) {
+        this.hud.showCallout('THE MACHINE GUN IS IN USE BY THE OTHER PLAYER', '#ffd24a');
+        return;
+      }
       if (this.mgBelt <= 0) {
         this.hud.showCallout('THE MACHINE GUN IS OUT OF AMMUNITION', '#ff8a7a');
         return;
       }
       this.manning = 'mg';
+      this.mgOwner = this.player;
       this.scoped = false;
       this.hop(MG_AT.x, STEP_Z + 0.25, 0, STEP_H);
       return;
@@ -990,13 +1117,18 @@ export class TrenchGame {
     this.phase = 'assault';
     this.phaseTime = 0;
     this.scoped = false;
+    this.scoped2 = false;
+    this.releaseMountedWeapon();
+    this.gunOwner = null;
+    this.mgOwner = null;
     this.manning = null;
+    this.manning2 = null;
     this.barrageLeft = BARRAGE_SHELLS;
     this.troops.overTheTop();
     this.hop(ladder, PARAPET_Z - 4, 0); // far enough out that the camera's not stuck behind the parapet
     this.whistle(2900, 2700, 1.6, 0.35, true);
     this.sound.music.stinger();
-    this.hud.showBanner('OVER THE TOP!', 'Grenade throwers lob them into their trench while the riflemen cover them. In through the breaches, then up the communication trenches to their support and reserve lines: find their five officers!');
+    this.announceBanner('OVER THE TOP!', 'Grenade throwers lob them into their trench while the riflemen cover them. In through the breaches, then up the communication trenches to their support and reserve lines: find their five officers!');
   }
 
   private updateMedics(dt: number): void {
@@ -1051,6 +1183,20 @@ export class TrenchGame {
       }
       if (this.player.isDown) this.hud.showCallout('GASSED! THE STRETCHER BEARERS ARE CARRYING YOU BACK…', '#ff8a7a');
     }
+    if (this.player2) {
+      this.withPlayer2(() => {
+        const thick2 = this.gas.at(this.player.position.z);
+        if (thick2 <= 0.2 || this.maskOn || this.player.isDown) return;
+        this.player.takeDamage(GAS_HURT * thick2 * dt);
+        if (this.player.isDown) {
+          this.releaseMountedWeapon();
+          this.scoped = false;
+          this.manning = null;
+          this.cam.addShake(0.2);
+          this.hud.showCallout('GASSED! THE STRETCHER BEARERS ARE CARRYING YOU BACK…', '#ff8a7a');
+        }
+      });
+    }
     if (!this.gas.active && this.maskOn && this.phase !== 'assault' && thick === 0 && this.gasWasOn) this.hud.showCallout('ALL CLEAR: MASKS OFF (X)', '#9be27a');
     this.gasWasOn = this.gas.active;
   }
@@ -1096,8 +1242,8 @@ export class TrenchGame {
     this.fireShell(new THREE.Vector3(0, 30, -140), new THREE.Vector3(x, 0, z), false, 3.2);
   }
 
-  private step(input: InputState, dt: number): void {
-    if (input.mapTogglePressed) this.hud.toggleBigMap();
+  private step(input: InputState, dt: number, input2: InputState | null = null): void {
+    if (input.mapTogglePressed || input2?.mapTogglePressed) this.hud.toggleBigMap();
     this.time += dt;
     this.phaseTime += dt;
     // Won: on to the next level after a while.
@@ -1117,7 +1263,7 @@ export class TrenchGame {
 
     const p = this.player.position;
     // Reaching the front line moves the battle on.
-    if (!this.reachedFront && zoneOf(p.x, p.z) === 1) {
+    if (!this.reachedFront && (zoneOf(p.x, p.z) === 1 || (this.player2 && zoneOf(this.player2.position.x, this.player2.position.z) === 1))) {
       this.reachedFront = true;
       if (this.phase === 'artillery') {
         this.phase = 'front';
@@ -1138,11 +1284,33 @@ export class TrenchGame {
     } else if (this.scoped) {
       move = { ...move, moveX: 0, moveY: 0, steer: 0, throttle: 0, aimYawDelta: input.aimYawDelta * 0.22, aimPitchDelta: input.aimPitchDelta * 0.22 };
     }
-    this.aimMarker.visible = this.manning === 'gun';
+    this.aimMarker.visible = this.manning === 'gun' || this.manning2 === 'gun';
     this.player.step(move, dt);
     if (wasDown && !this.player.isDown && this.player.health === 0) this.wakeAtAidPost();
     if (this.scoped && !onStep(p.x, p.z, p.y)) this.scoped = false;
     this.updateFiring(input, dt);
+    if (this.player2 && input2) this.withPlayer2(() => {
+      if (input2.cameraTogglePressed && !this.scoped) this.cam.toggle();
+      if (input2.usePressed) this.use();
+      if (input2.scopePressed) this.toggleScope();
+      if (input2.megaJamPressed) this.toggleMask();
+      if (input2.rocketPressed) this.throwGrenade();
+      const secondWasDown = this.player.isDown;
+      let secondMove = { ...input2, firing: false, jamFiring: false };
+      if (this.manning === 'gun') {
+        this.aimGun(input2);
+        secondMove = { ...secondMove, moveX: 0, moveY: 0, steer: 0, throttle: 0, aimYawDelta: 0, aimPitchDelta: 0 };
+      } else if (this.manning === 'mg') {
+        secondMove = { ...secondMove, moveX: 0, moveY: 0, steer: 0, throttle: 0 };
+      } else if (this.scoped) {
+        secondMove = { ...secondMove, moveX: 0, moveY: 0, steer: 0, throttle: 0, aimYawDelta: input2.aimYawDelta * 0.22, aimPitchDelta: input2.aimPitchDelta * 0.22 };
+      }
+      this.player.step(secondMove, dt);
+      const secondPos = this.player.position;
+      if (this.scoped && !onStep(secondPos.x, secondPos.z, secondPos.y)) this.scoped = false;
+      if (secondWasDown && !this.player.isDown && this.player.health === 0) this.wakeAtAidPost();
+      this.updateFiring(input2, dt);
+    });
     this.updatePickups(dt);
 
     this.troops.update(dt, this.front);
@@ -1174,6 +1342,7 @@ export class TrenchGame {
     this.world.step();
 
     this.cam.update(this.player, dt);
+    if (this.player2) this.cam2.update(this.player2, dt);
     if (this.scoped) {
       // Through the scope: from his eye on the fire step.
       const mode = this.cam.mode;
@@ -1187,6 +1356,19 @@ export class TrenchGame {
       this.camera.position.copy(GUN).addScaledVector(back, 14).setY(26);
       this.camera.lookAt(this.gunTarget().addScaledVector(back, 25));
     }
+    if (this.player2) this.withPlayer2(() => {
+      if (this.scoped) {
+        const mode = this.cam.mode;
+        this.cam.mode = 'first';
+        this.cam.update(this.player, 0);
+        this.cam.mode = mode;
+      }
+      if (this.manning === 'gun') {
+        const back = new THREE.Vector3(Math.sin(this.gunYaw), 0, Math.cos(this.gunYaw));
+        this.camera.position.copy(GUN).addScaledVector(back, 14).setY(26);
+        this.camera.lookAt(this.gunTarget().addScaledVector(back, 25));
+      }
+    });
     this.impacts.update(dt);
     this.updateTracers(dt);
     const at = this.player.position;
@@ -1220,7 +1402,10 @@ export class TrenchGame {
       x /= k;
       y /= k;
     }
-    return { x: ((x + 1) / 2) * window.innerWidth, y: ((1 - y) / 2) * window.innerHeight, onScreen, angle: Math.atan2(-y, x), label };
+    const split = !!this.player2;
+    const localWidth = split && this.settings.splitOrientation === 'vertical' ? Math.floor(window.innerWidth / 2) : window.innerWidth;
+    const localHeight = split && this.settings.splitOrientation === 'horizontal' ? Math.floor(window.innerHeight / 2) : window.innerHeight;
+    return { x: ((x + 1) / 2) * localWidth, y: ((1 - y) / 2) * localHeight, onScreen, angle: Math.atan2(-y, x), label };
   }
 
   private nearestLadder(): number {
@@ -1345,6 +1530,14 @@ export class TrenchGame {
   }
 
   private hudState(input: InputState): HUDState {
+    const split = !!this.player2;
+    const vertical = this.settings.splitOrientation === 'vertical';
+    const localWidth = split && vertical
+      ? this.player === this.player2 ? window.innerWidth - Math.floor(window.innerWidth / 2) : Math.floor(window.innerWidth / 2)
+      : window.innerWidth;
+    const localHeight = split && !vertical
+      ? this.player === this.player2 ? Math.floor(window.innerHeight / 2) : window.innerHeight - Math.floor(window.innerHeight / 2)
+      : window.innerHeight;
     return {
       zombies: null,
       health: this.player.health,
@@ -1356,7 +1549,7 @@ export class TrenchGame {
       usingGamepad: input.usingGamepad,
       insideBase: null,
       map: NO_MAP,
-      aimScreen: this.hud.paused || this.scoped || this.manning === 'gun' ? null : { x: window.innerWidth / 2, y: window.innerHeight / 2 },
+      aimScreen: this.hud.paused || this.scoped || this.manning === 'gun' ? null : { x: localWidth / 2, y: localHeight / 2 },
       aimRange: null,
       aimTarget: 'none',
       rocketCharge: 0,
@@ -1403,13 +1596,34 @@ export class TrenchGame {
   private render(): void {
     const w = window.innerWidth;
     const h = window.innerHeight;
-    this.hud.setViewport({ left: 0, top: 0, width: w, height: h });
     this.renderer.shadowMap.needsUpdate = true;
-    this.camera.aspect = w / h;
-    this.camera.fov = this.scoped ? SCOPE_FOV : FOV;
-    this.camera.updateProjectionMatrix();
-    this.renderer.setViewport(0, 0, w, h);
-    this.renderer.render(this.scene, this.camera);
+    const split = !!this.player2;
+    this.renderer.setScissorTest(split);
+    if (!split) {
+      this.hud.setViewport({ left: 0, top: 0, width: w, height: h });
+      this.camera.aspect = w / h;
+      this.camera.fov = this.scoped ? SCOPE_FOV : FOV;
+      this.camera.updateProjectionMatrix();
+      this.renderer.setViewport(0, 0, w, h);
+      this.renderer.render(this.scene, this.camera);
+      return;
+    }
+    this.hud.setCoopLayout(true);
+    const vertical = this.settings.splitOrientation === 'vertical';
+    const half = Math.floor((vertical ? w : h) / 2);
+    const v1 = vertical ? { left: 0, top: 0, width: half, height: h } : { left: 0, top: 0, width: w, height: h - half };
+    const v2 = vertical ? { left: half, top: 0, width: w - half, height: h } : { left: 0, top: h - half, width: w, height: half };
+    this.hud.setViewport(v1); this.hud2.setViewport(v2);
+    for (const [camera, v] of [[this.camera, v1], [this.camera2, v2]] as const) {
+      camera.aspect = v.width / v.height;
+      camera.fov = (camera === this.camera ? this.scoped : this.scoped2) ? SCOPE_FOV : FOV;
+      camera.updateProjectionMatrix();
+      const bottom = h - v.top - v.height;
+      this.renderer.setViewport(v.left, bottom, v.width, v.height);
+      this.renderer.setScissor(v.left, bottom, v.width, v.height);
+      this.renderer.render(this.scene, camera);
+    }
+    this.renderer.setScissorTest(false);
   }
 
   private readonly animate = (): void => {
@@ -1419,21 +1633,27 @@ export class TrenchGame {
     this.input.textEntry = this.hud.editingText;
     this.input.beginFrame();
     const pads = Array.from(navigator.getGamepads?.() ?? []);
-    const input = this.input.update(dt, -2, 1, this.settings.splitOrientation, false, pads, 1);
+    const p2Enabled = !!this.player2;
+    const p2Index = p2Enabled ? this.settings.player2Controller : -3;
+    const p1Index = !p2Enabled ? -2 : this.settings.player1Controller === -2 ? (pads.find((pad) => pad && pad.index !== p2Index)?.index ?? -1) : this.settings.player1Controller;
+    const lockedMousePlayer: 1 | 2 = p2Enabled && p2Index === -1 ? 2 : 1;
+    const input = this.input.update(dt, p1Index, 1, this.settings.splitOrientation, p2Enabled && p2Index === -1, pads, lockedMousePlayer);
+    const input2 = p2Enabled ? this.input.update(dt, p2Index, 2, this.settings.splitOrientation, false, pads, lockedMousePlayer) : null;
     const kbMenu = this.input.keyboardMenu();
     input.mapTogglePressed ||= kbMenu.mapTogglePressed;
     if (this.hud.paused) {
       this.hud.handleMenu({
-        up: input.menu.up || kbMenu.menu.up,
-        down: input.menu.down || kbMenu.menu.down,
-        left: input.menu.left || kbMenu.menu.left,
-        right: input.menu.right || kbMenu.menu.right,
-        confirm: input.menu.confirm || kbMenu.menu.confirm,
-        back: input.menu.back || kbMenu.menu.back,
-        options: input.menu.options || kbMenu.menu.options,
+        up: input.menu.up || kbMenu.menu.up || !!input2?.menu.up,
+        down: input.menu.down || kbMenu.menu.down || !!input2?.menu.down,
+        left: input.menu.left || kbMenu.menu.left || !!input2?.menu.left,
+        right: input.menu.right || kbMenu.menu.right || !!input2?.menu.right,
+        confirm: input.menu.confirm || kbMenu.menu.confirm || !!input2?.menu.confirm,
+        back: input.menu.back || kbMenu.menu.back || !!input2?.menu.back,
+        options: input.menu.options || kbMenu.menu.options || !!input2?.menu.options,
       });
-      if (input.mapTogglePressed && this.hud.paused) this.hud.toggleBigMap();
+      if ((input.mapTogglePressed || input2?.mapTogglePressed) && this.hud.paused) this.hud.toggleBigMap();
       this.hud.update(this.hudState(input));
+      if (input2 && this.player2) this.withPlayer2(() => this.hud2.update(this.hudState(input2)));
       this.updateOverlays();
       if (!this.pausedRendered) {
         this.render();
@@ -1442,9 +1662,10 @@ export class TrenchGame {
       return;
     }
     this.pausedRendered = false;
-    this.step(input, dt);
+    this.step(input, dt, input2);
     this.sound.setListener(this.camera);
     this.hud.update(this.hudState(input));
+    if (input2 && this.player2) this.withPlayer2(() => this.hud2.update(this.hudState(input2)));
     this.updateOverlays();
     this.render();
     this.hud.recordFrame();

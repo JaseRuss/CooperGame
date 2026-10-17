@@ -15,6 +15,7 @@ export interface Front {
   barrage: boolean;
   sees(a: THREE.Vector3, b: THREE.Vector3): boolean;
   player: { pos: THREE.Vector3; chest: THREE.Vector3; down: boolean };
+  players?: { pos: THREE.Vector3; chest: THREE.Vector3; down: boolean }[];
   /** Fires one round at `aim` with this much scatter (radians). */
   fireAt(shooter: Trooper, aim: THREE.Vector3, spread: number): void;
   /** Lobs a grenade from a soldier toward a spot. */
@@ -368,10 +369,13 @@ export class Troops {
       const d = Math.hypot(o.t.pos.x - t.pos.x, o.t.pos.z - t.pos.z);
       if (d < range) options.push({ d, at: o.t.chest() });
     }
-    if (t.side === 'enemy' && !front.player.down) {
-      const p = front.player.pos;
-      const d = Math.hypot(p.x - t.pos.x, p.z - t.pos.z);
-      if (d < range) options.push({ d: d * 0.75, at: front.player.chest.clone() }); // they watch for him
+    if (t.side === 'enemy') {
+      for (const player of front.players ?? [front.player]) {
+        if (player.down) continue;
+        const p = player.pos;
+        const d = Math.hypot(p.x - t.pos.x, p.z - t.pos.z);
+        if (d < range) options.push({ d: d * 0.75, at: player.chest.clone() });
+      }
     }
     options.sort((a, b) => a.d - b.d);
     for (let i = 0; i < Math.min(5, options.length); i++) if (front.sees(eye, options[i].at)) return options[i].at;

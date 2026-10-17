@@ -89,9 +89,11 @@ interface LooseCrate {
 export class MoonGame {
   private readonly renderer: THREE.WebGLRenderer;
   private readonly scene = new THREE.Scene();
-  private readonly camera: THREE.PerspectiveCamera;
+  private camera: THREE.PerspectiveCamera;
+  private readonly camera2: THREE.PerspectiveCamera;
   private readonly input: InputManager;
-  private readonly hud: HUD;
+  private hud: HUD;
+  private readonly hud2: HUD;
   private readonly sound = new Sound(MISSION);
   private readonly sun: THREE.DirectionalLight;
   private readonly clock = new THREE.Clock();
@@ -103,6 +105,7 @@ export class MoonGame {
   private terrain!: MoonTerrain;
   private base!: MainBase;
   private buggy!: Buggy;
+  private buggy2: Buggy | null = null;
   private dust!: Dust;
   private effects!: ImpactEffects;
   private camps: Camp[] = [];
@@ -122,17 +125,23 @@ export class MoonGame {
   private mapAge = 0;
   private time = 0;
   private readonly loose: LooseCrate[] = [];
-  private readonly events: BuggyEvents = { jumped: false, landed: 0, bumped: 0 };
+  private events: BuggyEvents = { jumped: false, landed: 0, bumped: 0 };
+  private events2: BuggyEvents = { jumped: false, landed: 0, bumped: 0 };
   /** Loading and unloading timers. */
   private loadTimer = 0;
   private unloadTimer = 0;
+  private loadTimer2 = 0;
+  private unloadTimer2 = 0;
   /** The camp whose Moon base is going up, while the cutscene plays. */
   private building: Camp | null = null;
   private fadeIn = 0;
   private victoryAt: number | null = null;
   private farCamera = true;
-  private readonly camFocus = new THREE.Vector3();
+  private farCamera2 = true;
+  private camFocus = new THREE.Vector3();
+  private camFocus2 = new THREE.Vector3();
   private camYaw = 0;
+  private camYaw2 = 0;
   private readonly camLook = new THREE.Vector3();
   private cutCameraReady = false;
   private stats = { jumps: 0, bestAir: 0, lost: 0 };
@@ -149,8 +158,12 @@ export class MoonGame {
     container.appendChild(this.renderer.domElement);
 
     this.camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.2, 5000);
+    this.camera2 = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.2, 5000);
     this.input = new InputManager(this.renderer.domElement);
     this.hud = new HUD(container);
+    this.hud2 = new HUD(container, true);
+    this.hud.setMirror(this.hud2);
+    this.hud2.setActive(false);
     this.hud.setSoundHook((kind) => this.sound.play(kind === 'move' ? 'uiMove' : kind === 'change' ? 'uiChange' : kind === 'back' ? 'uiBack' : kind === 'open' ? 'uiOpen' : 'uiConfirm', { volume: 0.5, minGap: 0 }));
 
     this.loadingLabel = document.createElement('div');
@@ -210,6 +223,13 @@ export class MoonGame {
     this.buggy = new Buggy();
     this.buggy.placeAt(START.x, START.z, START.yaw, this.terrain);
     this.scene.add(this.buggy.root);
+    if (this.settings.player2Controller !== -2) {
+      this.buggy2 = new Buggy();
+      this.buggy2.placeAt(START.x + 3, START.z, START.yaw, this.terrain);
+      this.scene.add(this.buggy2.root);
+      this.camFocus2.copy(this.buggy2.pos);
+      this.camYaw2 = this.buggy2.yaw;
+    }
     this.map = new MoonMap(this.terrain.paths, this.terrain.shownRoads);
     this.map.data.base = { x: 0, z: -30 };
     this.map.data.walls = maze.runs;
@@ -224,6 +244,9 @@ export class MoonGame {
         '<span><i style="background:#8a4ad8"></i>Something odd to find (later…)</span><span><i style="background:#ffd24a"></i>Found it!</span>' +
         '<span><i style="background:#f4a6c0"></i>Maze walls</span><span><i style="background:#15121c"></i>Not explored yet</span>',
     });
+    this.hud2.setOnFoot(CONTROLS, { legend: '<span><i style="background:#eeebe3"></i>Main base (load up here)</span><span><i style="background:#b8392e"></i>Army camps: deliver crates to build</span><span><i style="background:#ffffff"></i>Your buggy</span>' });
+    this.hud.setCoopLayout(!!this.buggy2);
+    this.hud2.setActive(!!this.buggy2);
     this.hud.setSettings(this.settings, (s) => {
       this.settings = s;
       saveSettings(s);
@@ -318,12 +341,44 @@ export class MoonGame {
     }
     this.input.setAimScale(AIM_SPEED_SCALE[this.settings.aimSpeed]);
     this.sound.setVolumes(this.settings.sfxVolume, this.settings.musicVolume);
+    this.syncPlayer2();
     this.pausedRendered = false;
+  }
+
+  private syncPlayer2(): void {
+    if (!this.buggy || !this.terrain) return;
+    const enabled = this.settings.player2Controller !== -2;
+    if (enabled && !this.buggy2) {
+      this.buggy2 = new Buggy();
+      this.buggy2.placeAt(this.buggy.pos.x + 3, this.buggy.pos.z, this.buggy.yaw, this.terrain);
+      this.scene.add(this.buggy2.root);
+      this.camFocus2.copy(this.buggy2.pos);
+      this.camYaw2 = this.buggy2.yaw;
+    } else if (!enabled && this.buggy2) {
+      this.scene.remove(this.buggy2.root);
+      this.buggy2 = null;
+    }
+    this.hud.setCoopLayout(!!this.buggy2);
+    this.hud2.setActive(!!this.buggy2);
+  }
+
+  private withPlayer2<T>(run: () => T): T {
+    if (!this.buggy2) return run();
+    const buggy = this.buggy, camera = this.camera, events = this.events, hud = this.hud;
+    const load = this.loadTimer, unload = this.unloadTimer, focus = this.camFocus, yaw = this.camYaw, farCamera = this.farCamera;
+    this.buggy = this.buggy2; this.camera = this.camera2; this.events = this.events2; this.hud = this.hud2;
+    this.loadTimer = this.loadTimer2; this.unloadTimer = this.unloadTimer2; this.camFocus = this.camFocus2; this.camYaw = this.camYaw2; this.farCamera = this.farCamera2;
+    try { return run(); }
+    finally {
+      this.loadTimer2 = this.loadTimer; this.unloadTimer2 = this.unloadTimer; this.camFocus2 = this.camFocus; this.camYaw2 = this.camYaw; this.farCamera2 = this.farCamera;
+      this.buggy = buggy; this.camera = camera; this.events = events; this.hud = hud;
+      this.loadTimer = load; this.unloadTimer = unload; this.camFocus = focus; this.camYaw = yaw; this.farCamera = farCamera;
+    }
   }
 
   private onResize(): void {
     this.renderer.setSize(window.innerWidth, window.innerHeight);
-    this.hud.setViewport({ left: 0, top: 0, width: window.innerWidth, height: window.innerHeight });
+    if (!this.buggy2) this.hud.setViewport({ left: 0, top: 0, width: window.innerWidth, height: window.innerHeight });
     this.pausedRendered = false;
   }
 
@@ -567,6 +622,12 @@ export class MoonGame {
     this.buggy.placeAt(NORTH_START.x, NORTH_START.z - 6, Math.PI, this.terrain);
     this.camYaw = this.buggy.yaw;
     this.camFocus.copy(this.buggy.pos);
+    if (this.buggy2) this.withPlayer2(() => {
+      this.buggy.setCargo(0, 0);
+      this.buggy.placeAt(NORTH_START.x + 3, NORTH_START.z - 6, Math.PI, this.terrain);
+      this.camYaw = this.buggy.yaw;
+      this.camFocus.copy(this.buggy.pos);
+    });
     this.fadeIn = 0.8;
     this.hud.showBanner('THE WEIRD SIDE OF THE MOON', 'Follow the new road north over the mountains and see what you can find');
   }
@@ -583,6 +644,11 @@ export class MoonGame {
     this.buggy.placeAt(NORTH_START.x, NORTH_START.z - 6, Math.PI, this.terrain);
     this.camYaw = this.buggy.yaw;
     this.camFocus.copy(this.buggy.pos);
+    if (this.buggy2) this.withPlayer2(() => {
+      this.buggy.placeAt(NORTH_START.x + 3, NORTH_START.z - 6, Math.PI, this.terrain);
+      this.camYaw = this.buggy.yaw;
+      this.camFocus.copy(this.buggy.pos);
+    });
     this.hud.showBanner('THE WEIRD SIDE OF THE MOON', 'Follow the new road north over the mountains and see what you can find');
   }
 
@@ -625,8 +691,8 @@ export class MoonGame {
     };
   }
 
-  private step(input: InputState, dt: number): void {
-    if (input.mapTogglePressed) this.hud.toggleBigMap();
+  private step(input: InputState, dt: number, input2: InputState | null = null): void {
+    if (input.mapTogglePressed || input2?.mapTogglePressed) this.hud.toggleBigMap();
     this.time += dt;
     if (this.victoryAt !== null && this.time - this.victoryAt > 10) {
       this.hud.hideVictory();
@@ -667,13 +733,32 @@ export class MoonGame {
     this.afterPhysics(dt);
     this.updateLoading(dt);
     this.updateUnloading(dt);
+    if (this.buggy2 && input2) this.withPlayer2(() => {
+      if (input2.cameraTogglePressed) this.farCamera = !this.farCamera;
+      if (input2.resetPressed) {
+        this.buggy.placeAt(START.x, START.z, START.yaw, this.terrain);
+        this.hud.showCallout('BACK AT THE MAIN BASE', '#c9d3dc');
+      }
+      const secondDrive = this.driveInput(input2);
+      this.events.jumped = false; this.events.landed = 0; this.events.bumped = 0;
+      for (let i = 0; i < sub; i++) this.buggy.step(dt / sub, secondDrive, this.terrain, this.events);
+      this.afterPhysics(dt);
+      this.updateLoading(dt);
+      this.updateUnloading(dt);
+      this.updateCamera(dt);
+    });
     this.updateLoose(dt);
-    const near = (c: Camp) => Math.hypot(b.pos.x - c.center.x, b.pos.z - c.center.z);
+    const near = (c: Camp) => Math.min(Math.hypot(b.pos.x - c.center.x, b.pos.z - c.center.z), this.buggy2 ? Math.hypot(this.buggy2.pos.x - c.center.x, this.buggy2.pos.z - c.center.z) : Infinity);
     for (const c of this.camps) c.update(dt, near(c));
     this.base.update(dt);
-    this.wonders.update(dt, b, this.wonderFx);
-    if (this.terrain.weirdOpen) this.skier.update(dt, b.pos, this.skiFx);
-    const inValley = this.terrain.weirdOpen && valleyQ(b.pos.x, b.pos.z) < 1;
+    const b2 = this.buggy2;
+    const p1InValley = this.terrain.weirdOpen && valleyQ(b.pos.x, b.pos.z) < 1;
+    const p2InValley = !!b2 && this.terrain.weirdOpen && valleyQ(b2.pos.x, b2.pos.z) < 1;
+    const explorers = [p1InValley ? b : null, p2InValley ? b2 : null].filter((buggy): buggy is Buggy => buggy !== null);
+    const explorer = p2InValley && (!p1InValley || valleyQ(b2!.pos.x, b2!.pos.z) < valleyQ(b.pos.x, b.pos.z)) ? b2! : b;
+    this.wonders.update(dt, explorers.length ? explorers : [b], this.wonderFx);
+    if (this.terrain.weirdOpen) this.skier.update(dt, explorer.pos, this.skiFx);
+    const inValley = p1InValley || p2InValley;
     if (inValley !== this.inValley) {
       this.inValley = inValley;
       this.sound.music.setWeird(inValley);
@@ -769,7 +854,10 @@ export class MoonGame {
     d.camps = this.camps.map((c) => ({ x: c.center.x, z: c.center.z, color: c.faction.color, built: c.built, delivered: c.delivered, need: CRATES_NEEDED }));
     d.crates = this.loose.filter((c) => !c.to).map((c) => ({ x: c.mesh.position.x, z: c.mesh.position.z, color: c.color }));
     d.wonders = this.wonders.mapPoints();
-    if (this.terrain.weirdOpen) this.map.reveal(b.pos.x, b.pos.z);
+    if (this.terrain.weirdOpen) {
+      this.map.reveal(b.pos.x, b.pos.z);
+      if (this.buggy2) this.map.reveal(this.buggy2.pos.x, this.buggy2.pos.z);
+    }
     this.mapView = this.map.view({ ...NO_MAP, playerX: b.pos.x, playerZ: b.pos.z, playerYaw: b.yaw });
   }
 
@@ -791,7 +879,14 @@ export class MoonGame {
       x /= k;
       y /= k;
     }
-    return { x: ((x + 1) / 2) * window.innerWidth, y: ((1 - y) / 2) * window.innerHeight, onScreen, angle: Math.atan2(-y, x), label };
+    const split = !!this.buggy2;
+    const localWidth = split && this.settings.splitOrientation === 'vertical'
+      ? this.buggy === this.buggy2 ? window.innerWidth - Math.floor(window.innerWidth / 2) : Math.floor(window.innerWidth / 2)
+      : window.innerWidth;
+    const localHeight = split && this.settings.splitOrientation === 'horizontal'
+      ? this.buggy === this.buggy2 ? Math.floor(window.innerHeight / 2) : window.innerHeight - Math.floor(window.innerHeight / 2)
+      : window.innerHeight;
+    return { x: ((x + 1) / 2) * localWidth, y: ((1 - y) / 2) * localHeight, onScreen, angle: Math.atan2(-y, x), label };
   }
 
   /** The way to go next: the camp its crates belong to, else the nearest bay that still has a camp waiting. */
@@ -801,7 +896,7 @@ export class MoonGame {
     const p = b.pos;
     if (this.terrain.weirdOpen) {
       // Off to the Weird Side, then on to the nearest thing not found yet.
-      if (!this.inValley) return this.waypointTo(WEIRD_GATE, `THE WEIRD SIDE ${Math.round(Math.hypot(WEIRD_GATE.x - p.x, WEIRD_GATE.z - p.z))} m`);
+      if (!(this.terrain.weirdOpen && valleyQ(p.x, p.z) < 1)) return this.waypointTo(WEIRD_GATE, `THE WEIRD SIDE ${Math.round(Math.hypot(WEIRD_GATE.x - p.x, WEIRD_GATE.z - p.z))} m`);
       const next = this.wonders.nearestUnfound(p.x, p.z);
       if (!next) return null;
       const at = next.group.position;
@@ -889,6 +984,8 @@ export class MoonGame {
   }
 
   private hudState(input: InputState): HUDState {
+    const b = this.buggy;
+    const map = this.buggy === this.buggy2 ? { ...this.mapView, playerX: b.pos.x, playerZ: b.pos.z, playerYaw: b.yaw } : this.mapView;
     return {
       zombies: null,
       health: this.buggy.cargo,
@@ -899,7 +996,7 @@ export class MoonGame {
       cameraMode: 'third',
       usingGamepad: input.usingGamepad,
       insideBase: null,
-      map: this.mapView,
+      map,
       aimScreen: null,
       aimRange: null,
       aimTarget: 'none',
@@ -935,9 +1032,16 @@ export class MoonGame {
   private render(): void {
     const w = window.innerWidth;
     const h = window.innerHeight;
-    this.hud.setViewport({ left: 0, top: 0, width: w, height: h });
-    this.camera.aspect = w / h;
+    const split = !!this.buggy2;
+    this.renderer.setScissorTest(split);
+    const half = Math.floor((this.settings.splitOrientation === 'vertical' ? w : h) / 2);
+    const v1 = !split ? { left: 0, top: 0, width: w, height: h } : this.settings.splitOrientation === 'vertical' ? { left: 0, top: 0, width: half, height: h } : { left: 0, top: 0, width: w, height: h - half };
+    const v2 = this.settings.splitOrientation === 'vertical' ? { left: half, top: 0, width: w - half, height: h } : { left: 0, top: h - half, width: w, height: half };
+    this.hud.setViewport(v1);
+    if (split) this.hud2.setViewport(v2);
+    this.camera.aspect = v1.width / v1.height;
     this.camera.updateProjectionMatrix();
+    if (split) { this.camera2.aspect = v2.width / v2.height; this.camera2.updateProjectionMatrix(); }
     if (this.debugCam) {
       this.camera.position.set(...this.debugCam.pos);
       this.camera.lookAt(...this.debugCam.look);
@@ -948,9 +1052,20 @@ export class MoonGame {
     this.sun.target.position.copy(watch);
     this.sun.target.updateMatrixWorld();
     this.sky.position.copy(this.camera.position);
-    this.wonders.cull(this.camera.position);
-    this.renderer.setViewport(0, 0, w, h);
+    this.wonders.cull(this.camera.position, this.buggy2 ? this.camera2.position : undefined);
+    if (!split) this.renderer.setViewport(0, 0, w, h);
+    else {
+      const bottom = h - v1.top - v1.height;
+      this.renderer.setViewport(v1.left, bottom, v1.width, v1.height); this.renderer.setScissor(v1.left, bottom, v1.width, v1.height);
+    }
     this.renderer.render(this.scene, this.camera);
+    if (split) {
+      const bottom = h - v2.top - v2.height;
+      this.sky.position.copy(this.camera2.position);
+      this.renderer.setViewport(v2.left, bottom, v2.width, v2.height); this.renderer.setScissor(v2.left, bottom, v2.width, v2.height);
+      this.renderer.render(this.scene, this.camera2);
+      this.renderer.setScissorTest(false);
+    }
   }
 
   private readonly animate = (): void => {
@@ -960,23 +1075,27 @@ export class MoonGame {
     this.input.textEntry = this.hud.editingText;
     this.input.beginFrame();
     const pads = Array.from(navigator.getGamepads?.() ?? []);
-    const input = this.input.update(dt, -2, 1, this.settings.splitOrientation, false, pads, 1);
+    const p2Index = this.buggy2 ? this.settings.player2Controller : -3;
+    const p1Index = !this.buggy2 ? -2 : this.settings.player1Controller === -2 ? (pads.find((pad) => pad && pad.index !== p2Index)?.index ?? -1) : this.settings.player1Controller;
+    const input = this.input.update(dt, p1Index, 1, this.settings.splitOrientation, !!this.buggy2 && p2Index === -1, pads, this.buggy2 && p2Index === -1 ? 2 : 1);
+    const input2 = this.buggy2 ? this.input.update(dt, p2Index, 2, this.settings.splitOrientation, false, pads, this.buggy2 && p2Index === -1 ? 2 : 1) : null;
     const kbMenu = this.input.keyboardMenu();
     input.mapTogglePressed ||= kbMenu.mapTogglePressed;
     input.menu.confirm ||= kbMenu.menu.confirm;
     if (this.hud.paused) {
       this.sound.updateEngine(0, 'jeep', false);
       this.hud.handleMenu({
-        up: input.menu.up || kbMenu.menu.up,
-        down: input.menu.down || kbMenu.menu.down,
-        left: input.menu.left || kbMenu.menu.left,
-        right: input.menu.right || kbMenu.menu.right,
-        confirm: input.menu.confirm || kbMenu.menu.confirm,
-        back: input.menu.back || kbMenu.menu.back,
-        options: input.menu.options || kbMenu.menu.options,
+        up: input.menu.up || kbMenu.menu.up || !!input2?.menu.up,
+        down: input.menu.down || kbMenu.menu.down || !!input2?.menu.down,
+        left: input.menu.left || kbMenu.menu.left || !!input2?.menu.left,
+        right: input.menu.right || kbMenu.menu.right || !!input2?.menu.right,
+        confirm: input.menu.confirm || kbMenu.menu.confirm || !!input2?.menu.confirm,
+        back: input.menu.back || kbMenu.menu.back || !!input2?.menu.back,
+        options: input.menu.options || kbMenu.menu.options || !!input2?.menu.options,
       });
-      if (input.mapTogglePressed && this.hud.paused) this.hud.toggleBigMap();
+      if ((input.mapTogglePressed || input2?.mapTogglePressed) && this.hud.paused) this.hud.toggleBigMap();
       this.hud.update(this.hudState(input));
+      if (input2 && this.buggy2) this.withPlayer2(() => this.hud2.update(this.hudState(input2)));
       if (!this.pausedRendered) {
         this.render();
         this.pausedRendered = true;
@@ -984,9 +1103,10 @@ export class MoonGame {
       return;
     }
     this.pausedRendered = false;
-    this.step(input, dt);
+    this.step(input, dt, input2);
     this.sound.setListener(this.camera);
     this.hud.update(this.hudState(input));
+    if (input2 && this.buggy2) this.withPlayer2(() => this.hud2.update(this.hudState(input2)));
     this.render();
     this.hud.recordFrame();
   };

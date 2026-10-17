@@ -447,7 +447,7 @@ export class PrisonGame {
       return player === 1 ? { left: 0, top: 0, width: half, height: h } : { left: half, top: 0, width: w - half, height: h };
     }
     const half = Math.floor(h / 2);
-    return player === 1 ? { left: 0, top: half, width: w, height: h - half } : { left: 0, top: 0, width: w, height: half };
+    return player === 1 ? { left: 0, top: 0, width: w, height: h - half } : { left: 0, top: h - half, width: w, height: half };
   }
 
   private withPlayer2<T>(run: () => T): T {

@@ -439,7 +439,6 @@ export class Game {
   private announcedBases = new Set<EnemyBase>();
   /** How a jailbreak on foot ended, until the level has dealt with it (siege level). */
   /** The enemy prison the player is at the gate of, and could get out to break into (siege level). */
-  private jailbreakPrison: Prison | null = null;
   private pendingJailbreak: { prison: number; freed: number } | null = null;
   private paratroopers!: Paratroopers;
   private paraTimer = PARA_FIRST_DROP;
@@ -1046,7 +1045,7 @@ export class Game {
   }
 
   private syncPlayer2(): void {
-    const enabled = this.settings.player2Controller !== -2 && !SIEGE; // no co-op on the siege bonus level
+    const enabled = this.settings.player2Controller !== -2;
     this.hud.setCoopLayout(enabled);
     if (enabled && !this.player2) {
       const offset = new THREE.Vector3(5, 0, 0).applyAxisAngle(new THREE.Vector3(0, 1, 0), this.player.yaw);
@@ -1095,7 +1094,7 @@ export class Game {
       return player === 1 ? { left: 0, top: 0, width: half, height: h } : { left: half, top: 0, width: w - half, height: h };
     }
     const half = Math.floor(h / 2);
-    return player === 1 ? { left: 0, top: half, width: w, height: h - half } : { left: 0, top: 0, width: w, height: half };
+    return player === 1 ? { left: 0, top: 0, width: w, height: h - half } : { left: 0, top: h - half, width: w, height: half };
   }
 
   private updateSecondHUD(input: InputState | null, cinematic: boolean): void {
@@ -2329,6 +2328,7 @@ export class Game {
       prisons: siege.heldCounts(),
       freed: [...siege.freed],
       player: { x: this.player.position.x, z: this.player.position.z, yaw: this.player.yaw, health: this.player.health },
+      ...(this.player2 ? { player2: { x: this.player2.position.x, z: this.player2.position.z, yaw: this.player2.yaw, health: this.player2.health } } : {}),
       rocketCharge: this.rocketCharge,
     };
   }
@@ -2358,6 +2358,11 @@ export class Game {
     this.rocketCharge = snap.rocketCharge;
     this.player.teleport(snap.player.x, snap.player.z, snap.player.yaw);
     this.player.health = Math.max(1, snap.player.health);
+    if (this.player2) {
+      const p2 = snap.player2;
+      this.player2.teleport(p2?.x ?? snap.player.x + 1.8, p2?.z ?? snap.player.z, p2?.yaw ?? snap.player.yaw);
+      this.player2.health = Math.max(1, p2?.health ?? snap.player.health);
+    }
     if (this.announcedBases.size === this.enemyBases.length) this.startFinalAssault();
     this.pendingJailbreak = loadResult();
     saveResult(null);
@@ -2374,12 +2379,10 @@ export class Game {
     return { name: near.base.name.toUpperCase(), ...siege.garrisonOf(near.base) };
   }
 
-  /** The enemy prison whose gate the player's at (in anything that drives), if there's anyone left locked up in it. */
-  private findJailbreak(): Prison | null {
+  private findJailbreakFor(player: PlayerTank): Prison | null {
     const siege = this.siege;
-    if (!siege || this.player.isChopper || this.hud.paused || this.victoryTimer > 0) return null;
-    // The Great Castle's dungeon is sealed until its gates open (every other castle taken).
-    return siege.enemyPrisons.find((p) => p.held > 0 && !(p === siege.royalPrison && this.fortress.locked) && p.nearGate(this.player.position, JAILBREAK_REACH)) ?? null;
+    if (!siege || player.isChopper || this.hud.paused || this.victoryTimer > 0) return null;
+    return siege.enemyPrisons.find((p) => p.held > 0 && !(p === siege.royalPrison && this.fortress.locked) && p.nearGate(player.position, JAILBREAK_REACH)) ?? null;
   }
 
   /** Gets out of the tank and goes into the prison on foot: the level is saved, and the on-foot page takes over. */
@@ -2954,6 +2957,7 @@ export class Game {
   ): HUDState {
     const near = this.nearestEnemyBase(false);
     const inside = this.atHome(targetPlayer.position);
+    const jailbreak = this.siege ? this.findJailbreakFor(targetPlayer) : null;
     const f = this.fortress;
     const fortressDist = Math.hypot(f.center.x - targetPlayer.position.x, f.center.z - targetPlayer.position.z);
     const checklist = ZOMBIES
@@ -3046,7 +3050,7 @@ export class Game {
             carrying: this.siege.wagons.reduce((n, w) => n + w.carrying, 0),
             wave: this.siege.waveStatus(),
             garrison: this.garrisonHUD(),
-            prompt: this.jailbreakPrison ? `${input.usingGamepad ? 'Y' : 'C'}: get out and break the ${this.jailbreakPrison.held} prisoners out on foot` : null,
+            prompt: jailbreak ? `${input.usingGamepad ? 'Y' : 'C'}: get out and break the ${jailbreak.held} prisoners out on foot` : null,
           }
         : null,
       prison: null,
@@ -3150,7 +3154,11 @@ export class Game {
       this.withPlayerContext(p2, this.camera2, this.cameraRig2, () => {
         p2.setDeckMount(riding);
         if (player2Input.mapTogglePressed) this.hud.toggleBigMap();
-        if (player2Input.cameraTogglePressed) this.cameraRig.toggle();
+        if (player2Input.cameraTogglePressed) {
+          const prison = this.findJailbreakFor(p2);
+          if (prison) this.startJailbreak(prison);
+          else this.cameraRig.toggle();
+        }
         if (player2Input.resetPressed) {
           const base = this.familyBases.find((b) => b.info === nearestFriendlyBase(p2.position.x, p2.position.z));
           if (this.fortHome) p2.teleport(this.fortHome.x + 5, this.fortHome.z, this.fortHome.yaw);
@@ -3255,7 +3263,8 @@ export class Game {
     if (!inSequence) {
       if (input.cameraTogglePressed) {
         // At an enemy prison's gate the same button gets out and goes in on foot.
-        if (this.jailbreakPrison) this.startJailbreak(this.jailbreakPrison);
+        const prison = this.findJailbreakFor(this.player);
+        if (prison) this.startJailbreak(prison);
         else this.cameraRig.toggle();
       }
       if (input.resetPressed) {
@@ -3518,7 +3527,6 @@ export class Game {
         if (n.banner) this.hud.showBanner(n.text, n.sub ?? '');
         else this.hud.showCallout(n.text, n.color ?? '#ffd24a');
       }
-      this.jailbreakPrison = this.findJailbreak();
     }
     this.villagers?.update(dt, this.allPlayers().map((p) => p.position));
     // A family base with raiders in it can't repair you until they're cleared out.

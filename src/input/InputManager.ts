@@ -276,8 +276,8 @@ export class InputManager {
     let rocketHeld = hasKey(keyboardPlayer === 1 ? 'KeyF' : 'Numpad3') || (mouseEnabled && this.rightMouseDown);
     let aaHeld = hasKey(keyboardPlayer === 1 ? 'KeyQ' : 'Numpad5');
     let megaJamHeld = hasKey(keyboardPlayer === 1 ? 'KeyX' : 'Numpad7');
-    let useHeld = keyboardPlayer === 1 && hasKey('KeyG');
-    let scopeHeld = keyboardPlayer === 1 && hasKey('KeyV');
+    let useHeld = hasKey(keyboardPlayer === 1 ? 'KeyG' : 'NumpadDecimal');
+    let scopeHeld = hasKey(keyboardPlayer === 1 ? 'KeyV' : 'NumpadDivide');
     let sneak = hasKey('ShiftLeft') || hasKey('ShiftRight') || hasKey('ControlLeft') || hasKey('ControlRight');
     const k = (...codes: string[]) => codes.some(hasKey);
     // While a name is being typed, letters, Space and Backspace are text, not menu moves.
