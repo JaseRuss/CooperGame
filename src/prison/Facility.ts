@@ -76,6 +76,12 @@ const PIPE_SPOT = { x: -24.05, z: 24 };
 const LOT = { minX: 39, maxX: 71.4, minZ: 27.5, maxZ: 41.4, gateX0: 40, gateX1: 46.4 };
 /** The ground: the compound and the beach north of it, down to the water's edge. */
 const GROUND = { minX: -125, maxX: 125, minZ: -76, maxZ: 92 };
+
+/** True once a player has crossed beyond a perimeter wall's physical outer face. */
+export function isOutsidePrisonPerimeter(x: number, z: number): boolean {
+  return x < COMPOUND.minX - WALL || x > COMPOUND.maxX + WALL
+    || z < COMPOUND.minZ - WALL || z > COMPOUND.maxZ + WALL;
+}
 /** The jetty running out into the sea from the gate: where the raft is launched. */
 export const JETTY = { x0: -2.5, x1: 2.5, z0: GROUND.minZ + 1, z1: GROUND.minZ - 8, y: 0.22 };
 const BLOCK_B: BlockPlan = { minX: 38, maxX: 68, minZ: 8, maxZ: 22, corridor: 12, doorX: 53 };

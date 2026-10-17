@@ -10,7 +10,7 @@ import { JamCannon } from '../combat/JamCannon';
 import { NightSky } from '../world/NightSky';
 import { loadSettings, saveSettings, AIM_SPEED_SCALE, GRAPHICS_QUALITY, type Settings } from '../core/Settings';
 import { MISSION, startMission } from '../core/config';
-import { Facility, ROOF_TOP, JETTY, type ClimbSpot, type FacilityLayout } from './Facility';
+import { Facility, isOutsidePrisonPerimeter, ROOF_TOP, JETTY, type ClimbSpot, type FacilityLayout } from './Facility';
 import { Lighthouse } from './Lighthouse';
 import { Searchlights } from './Searchlights';
 import { Outside, SHORE, SHORE_CHECKPOINTS, SHORE_GUARDS, HOME_REACH, loadTreeModels } from './Outside';
@@ -1221,15 +1221,11 @@ export class PrisonGame {
     // Keep an early fence escape recoverable even if a future collider/layout change opens a
     // route around the locked gate. Once the gate is open, the beach route is intentional.
     if (!this.seaGate.opened) {
-      const outsideCompound = (soldier: PlayerSoldier) => {
-        const at = soldier.position;
-        return at.x < -103 || at.x > 103 || at.z < -48 || at.z > 71;
-      };
-      if (outsideCompound(this.player)) {
+      if (isOutsidePrisonPerimeter(this.player.position.x, this.player.position.z)) {
         this.player.teleport(this.checkpoint.x, this.checkpoint.z, this.checkpoint.yaw, this.checkpoint.y ?? 0);
         this.hud.showCallout('THE SEA GATE IS STILL LOCKED · BACK INSIDE', '#ffd24a');
       }
-      if (this.player2 && outsideCompound(this.player2)) {
+      if (this.player2 && isOutsidePrisonPerimeter(this.player2.position.x, this.player2.position.z)) {
         this.player2.teleport(this.checkpoint.x + 1.5, this.checkpoint.z, this.checkpoint.yaw, this.checkpoint.y ?? 0);
         this.hud2.showCallout('THE SEA GATE IS STILL LOCKED · BACK INSIDE', '#ffd24a');
       }
