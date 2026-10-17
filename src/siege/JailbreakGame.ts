@@ -57,6 +57,11 @@ const CONTROLS =
   '<span><b>Creep</b> (guards see half as far) RB · Shift</span><span><b>Fire</b> RT · click (a shot is heard from far off; right behind a jailer it is a quiet takedown)</span>' +
   '<span><b>Jam riot cannon</b> (quiet) hold LT · hold E</span><span><b>Put on / take off the jailer disguise</b> X · X</span>' +
   '<span><b>Camera</b> Y · C</span><span><b>Back to the gate</b> Back · R</span>';
+const CONTROLS_P2 =
+  '<span><b>Move</b> arrow keys · <b>Aim</b> mouse in your view or numpad 4/6 and 8/2</span>' +
+  '<span><b>Quiet takedown / fire</b> numpad 0 · <b>Creep</b> Shift · <b>Jam riot cannon</b> hold numpad 1</span>' +
+  '<span><b>Put on / take off disguise</b> numpad 7 · <b>Camera</b> numpad 9 · <b>Back to gate</b> numpad decimal</span>' +
+  '<span><b>Pause / map</b> numpad enter · <b>Menu options</b> numpad plus</span>';
 
 const NO_MAP: MapView = {
   playerX: 0,
@@ -224,7 +229,8 @@ export class JailbreakGame {
     this.scene.add(this.guards.group);
     this.cones = new VisionCones(this.world, this.guards);
     this.scene.add(this.cones.group);
-    this.hud.setOnFoot(CONTROLS);
+    this.hud.setOnFoot(CONTROLS, undefined, CONTROLS_P2);
+    this.hud2.setOnFoot(CONTROLS_P2);
     this.hud.setSettings(this.settings, (s) => {
       this.settings = s;
       saveSettings(s);
@@ -240,7 +246,7 @@ export class JailbreakGame {
     this.sound.music.setNight(true);
     this.sound.music.start();
     this.clock.start();
-    this.hud.showBanner(this.request.royal ? 'THE ROYAL DUNGEON' : 'BREAK THEM OUT!', 'Open the cell doors, then lead everyone out of the gate. Creep past the jailers, or press X to put on a jailer disguise');
+    this.hud.showBanner(this.request.royal ? 'THE ROYAL DUNGEON' : 'BREAK THEM OUT!', 'Open the cell doors, then lead everyone out of the gate. Creep past the jailers, or press X / numpad 7 to put on a jailer disguise');
     if (import.meta.env.DEV) (window as unknown as { jailbreak: JailbreakGame }).jailbreak = this;
     requestAnimationFrame(this.animate);
   }
@@ -833,7 +839,7 @@ export class JailbreakGame {
     else if (this.opened < cells.length) {
       const next = cells.find((c) => !c.opening);
       const toCells = next ? Math.hypot(p.x - next.x, p.z - DOOR_Z) : 99;
-      prompt = this.opened === 0 && toCells > 12 ? 'Get to the cells at the north end of the yard. Press X to put on a jailer disguise (not when they have seen you)' : toCells < 8 ? 'Stand at a cell door to unlock it' : null;
+      prompt = this.opened === 0 && toCells > 12 ? `Get to the cells at the north end of the yard. Press ${this.player === this.player2 && this.settings.player2Controller === -1 ? 'Numpad 7' : 'X'} to put on a jailer disguise (not when they have seen you)` : toCells < 8 ? 'Stand at a cell door to unlock it' : null;
     } else prompt = 'All the cells are open: lead them out of the gate!';
     if (!prompt && this.entered && this.opened > 0 && p.z > 20) prompt = 'Out of the gate, with everyone behind you';
     const status: string[] = [];

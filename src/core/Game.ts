@@ -3050,7 +3050,9 @@ export class Game {
             carrying: this.siege.wagons.reduce((n, w) => n + w.carrying, 0),
             wave: this.siege.waveStatus(),
             garrison: this.garrisonHUD(),
-            prompt: jailbreak ? `${input.usingGamepad ? 'Y' : 'C'}: get out and break the ${jailbreak.held} prisoners out on foot` : null,
+            prompt: jailbreak
+              ? `${input.usingGamepad ? 'Y' : targetPlayer === this.player2 && this.settings.player2Controller === -1 ? 'Numpad 9' : 'C'}: get out and break the ${jailbreak.held} prisoners out on foot`
+              : null,
           }
         : null,
       prison: null,

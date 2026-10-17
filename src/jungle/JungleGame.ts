@@ -110,6 +110,11 @@ const CONTROLS =
   '<span><b>Grenade launcher</b> (4 shots, then a reload) LB · F · right click</span>' +
   '<span><b>Squad: hold here / follow me</b> X</span><span><b>Camera</b> Y · C</span><span><b>Back to checkpoint</b> Back · R</span>' +
   '<span><b>Plant a bomb</b> (close to an ammo dump; 7 second fuse) RB · Q</span>';
+const CONTROLS_P2 =
+  '<span><b>Move</b> arrow keys · <b>Aim</b> mouse in your view or numpad 4/6 and 8/2</span>' +
+  '<span><b>Rifle</b> numpad 0 · <b>Creep</b> Shift · <b>Jam gun</b> hold numpad 1</span>' +
+  '<span><b>Grenade launcher</b> numpad 3 · <b>Plant a bomb</b> numpad 5 · <b>Squad</b> numpad 7</span>' +
+  '<span><b>Camera</b> numpad 9 · <b>Pause / map</b> numpad enter · <b>Checkpoint</b> numpad decimal</span>';
 
 const NO_MAP: MapView = {
   playerX: 0,
@@ -380,13 +385,13 @@ export class JungleGame {
     this.hud.setWorldMap(this.map.asWorldMap());
     this.hud.setOnFoot(CONTROLS, {
       legend: '<span><i style="background:#4b7a2e"></i>You and your squad</span><span><i style="background:#c4a468"></i>Tan army</span><span><i style="background:#3f6fb0"></i>Blue army</span><span><i style="background:#3b8fc2"></i>River and ponds: cross at a bridge</span><span>Dark ground: not scouted yet. Climb a lookout to reveal the map around it</span>',
-    });
+    }, CONTROLS_P2);
     this.hud.setSettings(this.settings, (s) => {
       this.settings = s;
       saveSettings(s);
       this.applySettings();
     });
-    this.hud2.setOnFoot(CONTROLS, { legend: '<span><i style="background:#4b7a2e"></i>You and your squad</span><span><i style="background:#c4a468"></i>Tan army</span><span><i style="background:#3f6fb0"></i>Blue army</span>' });
+    this.hud2.setOnFoot(CONTROLS_P2, { legend: '<span><i style="background:#4b7a2e"></i>You and your squad</span><span><i style="background:#c4a468"></i>Tan army</span><span><i style="background:#3f6fb0"></i>Blue army</span>' });
     this.hud.setCoopLayout(!!this.player2);
     this.hud2.setActive(!!this.player2);
     this.applySettings();
@@ -1164,7 +1169,7 @@ export class JungleGame {
     ];
   }
 
-  private prisonHUD(usingGamepad: boolean): PrisonHUD {
+  private prisonHUD(input: InputState): PrisonHUD {
     const p = this.player.position;
     let prompt: string | null = null;
     const fuse = this.explosives.shortestFuse;
@@ -1176,9 +1181,9 @@ export class JungleGame {
       const l = this.lookouts.find((t) => Math.hypot(t.foot.x - p.x, t.foot.z - p.z) < 8);
       const dump = this.outposts.find((o) => o.dump.alive && Math.hypot(o.x - p.x, o.z - p.z) < 20);
       if (l) prompt = 'Walk to the foot of the ladder to climb the lookout';
-      else if (dump && this.bombs > 0) prompt = this.dumpInReach() ? `Press ${usingGamepad ? 'RB' : 'Q'} to plant a bomb here, then run!` : 'Get closer to the ammo dump to plant a bomb';
+      else if (dump && this.bombs > 0) prompt = this.dumpInReach() ? `Press ${input.usingGamepad ? 'RB' : input.keyboardPlayer === 2 ? 'Numpad 5' : 'Q'} to plant a bomb here, then run!` : 'Get closer to the ammo dump to plant a bomb';
       else if (dump) prompt = 'No bombs left: wreck the airbase jets for a supply drop';
-      else if (this.time < 16) prompt = 'Follow the golden beams, or climb a lookout tower (ladder on the south side) to scout. Hold E to knock trees flat with the jam gun';
+      else if (this.time < 16) prompt = `Follow the golden beams, or climb a lookout tower (ladder on the south side) to scout. Hold ${input.usingGamepad ? 'LT' : input.keyboardPlayer === 2 ? 'Numpad 1' : 'E'} to knock trees flat with the jam gun`;
     }
     const standing = this.squad.standing;
     const status = [`Squad ${standing} / ${this.squad.list.length}${this.squad.holding ? ' (HOLDING)' : ''}  ·  Trees felled ${this.forest.fallen}`];
@@ -1248,7 +1253,7 @@ export class JungleGame {
       airSupport: null,
       tanker: null,
       siege: null,
-      prison: this.prisonHUD(input.usingGamepad),
+      prison: this.prisonHUD(input),
       driveStyle: this.settings.driveStyle,
       mouseCaptureHint: !input.usingGamepad && !input.pointerLocked && input.pointerLockAvailable,
       soundLocked: this.sound.locked && (this.settings.sfxVolume > 0 || this.settings.musicVolume > 0),

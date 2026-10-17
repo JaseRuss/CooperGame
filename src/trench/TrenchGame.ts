@@ -89,6 +89,11 @@ const CONTROLS =
   '<span><b>Fire</b> RT · click</span><span><b>Climb onto / off the fire step, use the big gun, the machine gun or a ladder</b> A · G</span>' +
   '<span><b>Sniper scope</b> (on the fire step, with a sniper rifle) B · V</span><span><b>Gas mask on / off</b> X</span>' +
   '<span><b>Throw a grenade</b> LB · F · right click</span><span><b>Creep</b> RB · Shift</span><span><b>Camera</b> Y · C</span>';
+const CONTROLS_P2 =
+  '<span><b>Move</b> arrow keys</span><span><b>Aim</b> mouse in your view · numpad 4/6 and 8/2</span>' +
+  '<span><b>Fire</b> numpad 0</span><span><b>Use / climb / leave weapons</b> numpad decimal</span>' +
+  '<span><b>Sniper scope</b> numpad divide</span><span><b>Gas mask</b> numpad 7</span>' +
+  '<span><b>Grenade</b> numpad 3</span><span><b>Camera</b> numpad 9 · <b>Pause / map</b> numpad enter</span>';
 
 const NO_MAP: MapView = {
   playerX: 0,
@@ -391,8 +396,8 @@ export class TrenchGame {
     this.addPickup('grenades', new THREE.Vector3(GUN.x - 3.5, 0, GUN.z + 3));
 
     this.front = this.makeFront();
-    this.hud.setOnFoot(CONTROLS);
-    this.hud2.setOnFoot(CONTROLS);
+    this.hud.setOnFoot(CONTROLS, undefined, CONTROLS_P2);
+    this.hud2.setOnFoot(CONTROLS_P2);
     this.hud.setCoopLayout(!!this.player2);
     this.hud2.setActive(!!this.player2);
     this.hud.setSettings(this.settings, (s) => {
@@ -409,7 +414,7 @@ export class TrenchGame {
     this.ready = true;
     this.sound.music.start();
     this.clock.start();
-    this.hud.showBanner('TRENCH JUNGLE', 'Start at the big gun: walk up to it and press A (G on the keyboard) to fire a few shells into their trench');
+    this.hud.showBanner('TRENCH JUNGLE', 'Start at the big gun: walk up and press A / G / numpad decimal to fire a few shells into their trench');
     if (import.meta.env.DEV) (window as unknown as { trench: TrenchGame }).trench = this;
     requestAnimationFrame(this.animate);
   }
@@ -988,7 +993,7 @@ export class TrenchGame {
       this.lewis = Math.max(this.lewis, 97);
       if (this.hasSniper) this.sniper = Math.max(this.sniper, 10);
       if (!this.hasMask) this.hasMask = true;
-      this.hud.showBanner('STOCKED UP!', 'Rifle rounds, a Lewis gun and a full bag of grenades. Now go to a ladder and press A (G) to blow the whistle');
+      this.hud.showBanner('STOCKED UP!', 'Rifle rounds, a Lewis gun and a full bag of grenades. Now go to a ladder and press A / G / numpad decimal to blow the whistle');
       this.sound.play('uiConfirm', { volume: 0.8 });
     }
   }
@@ -1041,7 +1046,7 @@ export class TrenchGame {
       this.manning = 'gun';
       this.gunOwner = this.player;
       this.scoped = false;
-      this.hud.showCallout('AIM WITH THE STICK OR MOUSE · FIRE WITH RT OR CLICK · A (G) TO LEAVE', '#ffd24a');
+    this.hud.showCallout('AIM WITH THE STICK, MOUSE OR NUMPAD · FIRE WITH RT, CLICK OR NUMPAD 0 · A / G / NUMPAD DECIMAL TO LEAVE', '#ffd24a');
       return;
     }
     const zone = zoneOf(p.x, p.z);
@@ -1097,7 +1102,7 @@ export class TrenchGame {
     }
     const p = this.player.position;
     if (!this.hasSniper) this.hud.showCallout('NO SNIPER RIFLE YET: THERE IS ONE ON A RACK ALONG THE FIRE STEP, LEFT OF THE MIDDLE', '#ffd24a');
-    else if (!onStep(p.x, p.z, p.y)) this.hud.showCallout('GET UP ON THE FIRE STEP FIRST (A / G) TO USE THE SCOPE', '#ffd24a');
+    else if (!onStep(p.x, p.z, p.y)) this.hud.showCallout('GET UP ON THE FIRE STEP FIRST (A / G / NUMPAD DECIMAL) TO USE THE SCOPE', '#ffd24a');
     else if (this.sniper <= 0) this.hud.showCallout('OUT OF SNIPER ROUNDS', '#ff8a7a');
     else this.scoped = true;
   }
@@ -1165,7 +1170,7 @@ export class TrenchGame {
       this.gas.release();
       this.nextGas = this.phaseTime + GAS_EVERY;
       this.gasWarned = false;
-      this.hud.showBanner('GAS! GAS! GAS!', this.hasMask ? 'Press X to put your gas mask on, and keep it on until the gas has gone' : "Find a gas mask! Fallen soldiers have them. Don't breathe it in");
+      this.hud.showBanner('GAS! GAS! GAS!', this.hasMask ? 'Press X / numpad 7 to put your gas mask on, and keep it on until the gas has gone' : "Find a gas mask! Fallen soldiers have them. Don't breathe it in");
       this.sound.play('clang', { volume: 0.8, rate: 0.8 });
     }
     this.gas.update(dt);
@@ -1270,7 +1275,7 @@ export class TrenchGame {
         this.phaseTime = 0;
       }
       this.nextGas = this.phaseTime + GAS_FIRST;
-      this.hud.showBanner('THE FRONT LINE', 'Go right up to the parapet and press A (G) to climb the fire step. Take a few shots, then get down before they get you. Look out for their officers: red-banded caps');
+      this.hud.showBanner('THE FRONT LINE', 'Go right up to the parapet and press A / G / numpad decimal to climb the fire step. Take a few shots, then get down before they get you. Look out for their officers: red-banded caps');
     }
 
     // The player: aiming the gun, behind the machine gun, scoped, or on his feet.
@@ -1464,15 +1469,18 @@ export class TrenchGame {
     ];
   }
 
-  private prompt(usingGamepad: boolean): string | null {
+  private prompt(input: InputState): string | null {
     const p = this.player.position;
-    const a = usingGamepad ? 'A' : 'G';
+    const keyboardPlayer2 = this.player === this.player2 && this.settings.player2Controller === -1;
+    const a = input.usingGamepad ? 'A' : keyboardPlayer2 ? 'Numpad Decimal' : 'G';
+    const fire = input.usingGamepad ? 'RT' : keyboardPlayer2 ? 'Numpad 0' : 'click';
+    const scope = input.usingGamepad ? 'B' : keyboardPlayer2 ? 'Numpad Divide' : 'V';
     if (this.phase === 'won') return null;
     if (this.player.downFor > 0) return `Hit! Waking up at the aid post in ${Math.ceil(this.player.downFor)}…`;
-    if (this.manning === 'gun') return `Aim the gun (the red ring is where it lands) · ${usingGamepad ? 'RT' : 'click'} to fire · ${a} to leave · ${this.gunShells} shells`;
+    if (this.manning === 'gun') return `Aim the gun (the red ring is where it lands) · ${fire} to fire · ${a} to leave · ${this.gunShells} shells`;
     if (this.manning === 'mg') return `Machine gun: ${this.mgBelt} rounds · ${a} to leave`;
-    if (this.scoped) return `Scope: aim and fire · ${usingGamepad ? 'B' : 'V'} to put it down · ${this.sniper} rounds`;
-    if (this.gas.at(p.z) > 0.2 && !this.maskOn) return this.hasMask ? 'GAS! Press X for your gas mask!' : 'GAS! You have no mask: get out of it!';
+    if (this.scoped) return `Scope: aim and fire · ${scope} to put it down · ${this.sniper} rounds`;
+    if (this.gas.at(p.z) > 0.2 && !this.maskOn) return this.hasMask ? `GAS! Press ${keyboardPlayer2 ? 'Numpad 7' : 'X'} for your gas mask!` : 'GAS! You have no mask: get out of it!';
     const zone = zoneOf(p.x, p.z);
     const breech = GUN.clone().add(new THREE.Vector3(Math.sin(this.gunYaw) * 1.6, 0, Math.cos(this.gunYaw) * 1.6));
     if (this.gunShells > 0 && Math.hypot(p.x - breech.x, p.z - breech.z) < 3) return `Press ${a} to fire the big gun`;
@@ -1484,7 +1492,7 @@ export class TrenchGame {
       if (this.phase === 'assault') return `Press ${a} to go over the top`;
       return this.resupplied ? `Press ${a} to blow the whistle: everyone goes over the top!` : 'A ladder: stock up at the ammo dump before you go over';
     }
-    if (step) return this.hasSniper ? `On the fire step: ${usingGamepad ? 'B' : 'V'} for the sniper scope, ${a} to get down` : `On the fire step: ${a} to get down`;
+    if (step) return this.hasSniper ? `On the fire step: ${scope} for the sniper scope, ${a} to get down` : `On the fire step: ${a} to get down`;
     if (p.z < STEP_Z + 2) return `Press ${a} to climb onto the fire step`;
     return null;
   }
@@ -1497,13 +1505,13 @@ export class TrenchGame {
     return `RIFLE · ${this.rifle}`;
   }
 
-  private trenchHUD(usingGamepad: boolean): PrisonHUD {
+  private trenchHUD(input: InputState): PrisonHUD {
     const friends = this.troops.friends().filter((m) => m.t.active).length;
     const foes = this.troops.enemies().filter((m) => m.t.active).length;
     const k = (key: string, what: string) => `<span class="key">${key}</span>${what}`;
     const status = [
       `Rifle ${this.rifle} · Sniper ${this.hasSniper ? this.sniper : '—'} · Lewis gun ${this.lewis || '—'}`,
-      `Gas mask: ${this.hasMask ? (this.maskOn ? 'ON' : 'off (X)') : 'none'}`,
+      `Gas mask: ${this.hasMask ? (this.maskOn ? 'ON' : `off (${input.keyboardPlayer === 2 && !input.usingGamepad ? 'Numpad 7' : 'X'})`) : 'none'}`,
       `Ours left ${friends} / ${OUR_LINE + OUR_RESERVE} · Theirs left ${foes} / ${ENEMY_MEN}`,
       'No healing here: hit too often and you wake at the aid post',
     ];
@@ -1511,7 +1519,7 @@ export class TrenchGame {
     return {
       title: TITLE,
       objectives: this.objectives(),
-      prompt: this.prompt(usingGamepad),
+      prompt: this.prompt(input),
       downFor: this.player.downFor,
       jam: 0,
       onRaft: false,
@@ -1524,7 +1532,9 @@ export class TrenchGame {
         ready: this.player.downFor > 0 ? 'HIT' : this.maskOn ? 'MASK ON' : 'NO HEALING',
         mode: this.manning === 'gun' ? 'At the big gun' : this.manning === 'mg' ? 'On the machine gun' : onStep(this.player.position.x, this.player.position.z, this.player.position.y) ? 'On the fire step' : 'On foot',
         keysPad: `${k('LS', 'move')}${k('RS', 'aim')}${k('RT', 'fire')}${k('A', 'step · use')}${k('B', 'scope')}<br>${k('X', 'gas mask')}${k('LB', 'grenade')}${k('Y', 'camera')}${k('Start', 'pause')}`,
-        keysKb: `${k('WASD', 'move')}${k('Mouse', 'aim')}${k('Click', 'fire')}${k('G', 'step · use')}${k('V', 'scope')}<br>${k('X', 'gas mask')}${k('F', 'grenade')}${k('C', 'camera')}${k('M', 'pause')}`,
+      keysKb: input.keyboardPlayer === 2
+        ? `${k('Arrows', 'move')}${k('Num 4/6/8/2', 'aim')}${k('Num 0', 'fire')}${k('Num .', 'step · use')}<br>${k('Num /', 'scope')}${k('Num 7', 'gas mask')}${k('Num 3', 'grenade')}${k('Num 9', 'camera')}${k('Num ↵', 'pause')}`
+        : `${k('WASD', 'move')}${k('Mouse', 'aim')}${k('Click', 'fire')}${k('G', 'step · use')}${k('V', 'scope')}<br>${k('X', 'gas mask')}${k('F', 'grenade')}${k('C', 'camera')}${k('M', 'pause')}`,
       },
     };
   }
@@ -1574,7 +1584,7 @@ export class TrenchGame {
       airSupport: null,
       tanker: null,
       siege: null,
-      prison: this.trenchHUD(input.usingGamepad),
+      prison: this.trenchHUD(input),
       driveStyle: this.settings.driveStyle,
       mouseCaptureHint: !input.usingGamepad && !input.pointerLocked && input.pointerLockAvailable,
       soundLocked: this.sound.locked && (this.settings.sfxVolume > 0 || this.settings.musicVolume > 0),

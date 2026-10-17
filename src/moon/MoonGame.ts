@@ -51,6 +51,11 @@ const CONTROLS =
   '<span><b>In the air</b> W / S tip the nose, A / D spin</span><span><b>Handbrake</b> (for slides) RB · Shift</span>' +
   '<span><b>Camera</b> Y · C</span><span><b>Back to the main base</b> Back · R</span>' +
   '<span><b>Load up</b> drive into an army\'s supply bay at the main base</span><span><b>Drop off</b> drive into the glowing ring at their camp</span>';
+const CONTROLS_P2 =
+  '<span><b>Drive</b> arrow keys · <b>Aim</b> mouse in your view or numpad 4/6 and 8/2</span>' +
+  '<span><b>Jump</b> numpad 0 · <b>Handbrake</b> Shift · <b>In the air</b> up/down tip the nose, left/right spin</span>' +
+  '<span><b>Camera</b> numpad 9 · <b>Return to main base</b> numpad decimal · <b>Pause / map</b> numpad enter</span>' +
+  '<span><b>Load up</b> drive into an army supply bay · <b>Drop off</b> drive into the glowing ring at camp</span>';
 
 const NO_MAP: MapView = {
   playerX: 0,
@@ -243,8 +248,8 @@ export class MoonGame {
         '<span><i style="background:#b09a6a"></i>Dirt roads to each camp</span><span><i style="background:#ffffff"></i>You, in the buggy</span>' +
         '<span><i style="background:#8a4ad8"></i>Something odd to find (later…)</span><span><i style="background:#ffd24a"></i>Found it!</span>' +
         '<span><i style="background:#f4a6c0"></i>Maze walls</span><span><i style="background:#15121c"></i>Not explored yet</span>',
-    });
-    this.hud2.setOnFoot(CONTROLS, { legend: '<span><i style="background:#eeebe3"></i>Main base (load up here)</span><span><i style="background:#b8392e"></i>Army camps: deliver crates to build</span><span><i style="background:#ffffff"></i>Your buggy</span>' });
+    }, CONTROLS_P2);
+    this.hud2.setOnFoot(CONTROLS_P2, { legend: '<span><i style="background:#eeebe3"></i>Main base (load up here)</span><span><i style="background:#b8392e"></i>Army camps: deliver crates to build</span><span><i style="background:#ffffff"></i>Your buggy</span>' });
     this.hud.setCoopLayout(!!this.buggy2);
     this.hud2.setActive(!!this.buggy2);
     this.hud.setSettings(this.settings, (s) => {
@@ -914,7 +919,7 @@ export class MoonGame {
     return this.waypointTo(new THREE.Vector3(bay.faction.bay.x, 5, bay.faction.bay.z), `${bay.faction.name.toUpperCase()} SUPPLIES ${d} m`);
   }
 
-  private prompt(usingGamepad: boolean): string | null {
+  private prompt(input: InputState): string | null {
     const b = this.buggy;
     const p = b.pos;
     if (this.building) return null;
@@ -931,13 +936,13 @@ export class MoonGame {
     }
     if (this.wonders.inCannon) return 'FUSE LIT! Hold on to your helmet…';
     if (this.terrain.weirdOpen && !this.inValley && b.pos.z > -560) return 'Follow the new road north, over the mountains to the Weird Side';
-    if (this.time < 20 && b.cargo === 0 && this.unbuilt.length > 0) return `Drive into a coloured supply bay to load that army's crates. ${usingGamepad ? 'A' : 'Space'} jumps: try it!`;
+    if (this.time < 20 && b.cargo === 0 && this.unbuilt.length > 0) return `Drive into a coloured supply bay to load that army's crates. ${input.usingGamepad ? 'A' : input.keyboardPlayer === 2 ? 'Numpad 0' : 'Space'} jumps: try it!`;
     if (b.cargo === 0 && this.unbuilt.length > 0) return 'Load up at a supply bay at the main base, then follow the beam to that army\'s camp';
     if (b.airTime > 2.2) return 'WHEEEE!';
     return null;
   }
 
-  private prisonHUD(usingGamepad: boolean): PrisonHUD {
+  private prisonHUD(input: InputState): PrisonHUD {
     const b = this.buggy;
     const speed = Math.hypot(b.vel.x, b.vel.z);
     const ground = this.terrain.heightAt(b.pos.x, b.pos.z);
@@ -958,7 +963,7 @@ export class MoonGame {
             label: c.built ? `${c.faction.name} Moon base built` : `${c.faction.name} camp: ${c.delivered} / ${CRATES_NEEDED} crates`,
             done: c.built,
           })),
-      prompt: this.prompt(usingGamepad),
+      prompt: this.prompt(input),
       downFor: 0,
       jam: 0,
       stealth: null,
@@ -978,7 +983,9 @@ export class MoonGame {
         ready: b.cargo === 0 ? 'EMPTY' : `${b.cargo} / ${MAX_CRATES} CRATES`,
         mode: 'Moon gravity · 1/6 g',
         keysPad: `${k('LS', 'drive')}${k('A', 'jump')}${k('RB', 'handbrake')}${k('Y', 'camera')}${k('Start', 'pause · options')}${k('Back', 'main base')}`,
-        keysKb: `${k('WASD', 'drive')}${k('Space', 'jump')}${k('Shift', 'handbrake')}${k('C', 'camera')}${k('M', 'pause · options')}${k('R', 'main base')}`,
+        keysKb: this.buggy === this.buggy2 && this.settings.player2Controller === -1
+          ? `${k('Arrows', 'drive')}${k('Num 4/6/8/2', 'aim')}${k('Num 0', 'jump')}${k('Shift', 'handbrake')}${k('Num 9', 'camera')}${k('Num ↵', 'pause · map')}${k('Num .', 'main base')}`
+          : `${k('WASD', 'drive')}${k('Space', 'jump')}${k('Shift', 'handbrake')}${k('C', 'camera')}${k('M', 'pause · options')}${k('R', 'main base')}`,
       },
     };
   }
@@ -1022,7 +1029,7 @@ export class MoonGame {
       airSupport: null,
       tanker: null,
       siege: null,
-      prison: this.prisonHUD(input.usingGamepad),
+      prison: this.prisonHUD(input),
       driveStyle: this.settings.driveStyle,
       mouseCaptureHint: !input.usingGamepad && !input.pointerLocked && input.pointerLockAvailable,
       soundLocked: this.sound.locked && (this.settings.sfxVolume > 0 || this.settings.musicVolume > 0),

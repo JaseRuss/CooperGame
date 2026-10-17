@@ -1,4 +1,6 @@
 export interface InputState {
+  /** Which local keyboard layout produced this state. */
+  keyboardPlayer: 1 | 2;
   /** -1 (reverse) .. 1 (forward) */
   throttle: number;
   /** -1 (turn left) .. 1 (turn right) */
@@ -376,6 +378,7 @@ export class InputManager {
     }
 
     return {
+      keyboardPlayer,
       throttle,
       steer,
       moveX,
