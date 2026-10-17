@@ -1211,6 +1211,22 @@ export class PrisonGame {
         else if (!this.climbing && this.stage === 'out' && !this.player.isDown && this.gear.complete && Math.hypot(p.x - layout.launch.x, p.z - layout.launch.z) < LAUNCH_REACH) this.startRaft();
       });
     }
+    // Keep an early fence escape recoverable even if a future collider/layout change opens a
+    // route around the locked gate. Once the gate is open, the beach route is intentional.
+    if (!this.seaGate.opened) {
+      const outsideCompound = (soldier: PlayerSoldier) => {
+        const at = soldier.position;
+        return at.x < -103 || at.x > 103 || at.z < -48 || at.z > 71;
+      };
+      if (outsideCompound(this.player)) {
+        this.player.teleport(this.checkpoint.x, this.checkpoint.z, this.checkpoint.yaw, this.checkpoint.y ?? 0);
+        this.hud.showCallout('THE SEA GATE IS STILL LOCKED · BACK INSIDE', '#ffd24a');
+      }
+      if (this.player2 && outsideCompound(this.player2)) {
+        this.player2.teleport(this.checkpoint.x + 1.5, this.checkpoint.z, this.checkpoint.yaw, this.checkpoint.y ?? 0);
+        this.hud2.showCallout('THE SEA GATE IS STILL LOCKED · BACK INSIDE', '#ffd24a');
+      }
+    }
     const anyoneOnRoof = layout.onRoof(this.player.position.x, this.player.position.y, this.player.position.z)
       || (!!this.player2 && layout.onRoof(this.player2.position.x, this.player2.position.y, this.player2.position.z));
     if (anyoneOnRoof) this.updateSearchlights(dt);
