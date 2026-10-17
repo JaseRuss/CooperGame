@@ -108,15 +108,15 @@ const LAMP_LIGHTS = 4;
 /** What the pause screen's first page shows on foot, instead of the map. */
 const CONTROLS =
   '<span><b>Move</b> left stick · W A S D</span><span><b>Aim</b> right stick · mouse</span>' +
-  '<span><b>Creep</b> (guards see half as far; lie flat on the raft) RB · Shift</span><span><b>Fire</b> RT · click (a shot is heard from far off)</span>' +
+  '<span><b>Creep</b> (guards see half as far; lie flat on the raft) RB · Left Shift</span><span><b>Fire</b> RT · click (a shot is heard from far off)</span>' +
   '<span><b>Jam riot cannon</b> (quiet) hold LT · hold E</span><span><b>Squad: follow me / hold here</b> X · X</span>' +
   '<span><b>Camera</b> Y · C</span><span><b>Back to checkpoint</b> Back · R</span>' +
   '<span><b>On the raft</b> W paddle · S back water · A D steer · mouse swings the camera</span>';
 const CONTROLS_P2 =
   '<span><b>Move</b> arrow keys · <b>Aim</b> mouse in your view or numpad 4/6 and 8/2</span>' +
-  '<span><b>Fire</b> numpad 0 · <b>Creep</b> Shift · <b>Jam gun</b> hold numpad 1 · <b>Squad</b> numpad 7</span>' +
+  '<span><b>Fire</b> numpad 0 · <b>Creep</b> Right Shift · <b>Jam gun</b> hold numpad 1 · <b>Squad</b> numpad 7</span>' +
   '<span><b>Camera</b> numpad 9 · <b>Back to checkpoint</b> numpad decimal · <b>Pause / map</b> numpad enter</span>' +
-  '<span><b>On the raft</b> Up paddle · Down back water · Left/right steer · Shift lie flat</span>';
+  '<span><b>On the raft</b> Up paddle · Down back water · Left/right steer · Right Shift lie flat</span>';
 
 /** Nothing on the map: the HUD needs one, but the prison has no minimap. */
 const NO_MAP: MapView = {
@@ -1408,15 +1408,17 @@ export class PrisonGame {
       if (this.raftPhase === 'inflating') prompt = 'Pumping up the raft…';
       else if (this.raftPhase === 'sinking') prompt = 'The raft is going down…';
       else if (this.leaking) {
-        const pump = input.usingGamepad ? 'A' : input.keyboardPlayer === 2 ? 'Numpad 0' : 'Space / click';
+        const pump = input.keyboardEnabled ? input.keyboardPlayer === 2 ? 'Numpad 0' : 'Space / click' : 'A';
         prompt = this.air <= 0 ? `FLAT! Mash ${pump} to pump!` : `The raft is losing air! MASH ${pump} to pump it up!`;
       }
-      else if (r?.hunting) prompt = 'They\'ve found you! Head for a white mist bank and lie flat (Shift)';
-      else if (r?.lit) prompt = 'You\'re in a searchlight! Paddle out of it, or lie flat (Shift)';
+      else if (r?.hunting) prompt = `They've found you! Head for a white mist bank and lie flat (${input.keyboardEnabled && input.keyboardPlayer === 2 ? 'Right Shift' : 'Shift'})`;
+      else if (r?.lit) prompt = `You're in a searchlight! Paddle out of it, or lie flat (${input.keyboardEnabled && input.keyboardPlayer === 2 ? 'Right Shift' : 'Shift'})`;
       else if (this.raft.atEdge) prompt = 'The current is pushing you back: keep to the channel';
-      else if (this.raftTimer < 14) prompt = input.keyboardPlayer === 2 && !input.usingGamepad
-        ? 'Up paddle · Down back water · Left/right steer · mouse swings the camera · Shift lie flat'
-        : 'W paddle · A D steer · mouse swings the camera · Shift lie flat';
+      else if (this.raftTimer < 14) prompt = input.keyboardEnabled && input.keyboardPlayer === 2
+        ? 'Up paddle · Down back water · Left/right steer · mouse swings the camera · Right Shift lie flat'
+        : input.keyboardEnabled
+          ? 'W paddle · A D steer · mouse swings the camera · Shift lie flat'
+          : 'Left stick paddle / steer · RB lie flat';
     } else if (this.stage === 'roof' && this.spotted > 0) {
       prompt = "You're in the light! Get out of it!";
     } else if (down > 0) {
@@ -1576,6 +1578,8 @@ export class PrisonGame {
       ride: null,
       cameraMode: this.stage === 'raft' ? 'third' : this.cam.mode,
       usingGamepad: input.usingGamepad,
+      keyboardPlayer: input.keyboardPlayer,
+      keyboardEnabled: input.keyboardEnabled,
       insideBase: null,
       map: NO_MAP,
       aimScreen: this.hud.paused || this.ending !== null || this.stage === 'raft' || this.intro !== null ? null : { x: viewport.width / 2, y: viewport.height / 2 },
@@ -1605,7 +1609,7 @@ export class PrisonGame {
       siege: null,
       prison: this.prisonHUD(input),
       driveStyle: this.settings.driveStyle,
-      mouseCaptureHint: !input.usingGamepad && !input.pointerLocked && input.pointerLockAvailable,
+      mouseCaptureHint: input.keyboardEnabled && !input.pointerLocked && input.pointerLockAvailable,
       soundLocked: this.sound.locked && (this.settings.sfxVolume > 0 || this.settings.musicVolume > 0),
     };
   }

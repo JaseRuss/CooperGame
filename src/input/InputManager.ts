@@ -1,6 +1,8 @@
 export interface InputState {
   /** Which local keyboard layout produced this state. */
   keyboardPlayer: 1 | 2;
+  /** True when this player is assigned to keyboard controls, even on an idle frame. */
+  keyboardEnabled: boolean;
   /** -1 (reverse) .. 1 (forward) */
   throttle: number;
   /** -1 (turn left) .. 1 (turn right) */
@@ -280,7 +282,11 @@ export class InputManager {
     let megaJamHeld = hasKey(keyboardPlayer === 1 ? 'KeyX' : 'Numpad7');
     let useHeld = hasKey(keyboardPlayer === 1 ? 'KeyG' : 'NumpadDecimal');
     let scopeHeld = hasKey(keyboardPlayer === 1 ? 'KeyV' : 'NumpadDivide');
-    let sneak = hasKey('ShiftLeft') || hasKey('ShiftRight') || hasKey('ControlLeft') || hasKey('ControlRight');
+    let sneak = keyboardPlayer === 2
+      ? hasKey('ShiftRight') || hasKey('ControlRight')
+      : otherKeyboardAssigned
+        ? hasKey('ShiftLeft') || hasKey('ControlLeft')
+        : hasKey('ShiftLeft') || hasKey('ShiftRight') || hasKey('ControlLeft') || hasKey('ControlRight');
     const k = (...codes: string[]) => codes.some(hasKey);
     // While a name is being typed, letters, Space and Backspace are text, not menu moves.
     const typing = this.textEntry;
@@ -379,6 +385,7 @@ export class InputManager {
 
     return {
       keyboardPlayer,
+      keyboardEnabled,
       throttle,
       steer,
       moveX,

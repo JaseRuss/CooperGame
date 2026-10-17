@@ -88,12 +88,12 @@ const CONTROLS =
   '<span><b>Move</b> left stick · W A S D</span><span><b>Aim</b> right stick · mouse</span>' +
   '<span><b>Fire</b> RT · click</span><span><b>Climb onto / off the fire step, use the big gun, the machine gun or a ladder</b> A · G</span>' +
   '<span><b>Sniper scope</b> (on the fire step, with a sniper rifle) B · V</span><span><b>Gas mask on / off</b> X</span>' +
-  '<span><b>Throw a grenade</b> LB · F · right click</span><span><b>Creep</b> RB · Shift</span><span><b>Camera</b> Y · C</span>';
+  '<span><b>Throw a grenade</b> LB · F · right click</span><span><b>Creep</b> RB · Left Shift</span><span><b>Camera</b> Y · C</span>';
 const CONTROLS_P2 =
   '<span><b>Move</b> arrow keys</span><span><b>Aim</b> mouse in your view · numpad 4/6 and 8/2</span>' +
   '<span><b>Fire</b> numpad 0</span><span><b>Use / climb / leave weapons</b> numpad decimal</span>' +
   '<span><b>Sniper scope</b> numpad divide</span><span><b>Gas mask</b> numpad 7</span>' +
-  '<span><b>Grenade</b> numpad 3</span><span><b>Camera</b> numpad 9 · <b>Pause / map</b> numpad enter</span>';
+  '<span><b>Grenade</b> numpad 3</span><span><b>Creep</b> Right Shift · <b>Camera</b> numpad 9 · <b>Pause / map</b> numpad enter</span>';
 
 const NO_MAP: MapView = {
   playerX: 0,
@@ -1472,15 +1472,15 @@ export class TrenchGame {
   private prompt(input: InputState): string | null {
     const p = this.player.position;
     const keyboardPlayer2 = this.player === this.player2 && this.settings.player2Controller === -1;
-    const a = input.usingGamepad ? 'A' : keyboardPlayer2 ? 'Numpad Decimal' : 'G';
-    const fire = input.usingGamepad ? 'RT' : keyboardPlayer2 ? 'Numpad 0' : 'click';
-    const scope = input.usingGamepad ? 'B' : keyboardPlayer2 ? 'Numpad Divide' : 'V';
+    const a = input.keyboardEnabled ? keyboardPlayer2 ? 'Numpad Decimal' : 'G' : 'A';
+    const fire = input.keyboardEnabled ? keyboardPlayer2 ? 'Numpad 0' : 'click' : 'RT';
+    const scope = input.keyboardEnabled ? keyboardPlayer2 ? 'Numpad Divide' : 'V' : 'B';
     if (this.phase === 'won') return null;
     if (this.player.downFor > 0) return `Hit! Waking up at the aid post in ${Math.ceil(this.player.downFor)}…`;
     if (this.manning === 'gun') return `Aim the gun (the red ring is where it lands) · ${fire} to fire · ${a} to leave · ${this.gunShells} shells`;
     if (this.manning === 'mg') return `Machine gun: ${this.mgBelt} rounds · ${a} to leave`;
     if (this.scoped) return `Scope: aim and fire · ${scope} to put it down · ${this.sniper} rounds`;
-    if (this.gas.at(p.z) > 0.2 && !this.maskOn) return this.hasMask ? `GAS! Press ${keyboardPlayer2 ? 'Numpad 7' : 'X'} for your gas mask!` : 'GAS! You have no mask: get out of it!';
+    if (this.gas.at(p.z) > 0.2 && !this.maskOn) return this.hasMask ? `GAS! Press ${keyboardPlayer2 && input.keyboardEnabled ? 'Numpad 7' : 'X'} for your gas mask!` : 'GAS! You have no mask: get out of it!';
     const zone = zoneOf(p.x, p.z);
     const breech = GUN.clone().add(new THREE.Vector3(Math.sin(this.gunYaw) * 1.6, 0, Math.cos(this.gunYaw) * 1.6));
     if (this.gunShells > 0 && Math.hypot(p.x - breech.x, p.z - breech.z) < 3) return `Press ${a} to fire the big gun`;
@@ -1511,7 +1511,7 @@ export class TrenchGame {
     const k = (key: string, what: string) => `<span class="key">${key}</span>${what}`;
     const status = [
       `Rifle ${this.rifle} · Sniper ${this.hasSniper ? this.sniper : '—'} · Lewis gun ${this.lewis || '—'}`,
-      `Gas mask: ${this.hasMask ? (this.maskOn ? 'ON' : `off (${input.keyboardPlayer === 2 && !input.usingGamepad ? 'Numpad 7' : 'X'})`) : 'none'}`,
+      `Gas mask: ${this.hasMask ? (this.maskOn ? 'ON' : `off (${input.keyboardEnabled && input.keyboardPlayer === 2 ? 'Numpad 7' : 'X'})`) : 'none'}`,
       `Ours left ${friends} / ${OUR_LINE + OUR_RESERVE} · Theirs left ${foes} / ${ENEMY_MEN}`,
       'No healing here: hit too often and you wake at the aid post',
     ];
@@ -1532,8 +1532,8 @@ export class TrenchGame {
         ready: this.player.downFor > 0 ? 'HIT' : this.maskOn ? 'MASK ON' : 'NO HEALING',
         mode: this.manning === 'gun' ? 'At the big gun' : this.manning === 'mg' ? 'On the machine gun' : onStep(this.player.position.x, this.player.position.z, this.player.position.y) ? 'On the fire step' : 'On foot',
         keysPad: `${k('LS', 'move')}${k('RS', 'aim')}${k('RT', 'fire')}${k('A', 'step · use')}${k('B', 'scope')}<br>${k('X', 'gas mask')}${k('LB', 'grenade')}${k('Y', 'camera')}${k('Start', 'pause')}`,
-      keysKb: input.keyboardPlayer === 2
-        ? `${k('Arrows', 'move')}${k('Num 4/6/8/2', 'aim')}${k('Num 0', 'fire')}${k('Num .', 'step · use')}<br>${k('Num /', 'scope')}${k('Num 7', 'gas mask')}${k('Num 3', 'grenade')}${k('Num 9', 'camera')}${k('Num ↵', 'pause')}`
+      keysKb: input.keyboardEnabled && input.keyboardPlayer === 2
+        ? `${k('Arrows', 'move')}${k('Num 4/6/8/2', 'aim')}${k('Num 0', 'fire')}${k('Num .', 'step · use')}<br>${k('Num /', 'scope')}${k('Num 7', 'gas mask')}${k('Num 3', 'grenade')}${k('Right Shift', 'creep')}${k('Num 9', 'camera')}${k('Num ↵', 'pause')}`
         : `${k('WASD', 'move')}${k('Mouse', 'aim')}${k('Click', 'fire')}${k('G', 'step · use')}${k('V', 'scope')}<br>${k('X', 'gas mask')}${k('F', 'grenade')}${k('C', 'camera')}${k('M', 'pause')}`,
       },
     };
@@ -1557,6 +1557,8 @@ export class TrenchGame {
       ride: null,
       cameraMode: this.cam.mode,
       usingGamepad: input.usingGamepad,
+      keyboardPlayer: input.keyboardPlayer,
+      keyboardEnabled: input.keyboardEnabled,
       insideBase: null,
       map: NO_MAP,
       aimScreen: this.hud.paused || this.scoped || this.manning === 'gun' ? null : { x: localWidth / 2, y: localHeight / 2 },
@@ -1586,7 +1588,7 @@ export class TrenchGame {
       siege: null,
       prison: this.trenchHUD(input),
       driveStyle: this.settings.driveStyle,
-      mouseCaptureHint: !input.usingGamepad && !input.pointerLocked && input.pointerLockAvailable,
+      mouseCaptureHint: input.keyboardEnabled && !input.pointerLocked && input.pointerLockAvailable,
       soundLocked: this.sound.locked && (this.settings.sfxVolume > 0 || this.settings.musicVolume > 0),
     };
   }
@@ -1618,7 +1620,6 @@ export class TrenchGame {
       this.renderer.render(this.scene, this.camera);
       return;
     }
-    this.hud.setCoopLayout(true);
     const vertical = this.settings.splitOrientation === 'vertical';
     const half = Math.floor((vertical ? w : h) / 2);
     const v1 = vertical ? { left: 0, top: 0, width: half, height: h } : { left: 0, top: 0, width: w, height: h - half };

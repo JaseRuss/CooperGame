@@ -48,12 +48,12 @@ const WEIRD_GATE = new THREE.Vector3(0, 12, -915);
 
 const CONTROLS =
   '<span><b>Drive</b> left stick · W A S D</span><span><b>Jump</b> (it\'s the Moon: you stay up for ages) A · RT · Space</span>' +
-  '<span><b>In the air</b> W / S tip the nose, A / D spin</span><span><b>Handbrake</b> (for slides) RB · Shift</span>' +
+  '<span><b>In the air</b> W / S tip the nose, A / D spin</span><span><b>Handbrake</b> (for slides) RB · Left Shift</span>' +
   '<span><b>Camera</b> Y · C</span><span><b>Back to the main base</b> Back · R</span>' +
   '<span><b>Load up</b> drive into an army\'s supply bay at the main base</span><span><b>Drop off</b> drive into the glowing ring at their camp</span>';
 const CONTROLS_P2 =
   '<span><b>Drive</b> arrow keys</span>' +
-  '<span><b>Jump</b> numpad 0 · <b>Handbrake</b> Shift · <b>In the air</b> up/down tip the nose, left/right spin</span>' +
+  '<span><b>Jump</b> numpad 0 · <b>Handbrake</b> Right Shift · <b>In the air</b> up/down tip the nose, left/right spin</span>' +
   '<span><b>Camera</b> numpad 9 · <b>Return to main base</b> numpad decimal · <b>Pause / map</b> numpad enter</span>' +
   '<span><b>Load up</b> drive into an army supply bay · <b>Drop off</b> drive into the glowing ring at camp</span>';
 
@@ -936,7 +936,7 @@ export class MoonGame {
     }
     if (this.wonders.inCannon) return 'FUSE LIT! Hold on to your helmet…';
     if (this.terrain.weirdOpen && !this.inValley && b.pos.z > -560) return 'Follow the new road north, over the mountains to the Weird Side';
-    if (this.time < 20 && b.cargo === 0 && this.unbuilt.length > 0) return `Drive into a coloured supply bay to load that army's crates. ${input.usingGamepad ? 'A' : input.keyboardPlayer === 2 ? 'Numpad 0' : 'Space'} jumps: try it!`;
+    if (this.time < 20 && b.cargo === 0 && this.unbuilt.length > 0) return `Drive into a coloured supply bay to load that army's crates. ${input.keyboardEnabled ? input.keyboardPlayer === 2 ? 'Numpad 0' : 'Space' : 'A'} jumps: try it!`;
     if (b.cargo === 0 && this.unbuilt.length > 0) return 'Load up at a supply bay at the main base, then follow the beam to that army\'s camp';
     if (b.airTime > 2.2) return 'WHEEEE!';
     return null;
@@ -984,7 +984,7 @@ export class MoonGame {
         mode: 'Moon gravity · 1/6 g',
         keysPad: `${k('LS', 'drive')}${k('A', 'jump')}${k('RB', 'handbrake')}${k('Y', 'camera')}${k('Start', 'pause · options')}${k('Back', 'main base')}`,
         keysKb: this.buggy === this.buggy2 && this.settings.player2Controller === -1
-          ? `${k('Arrows', 'drive')}${k('Num 4/6/8/2', 'aim')}${k('Num 0', 'jump')}${k('Shift', 'handbrake')}${k('Num 9', 'camera')}${k('Num ↵', 'pause · map')}${k('Num .', 'main base')}`
+          ? `${k('Arrows', 'drive')}${k('Num 0', 'jump')}${k('Right Shift', 'handbrake')}${k('Num 9', 'camera')}${k('Num ↵', 'pause · map')}${k('Num .', 'main base')}`
           : `${k('WASD', 'drive')}${k('Space', 'jump')}${k('Shift', 'handbrake')}${k('C', 'camera')}${k('M', 'pause · options')}${k('R', 'main base')}`,
       },
     };
@@ -1002,6 +1002,8 @@ export class MoonGame {
       ride: null,
       cameraMode: 'third',
       usingGamepad: input.usingGamepad,
+      keyboardPlayer: input.keyboardPlayer,
+      keyboardEnabled: input.keyboardEnabled,
       insideBase: null,
       map,
       aimScreen: null,
@@ -1031,7 +1033,7 @@ export class MoonGame {
       siege: null,
       prison: this.prisonHUD(input),
       driveStyle: this.settings.driveStyle,
-      mouseCaptureHint: !input.usingGamepad && !input.pointerLocked && input.pointerLockAvailable,
+      mouseCaptureHint: input.keyboardEnabled && !input.pointerLocked && input.pointerLockAvailable,
       soundLocked: this.sound.locked && (this.settings.sfxVolume > 0 || this.settings.musicVolume > 0),
     };
   }

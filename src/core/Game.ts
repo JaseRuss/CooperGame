@@ -3013,6 +3013,8 @@ export class Game {
           : null,
       cameraMode: targetRig.mode,
       usingGamepad: input.usingGamepad,
+      keyboardPlayer: input.keyboardPlayer,
+      keyboardEnabled: input.keyboardEnabled,
       insideBase: inside ? (isInsideBase(targetPlayer.position) ? nearestFriendlyBase(targetPlayer.position.x, targetPlayer.position.z).name : this.fortress.title) : null,
       map: this.mapView(targetPlayer),
       aimScreen: aim.screen,
@@ -3031,7 +3033,7 @@ export class Game {
       buddyRoster: this.settings.buddyNames,
       buddyOut: this.settings.buddyNames.map((_, i) => this.buddies.some((b) => b.crew === i)),
       driveStyle: this.settings.driveStyle,
-      mouseCaptureHint: !input.usingGamepad && !input.pointerLocked && input.pointerLockAvailable,
+      mouseCaptureHint: input.keyboardEnabled && !input.pointerLocked && input.pointerLockAvailable,
       soundLocked: this.sound.locked && (this.settings.sfxVolume > 0 || this.settings.musicVolume > 0),
       buddyMax: MAX_BUDDIES,
       cinematic,
@@ -3051,7 +3053,7 @@ export class Game {
             wave: this.siege.waveStatus(),
             garrison: this.garrisonHUD(),
             prompt: jailbreak
-              ? `${input.usingGamepad ? 'Y' : targetPlayer === this.player2 && this.settings.player2Controller === -1 ? 'Numpad 9' : 'C'}: get out and break the ${jailbreak.held} prisoners out on foot`
+              ? `${input.keyboardEnabled ? targetPlayer === this.player2 ? 'Numpad 9' : 'C' : 'Y'}: get out and break the ${jailbreak.held} prisoners out on foot`
               : null,
           }
         : null,

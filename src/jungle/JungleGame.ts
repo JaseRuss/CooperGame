@@ -105,14 +105,14 @@ const VICTORY_DELAY = 11;
 
 const CONTROLS =
   '<span><b>Move</b> left stick · W A S D</span><span><b>Aim</b> right stick · mouse</span>' +
-  '<span><b>Creep</b> (they see you from less far) RB · Shift</span><span><b>Rifle</b> RT · click</span>' +
+  '<span><b>Creep</b> (they see you from less far) RB · Left Shift</span><span><b>Rifle</b> RT · click</span>' +
   '<span><b>Jam gun</b> (knocks trees flat, sticks soldiers) hold LT · hold E</span>' +
   '<span><b>Grenade launcher</b> (4 shots, then a reload) LB · F · right click</span>' +
   '<span><b>Squad: hold here / follow me</b> X</span><span><b>Camera</b> Y · C</span><span><b>Back to checkpoint</b> Back · R</span>' +
   '<span><b>Plant a bomb</b> (close to an ammo dump; 7 second fuse) RB · Q</span>';
 const CONTROLS_P2 =
   '<span><b>Move</b> arrow keys · <b>Aim</b> mouse in your view or numpad 4/6 and 8/2</span>' +
-  '<span><b>Rifle</b> numpad 0 · <b>Creep</b> Shift · <b>Jam gun</b> hold numpad 1</span>' +
+  '<span><b>Rifle</b> numpad 0 · <b>Creep</b> Right Shift · <b>Jam gun</b> hold numpad 1</span>' +
   '<span><b>Grenade launcher</b> numpad 3 · <b>Plant a bomb</b> numpad 5 · <b>Squad</b> numpad 7</span>' +
   '<span><b>Camera</b> numpad 9 · <b>Pause / map</b> numpad enter · <b>Checkpoint</b> numpad decimal</span>';
 
@@ -982,6 +982,11 @@ export class JungleGame {
     if (this.player2 && input2) this.withPlayer2(() => {
       if (this.player.isDown) this.downTime2 += dt;
       if (input2.cameraTogglePressed) this.cam.toggle();
+      if (input2.megaJamPressed) {
+        const holding = this.squad.toggleHold();
+        this.hud.showCallout(holding ? 'SQUAD: HOLD HERE' : 'SQUAD: FOLLOW ME', holding ? '#ffd24a' : '#9be27a');
+        this.sound.play('uiChange', { volume: 0.5 });
+      }
       const p2 = this.player.position;
       if (this.climb) this.updateClimb(dt);
       else {
@@ -1181,9 +1186,9 @@ export class JungleGame {
       const l = this.lookouts.find((t) => Math.hypot(t.foot.x - p.x, t.foot.z - p.z) < 8);
       const dump = this.outposts.find((o) => o.dump.alive && Math.hypot(o.x - p.x, o.z - p.z) < 20);
       if (l) prompt = 'Walk to the foot of the ladder to climb the lookout';
-      else if (dump && this.bombs > 0) prompt = this.dumpInReach() ? `Press ${input.usingGamepad ? 'RB' : input.keyboardPlayer === 2 ? 'Numpad 5' : 'Q'} to plant a bomb here, then run!` : 'Get closer to the ammo dump to plant a bomb';
+      else if (dump && this.bombs > 0) prompt = this.dumpInReach() ? `Press ${input.keyboardEnabled ? input.keyboardPlayer === 2 ? 'Numpad 5' : 'Q' : 'RB'} to plant a bomb here, then run!` : 'Get closer to the ammo dump to plant a bomb';
       else if (dump) prompt = 'No bombs left: wreck the airbase jets for a supply drop';
-      else if (this.time < 16) prompt = `Follow the golden beams, or climb a lookout tower (ladder on the south side) to scout. Hold ${input.usingGamepad ? 'LT' : input.keyboardPlayer === 2 ? 'Numpad 1' : 'E'} to knock trees flat with the jam gun`;
+      else if (this.time < 16) prompt = `Follow the golden beams, or climb a lookout tower (ladder on the south side) to scout. Hold ${input.keyboardEnabled ? input.keyboardPlayer === 2 ? 'Numpad 1' : 'E' : 'LT'} to knock trees flat with the jam gun`;
     }
     const standing = this.squad.standing;
     const status = [`Squad ${standing} / ${this.squad.list.length}${this.squad.holding ? ' (HOLDING)' : ''}  ·  Trees felled ${this.forest.fallen}`];
@@ -1226,6 +1231,8 @@ export class JungleGame {
       ride: null,
       cameraMode: this.cam.mode,
       usingGamepad: input.usingGamepad,
+      keyboardPlayer: input.keyboardPlayer,
+      keyboardEnabled: input.keyboardEnabled,
       insideBase: null,
       map: this.player === this.player2 ? { ...this.mapView, playerX: position.x, playerZ: position.z, playerYaw: this.player.yaw } : this.mapView,
       aimScreen: this.hud.paused ? null : { x: localWidth / 2, y: localHeight / 2 },
@@ -1255,7 +1262,7 @@ export class JungleGame {
       siege: null,
       prison: this.prisonHUD(input),
       driveStyle: this.settings.driveStyle,
-      mouseCaptureHint: !input.usingGamepad && !input.pointerLocked && input.pointerLockAvailable,
+      mouseCaptureHint: input.keyboardEnabled && !input.pointerLocked && input.pointerLockAvailable,
       soundLocked: this.sound.locked && (this.settings.sfxVolume > 0 || this.settings.musicVolume > 0),
     };
   }

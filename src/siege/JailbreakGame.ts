@@ -54,12 +54,12 @@ const DONE_DELAY = 3.2;
 
 const CONTROLS =
   '<span><b>Move</b> left stick · W A S D</span><span><b>Aim</b> right stick · mouse</span>' +
-  '<span><b>Creep</b> (guards see half as far) RB · Shift</span><span><b>Fire</b> RT · click (a shot is heard from far off; right behind a jailer it is a quiet takedown)</span>' +
+  '<span><b>Creep</b> (guards see half as far) RB · Left Shift</span><span><b>Fire</b> RT · click (a shot is heard from far off; right behind a jailer it is a quiet takedown)</span>' +
   '<span><b>Jam riot cannon</b> (quiet) hold LT · hold E</span><span><b>Put on / take off the jailer disguise</b> X · X</span>' +
   '<span><b>Camera</b> Y · C</span><span><b>Back to the gate</b> Back · R</span>';
 const CONTROLS_P2 =
   '<span><b>Move</b> arrow keys · <b>Aim</b> mouse in your view or numpad 4/6 and 8/2</span>' +
-  '<span><b>Quiet takedown / fire</b> numpad 0 · <b>Creep</b> Shift · <b>Jam riot cannon</b> hold numpad 1</span>' +
+  '<span><b>Quiet takedown / fire</b> numpad 0 · <b>Creep</b> Right Shift · <b>Jam riot cannon</b> hold numpad 1</span>' +
   '<span><b>Put on / take off disguise</b> numpad 7 · <b>Camera</b> numpad 9 · <b>Back to gate</b> numpad decimal</span>' +
   '<span><b>Pause / map</b> numpad enter · <b>Menu options</b> numpad plus</span>';
 
@@ -843,7 +843,7 @@ export class JailbreakGame {
     } else prompt = 'All the cells are open: lead them out of the gate!';
     if (!prompt && this.entered && this.opened > 0 && p.z > 20) prompt = 'Out of the gate, with everyone behind you';
     const status: string[] = [];
-    if (this.player.disguised) status.push('Disguised: X takes it off · don\'t run, keep away from the jailers');
+    if (this.player.disguised) status.push(`Disguised: ${this.player === this.player2 && this.settings.player2Controller === -1 ? 'Numpad 7' : 'X'} takes it off · don't run, keep away from the jailers`);
     const downed = this.guards.list.filter((g) => g.state === 'down').length;
     if (downed > 0) status.push(`${downed} jailer${downed === 1 ? '' : 's'} knocked out`);
     return {
@@ -872,6 +872,8 @@ export class JailbreakGame {
       ride: null,
       cameraMode: this.cam.mode,
       usingGamepad: input.usingGamepad,
+      keyboardPlayer: input.keyboardPlayer,
+      keyboardEnabled: input.keyboardEnabled,
       insideBase: null,
       map: NO_MAP,
       aimScreen: this.hud.paused || this.done !== null ? null : { x: viewport.width / 2, y: viewport.height / 2 },
@@ -901,7 +903,7 @@ export class JailbreakGame {
       siege: null,
       prison: this.prisonHUD(),
       driveStyle: this.settings.driveStyle,
-      mouseCaptureHint: !input.usingGamepad && !input.pointerLocked && input.pointerLockAvailable,
+      mouseCaptureHint: input.keyboardEnabled && !input.pointerLocked && input.pointerLockAvailable,
       soundLocked: this.sound.locked && (this.settings.sfxVolume > 0 || this.settings.musicVolume > 0),
     };
   }
