@@ -1405,14 +1405,15 @@ export class PrisonGame {
       prompt = this.climbing.up ? 'Climbing up the pipes…' : 'Sliding down the bakery pipe…';
     } else if (this.stage === 'raft') {
       const r = this.heliReport;
+      const lieFlatKey = !input.keyboardEnabled ? 'RB' : input.keyboardPlayer === 2 ? 'Right Shift' : 'Shift';
       if (this.raftPhase === 'inflating') prompt = 'Pumping up the raft…';
       else if (this.raftPhase === 'sinking') prompt = 'The raft is going down…';
       else if (this.leaking) {
         const pump = input.keyboardEnabled ? input.keyboardPlayer === 2 ? 'Numpad 0' : 'Space / click' : 'A';
         prompt = this.air <= 0 ? `FLAT! Mash ${pump} to pump!` : `The raft is losing air! MASH ${pump} to pump it up!`;
       }
-      else if (r?.hunting) prompt = `They've found you! Head for a white mist bank and lie flat (${input.keyboardEnabled && input.keyboardPlayer === 2 ? 'Right Shift' : 'Shift'})`;
-      else if (r?.lit) prompt = `You're in a searchlight! Paddle out of it, or lie flat (${input.keyboardEnabled && input.keyboardPlayer === 2 ? 'Right Shift' : 'Shift'})`;
+      else if (r?.hunting) prompt = `They've found you! Head for a white mist bank and lie flat (${lieFlatKey})`;
+      else if (r?.lit) prompt = `You're in a searchlight! Paddle out of it, or lie flat (${lieFlatKey})`;
       else if (this.raft.atEdge) prompt = 'The current is pushing you back: keep to the channel';
       else if (this.raftTimer < 14) prompt = input.keyboardEnabled && input.keyboardPlayer === 2
         ? 'Up paddle · Down back water · Left/right steer · mouse swings the camera · Right Shift lie flat'

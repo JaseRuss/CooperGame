@@ -825,7 +825,7 @@ export class JailbreakGame {
     return { level: 0, label: `UNSEEN${creeping}`, color: '#9be27a' };
   }
 
-  private prisonHUD(): PrisonHUD {
+  private prisonHUD(input: InputState): PrisonHUD {
     const p = this.player.position;
     const cells = this.dungeon.layout.cells;
     const down = this.player.downFor;
@@ -835,7 +835,7 @@ export class JailbreakGame {
     else if (this.caught > 0) prompt = 'Caught!';
     else if (this.done !== null) prompt = null;
     else if (unlocking) prompt = 'Unlocking the cell…';
-    else if (this.guards.alarmed > 0) prompt = 'The jailers are on to you! Break line of sight and creep away (Shift), or fight';
+    else if (this.guards.alarmed > 0) prompt = `The jailers are on to you! Break line of sight and creep away (${!input.keyboardEnabled ? 'RB' : input.keyboardPlayer === 2 ? 'Right Shift' : 'Shift'}), or fight`;
     else if (this.opened < cells.length) {
       const next = cells.find((c) => !c.opening);
       const toCells = next ? Math.hypot(p.x - next.x, p.z - DOOR_Z) : 99;
@@ -901,7 +901,7 @@ export class JailbreakGame {
       airSupport: null,
       tanker: null,
       siege: null,
-      prison: this.prisonHUD(),
+      prison: this.prisonHUD(input),
       driveStyle: this.settings.driveStyle,
       mouseCaptureHint: input.keyboardEnabled && !input.pointerLocked && input.pointerLockAvailable,
       soundLocked: this.sound.locked && (this.settings.sfxVolume > 0 || this.settings.musicVolume > 0),
