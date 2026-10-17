@@ -80,6 +80,7 @@ export class InputManager {
   private mouseDY = 0;
   private frameMouseDX = 0;
   private frameMouseDY = 0;
+  private frameMouseMoved = false;
   private mouseDown = false;
   private pointerLocked = false;
   /** Set once the browser refuses pointer lock (some embedded browsers do); the mouse then aims unlocked. */
@@ -98,6 +99,8 @@ export class InputManager {
     2: { cameraKey: false, cameraPad: false, resetKey: false, resetPad: false, mapKey: false, mapPad: false, rocket: false, aa: false, megaJam: false, use: false, scope: false, menu: new Map() },
   };
   private rightMouseDown = false;
+  /** Automatic assignment remembers the most recently used device for each player. */
+  private readonly lastAutomaticDeviceWasGamepad: Record<1 | 2, boolean> = { 1: false, 2: false };
   /** Set while the options screen is taking typed text (a buddy's name). */
   textEntry = false;
   /** Whether the pad's A button fires as well as the right trigger (the trench level keeps A for climbing). */
@@ -122,6 +125,7 @@ export class InputManager {
     // Locked: every movement aims. Unlocked: movement over the game still aims, and the cursor's
     // position is kept so holding it near an edge keeps the turret turning.
     window.addEventListener('mousemove', (e) => {
+      if (e.target === canvas) this.frameMouseMoved = true;
       if (this.pointerLocked || e.target === canvas) {
         this.mouseDX += e.movementX;
         this.mouseDY += e.movementY;
@@ -162,6 +166,7 @@ export class InputManager {
     this.frameMouseDY = this.mouseDY;
     this.mouseDX = 0;
     this.mouseDY = 0;
+    this.frameMouseMoved = false;
   }
 
   /** Turns this frame's held menu buttons into one-shot presses. */
@@ -211,12 +216,12 @@ export class InputManager {
     lockedMousePlayer: 1 | 2 = keyboardPlayer,
   ): InputState {
     const latches = this.edgeLatches[keyboardPlayer];
-    const keyboardEnabled = gamepadIndex < 0 && gamepadIndex !== -3;
-    const hasKey = (code: string): boolean => keyboardEnabled && this.keys.has(code);
+    const keyboardAvailable = gamepadIndex < 0 && gamepadIndex !== -3;
+    const hasKey = (code: string): boolean => keyboardAvailable && this.keys.has(code);
     const mouseOwner = this.pointerLocked
       ? lockedMousePlayer
       : this.cursor && (split === 'vertical' ? (this.cursor.x >= 0.5 ? 2 : 1) : (this.cursor.y >= 0.5 ? 2 : 1));
-    const mouseEnabled = keyboardEnabled && (keyboardPlayer === 1 ? mouseOwner !== 2 : mouseOwner === 2);
+    const mouseEnabled = keyboardAvailable && (keyboardPlayer === 1 ? mouseOwner !== 2 : mouseOwner === 2);
     let throttle = 0;
     let steer = 0;
     let moveX = 0;
@@ -306,6 +311,8 @@ export class InputManager {
       if (gamepadIndex === -3) continue;
       if (gamepadIndex >= 0 && pad.index !== gamepadIndex) continue;
       if (gamepadIndex === -1) continue;
+      if (pad.axes.some((axis) => Math.abs(axis) > DEADZONE)
+        || pad.buttons.some((button) => button.pressed || button.value > 0.2)) usingGamepad = true;
       const rx = applyDeadzone(pad.axes[2] ?? 0);
       const ry = applyDeadzone(pad.axes[3] ?? 0);
 
@@ -382,6 +389,17 @@ export class InputManager {
       moveX /= moveLen;
       moveY /= moveLen;
     }
+
+    // Automatic assignment accepts both keyboard and gamepad input. Keep prompts and HUD labels
+    // aligned with the last device the player actually used, including in solo play where the
+    // game passes -2 to accept any connected controller as well as the keyboard.
+    const keyboardActivity = keyboardAvailable && (this.keys.size > 0 || this.mouseDown || this.rightMouseDown
+      || this.frameMouseMoved || this.frameMouseDX !== 0 || this.frameMouseDY !== 0);
+    if (gamepadIndex === -2) {
+      if (keyboardActivity) this.lastAutomaticDeviceWasGamepad[keyboardPlayer] = false;
+      else if (usingGamepad) this.lastAutomaticDeviceWasGamepad[keyboardPlayer] = true;
+    }
+    const keyboardEnabled = keyboardAvailable && (gamepadIndex !== -2 || !this.lastAutomaticDeviceWasGamepad[keyboardPlayer]);
 
     return {
       keyboardPlayer,
