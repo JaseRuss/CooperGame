@@ -80,6 +80,7 @@ export class InputManager {
   private mouseDY = 0;
   private frameMouseDX = 0;
   private frameMouseDY = 0;
+  private mouseMoved = false;
   private frameMouseMoved = false;
   private mouseDown = false;
   private pointerLocked = false;
@@ -125,7 +126,7 @@ export class InputManager {
     // Locked: every movement aims. Unlocked: movement over the game still aims, and the cursor's
     // position is kept so holding it near an edge keeps the turret turning.
     window.addEventListener('mousemove', (e) => {
-      if (e.target === canvas) this.frameMouseMoved = true;
+      if (e.target === canvas) this.mouseMoved = true;
       if (this.pointerLocked || e.target === canvas) {
         this.mouseDX += e.movementX;
         this.mouseDY += e.movementY;
@@ -137,7 +138,17 @@ export class InputManager {
     });
     window.addEventListener('blur', () => {
       this.cursor = null;
+      this.keys.clear();
       this.mouseDown = false;
+      this.rightMouseDown = false;
+    });
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) {
+        this.cursor = null;
+        this.keys.clear();
+        this.mouseDown = false;
+        this.rightMouseDown = false;
+      }
     });
     canvas.style.cursor = 'crosshair';
     window.addEventListener('mousedown', (e) => {
@@ -166,7 +177,8 @@ export class InputManager {
     this.frameMouseDY = this.mouseDY;
     this.mouseDX = 0;
     this.mouseDY = 0;
-    this.frameMouseMoved = false;
+    this.frameMouseMoved = this.mouseMoved;
+    this.mouseMoved = false;
   }
 
   /** Turns this frame's held menu buttons into one-shot presses. */
@@ -311,7 +323,7 @@ export class InputManager {
       if (gamepadIndex === -3) continue;
       if (gamepadIndex >= 0 && pad.index !== gamepadIndex) continue;
       if (gamepadIndex === -1) continue;
-      if (pad.axes.some((axis) => Math.abs(axis) > DEADZONE)
+      if (pad.axes.slice(0, 4).some((axis) => Math.abs(axis) > DEADZONE)
         || pad.buttons.some((button) => button.pressed || button.value > 0.2)) usingGamepad = true;
       const rx = applyDeadzone(pad.axes[2] ?? 0);
       const ry = applyDeadzone(pad.axes[3] ?? 0);
