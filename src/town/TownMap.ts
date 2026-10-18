@@ -49,7 +49,7 @@ export class TownMap {
     };
     ctx.fillStyle = '#3e5a34';
     ctx.fillRect(0, 0, size, size);
-    const fills: Record<string, string> = { wood: '#2c4526', garden: '#4a6a3c', grass: '#4d6e3d', pitch: '#4f7a3a', parking: '#5c5e60', playground: '#7a5040', water: '#2f6f9e', school: '#5e8a45', scrub: '#435e34', allotment: '#5e5634' };
+    const fills: Record<string, string> = { wood: '#2c4526', garden: '#4a6a3c', grass: '#4d6e3d', pitch: '#4f7a3a', parking: '#5c5e60', playground: '#7a5040', water: '#2f6f9e', basin: '#4a6e3a', school: '#5e8a45', scrub: '#435e34', allotment: '#5e5634', court: '#5c5a56', astro: '#4f8a46', lawn: '#4f7a3a', yard: '#6a5e4c' };
     for (const a of t.areas) {
       path(a.pts, true);
       ctx.fillStyle = fills[a.kind] ?? '#4a6a3c';

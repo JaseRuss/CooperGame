@@ -21,6 +21,10 @@ export interface TownFile {
   buildings: { k: string; p: number[]; l?: number }[];
   areas: { k: string; p: number[] }[];
   barriers: { k: string; p: number[] }[];
+  /** Single trees, traced from aerial photos. */
+  trees: [number, number][];
+  /** From each house's middle to the edge of the street in front of it, and whether it's block paved (1) or tarmac (0). */
+  driveways: [number, number, number, number, number][];
 }
 
 export type Pt = { x: number; z: number };
@@ -68,6 +72,8 @@ export class TownData {
   readonly buildings: Footprint[];
   readonly areas: Area[];
   readonly lines: Line[];
+  readonly trees: Pt[];
+  readonly driveways: { a: Pt; b: Pt; paved: boolean }[];
   /** Metres above sea level of the map's lowest point (ground height 0). */
   readonly base: number;
   private readonly step: number;
@@ -92,6 +98,8 @@ export class TownData {
     this.buildings = f.buildings.map((b) => ({ kind: b.k, pts: pairs(b.p), levels: b.l }));
     this.areas = f.areas.map((a) => ({ kind: a.k, pts: pairs(a.p) }));
     this.lines = f.barriers.map((b) => ({ kind: b.k, pts: pairs(b.p) }));
+    this.trees = f.trees.map(([x, z]) => ({ x, z }));
+    this.driveways = f.driveways.map(([ax, az, bx, bz, paved]) => ({ a: { x: ax, z: az }, b: { x: bx, z: bz }, paved: paved === 1 }));
   }
 
   static async load(): Promise<TownData> {

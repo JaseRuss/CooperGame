@@ -688,16 +688,21 @@ A bonus level in a real town, in the level select as **9 · Bonus: Penicuik** (`
 house, garage and block of flats, every street and path, the gardens, woods, playing fields and
 car parks are where they really are in Penicuik, Midlothian (from OpenStreetMap), on the real
 hill (from elevation data): about 1,500 buildings over a square kilometre and a bit. Houses with a
-plain rectangular footprint get a pitched roof, windows on each storey and a front door facing the
-street; the rest are built to their own outline with a flat roof. Cars are parked along the kerbs,
-and hedges, garden walls and trees make cover.
+plain rectangular footprint get a pitched roof (hipped on most detached houses, gabled on terraces
+and long semis, as in aerial photos of the estate), windows on each storey, a front door facing the
+street and a driveway to it; the rest are built to their own outline with a flat roof. Cars are
+parked along the kerbs, and hedges, garden walls and trees make cover. The drainage basins that are
+dry most of the time are grass.
 
 You start at the top of the hill with a squad of four and fight down the hill to
 **Mauricewood Primary School**, about 1.1 km away by road and 30 m lower. The way is dotted in gold
 on the map. The enemy has five sandbagged **roadblocks** at junctions on the way down (taking one
 makes it your checkpoint), pairs on patrol in the side streets, and ten defenders round the school.
-Clear the school, then stand at the flagpole in front of it to raise our flag and win. The school
-building itself isn't on OpenStreetMap (only its grounds are), so the one in the game is made up.
+Clear the school, then stand at the flagpole on its playground to raise our flag and win. The school's
+buildings aren't on OpenStreetMap (only its grounds are), so they're traced from aerial photos: the
+single-storey flat-roofed blocks with their rooflights, the taller hall with its hipped roof, the
+playground with its little all-weather pitch, the lawn, the yard and the trees round it (in
+`tools/town-map/extras.json`).
 
 You have the rifle, the jam gun and the grenade launcher. The HUD shows the street you're on and
 how high above sea level you are. Two players can play: either can raise the flag, and standing next
@@ -707,8 +712,9 @@ to a knocked-down partner helps them back up (otherwise it's back to the checkpo
   ground and its painted map, `Buildings` the houses, school, trees, hedges, cars and roadblocks,
   `TownMap` the minimap and pause map).
 - The map is `public/maps/penicuik.json`, made by `tools/town-map/convert.py` from an Overpass
-  API download of OpenStreetMap and AWS Terrain Tiles (zoom 15); the script's header has the area
-  and the start and school coordinates.
+  API download of OpenStreetMap, AWS Terrain Tiles (zoom 15) and the hand-traced
+  `tools/town-map/extras.json`; the script's header has the area and the start and school
+  coordinates.
 
 ## Level select
 
