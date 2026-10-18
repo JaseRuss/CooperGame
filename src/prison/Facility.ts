@@ -20,6 +20,8 @@ const WALL = 0.6;
 
 /** The whole compound's inside edges: the yard in the middle, a wing either side. */
 const COMPOUND = { minX: -100, maxX: 100, minZ: -45, maxZ: 68 };
+/** Half-width of the only opening in the perimeter wall; the closed sea gate fills it. */
+const MAIN_GATE_HALF_WIDTH = 3;
 /** The walls between the yard and the wings (at x = ±YARD_EDGE), each with a doorway from DOORWAY_Z0 to DOORWAY_Z1. */
 const YARD_EDGE = 30;
 const DOORWAY_Z0 = -5;
@@ -74,6 +76,12 @@ const PIPE_SPOT = { x: -24.05, z: 24 };
 const LOT = { minX: 39, maxX: 71.4, minZ: 27.5, maxZ: 41.4, gateX0: 40, gateX1: 46.4 };
 /** The ground: the compound and the beach north of it, down to the water's edge. */
 const GROUND = { minX: -125, maxX: 125, minZ: -76, maxZ: 92 };
+
+/** True once a player has crossed beyond a perimeter wall's physical outer face. */
+export function isOutsidePrisonPerimeter(x: number, z: number): boolean {
+  return x < COMPOUND.minX - WALL || x > COMPOUND.maxX + WALL
+    || z < COMPOUND.minZ - WALL || z > COMPOUND.maxZ + WALL;
+}
 /** The jetty running out into the sea from the gate: where the raft is launched. */
 export const JETTY = { x0: -2.5, x1: 2.5, z0: GROUND.minZ + 1, z1: GROUND.minZ - 8, y: 0.22 };
 const BLOCK_B: BlockPlan = { minX: 38, maxX: 68, minZ: 8, maxZ: 22, corridor: 12, doorX: 53 };
@@ -279,7 +287,7 @@ export class Facility {
       levers: [], // (Cell Block B's empty now: no lever box)
       towers,
       yardMiddle: { x: 0, z: -8 },
-      mainGate: { x0: -3, x1: 3, z: COMPOUND.minZ - WALL / 2, height: COMPOUND_WALL },
+      mainGate: { x0: -MAIN_GATE_HALF_WIDTH, x1: MAIN_GATE_HALF_WIDTH, z: COMPOUND.minZ - WALL / 2, height: COMPOUND_WALL },
       launch: { x: 0, z: JETTY.z1 + 1.4 },
       ground: GROUND,
       lamps: LAMPS.map(([x, z]) => ({ x, y: 8.2, z })),
@@ -531,8 +539,10 @@ export class Facility {
   private buildWalls(): void {
     const { minX, maxX, minZ, maxZ } = COMPOUND;
     // The perimeter has barbed wire along the top, leaning out.
-    this.wall(minX - WALL, minZ - WALL, -6.6, minZ, { x: 0, z: -1 });
-    this.wall(6.6, minZ - WALL, maxX + WALL, minZ, { x: 0, z: -1 });
+    // Meet the gatehouse towers with no visible side gaps. Their colliders already blocked these
+    // spans, but aligning the perimeter wall also keeps the visible and physical layouts consistent.
+    this.wall(minX - WALL, minZ - WALL, -MAIN_GATE_HALF_WIDTH, minZ, { x: 0, z: -1 });
+    this.wall(MAIN_GATE_HALF_WIDTH, minZ - WALL, maxX + WALL, minZ, { x: 0, z: -1 });
     this.wall(minX - WALL, maxZ, maxX + WALL, maxZ + WALL, { x: 0, z: 1 });
     this.wall(minX - WALL, minZ, minX, maxZ, { x: -1, z: 0 });
     this.wall(maxX, minZ, maxX + WALL, maxZ, { x: 1, z: 0 });

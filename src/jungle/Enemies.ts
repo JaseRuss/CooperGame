@@ -148,7 +148,9 @@ export class Enemies {
       if (d > Math.max(range, NOTICE) || (best && d >= best.d)) return;
       if (battle.sees(eye, chest)) best = { d, at: chest };
     };
-    if (!battle.player.down) consider(battle.player.pos, battle.player.chest, battle.player.sneaking ? reach * 0.55 : reach);
+    for (const player of battle.players ?? [battle.player]) {
+      if (!player.down) consider(player.pos, player.chest, player.sneaking ? reach * 0.55 : reach);
+    }
     for (const f of battle.squad()) consider(f.pos, f.chest(), reach * 0.9);
     if (!best) {
       b.seen = false;

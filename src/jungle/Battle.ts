@@ -9,6 +9,7 @@ export interface Battle {
   visibility: number;
   /** The player: where he is, whether he's down, and whether he's creeping. */
   player: { pos: THREE.Vector3; chest: THREE.Vector3; down: boolean; sneaking: boolean };
+  players?: { pos: THREE.Vector3; chest: THREE.Vector3; down: boolean; sneaking: boolean }[];
   /** `shooter` fires at `aim` (with scatter); the game works out what it hits. */
   fireAt(shooter: Trooper, aim: THREE.Vector3): void;
   /** Who's about: the squad (standing ones) and the enemy (standing ones). */

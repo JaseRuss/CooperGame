@@ -129,7 +129,7 @@ remembered.
 
 **Controllers:** playing solo, any connected controller (or the keyboard and mouse) drives your character, whatever Player 1 is set to. In co-op each player uses exactly one device: the one assigned to them in Options.
 
-**Local co-op:** pause, open **Options**, choose a controller for each player, and choose a **Vertical** (side-by-side) or **Horizontal** (top-and-bottom) split. Player 2 is disabled by default. Either player can use keyboard and mouse; when Player 2 uses them, use the arrow keys to move, the mouse to aim, and the number pad to fire (0), use the jam cannon (1), or switch camera (9). Both players have a complete HUD, separate views, health, weapons, vehicle state, and abilities. Co-op works across the tank missions and the prison escape; objectives can be advanced by either player, and both players take part in the prison raft crossing and escape.
+**Local co-op:** pause, open **Options**, choose a controller for each player, and choose a **Vertical** (side-by-side) or **Horizontal** (top-and-bottom) split. Player 2 is disabled by default. Either player can use keyboard and mouse; when Player 2 uses them, use the arrow keys to move, the mouse to aim, and the number pad for Player 2's controls. Both players have a complete HUD, separate views, health, weapons, vehicle state, and abilities. Co-op is supported throughout the campaign and bonus levels, including the tank missions, Jungle Patrol, the Moon, Prison Escape, Under Siege and Jailbreak. Both players can advance objectives and take part in each level's combat, interactions and completion.
 
 **Slower computers:** pause with **M** / **Start**, open **Options**, and set
 **Graphics** to **Low** for a softer picture without shadows. **Balanced** uses
@@ -628,7 +628,7 @@ front again (after the whistle, over the top from a ladder).
 ## Bonus: Under Siege
 
 A second bonus level, in the level select as **7 · Bonus: Under Siege**: the castle mission with
-prisoners. Single player (there is no co-op on this level).
+prisoners. This level supports local co-op: both players can fight, rescue prisoners and take part in the jailbreak.
 
 - **Surrender.** Knights who are beaten but not blasted flat often surrender: they drop their
   crossbows, throw their hands up and shout "WE SURRENDER!".

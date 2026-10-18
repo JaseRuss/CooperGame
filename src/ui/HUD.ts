@@ -97,6 +97,8 @@ export interface HUDState {
   ride: { vehicle: 'jeep' | 'chopper' | 'motorbike'; timeLeft: number; total: number; missileCharge: number; landing: boolean } | null;
   cameraMode: 'first' | 'third';
   usingGamepad: boolean;
+  keyboardPlayer: 1 | 2;
+  keyboardEnabled: boolean;
   /** Name of the family base the player is parked in, or null. */
   insideBase: string | null;
   map: MapView;
@@ -246,8 +248,9 @@ const STYLE = `
 .hud .banner .big { font-size:32px; color:#ffd24a; text-shadow:0 3px 8px #000, 0 0 18px rgba(255,160,40,0.45); }
 .hud .banner .small { font-size:15px; font-weight:700; margin-top:4px; }
 
-.hud .prompt { position:absolute; left:50%; top:73%; transform:translateX(-50%); padding:7px 18px; border-radius:20px; font-size:15px; font-weight:700; display:none;
+.hud .prompt { position:absolute; left:50%; top:var(--prompt-top,73%); transform:translateX(-50%); max-width:calc(100% - 28px); text-align:center; padding:7px 18px; border-radius:20px; font-size:15px; font-weight:700; display:none;
   background:rgba(15,20,12,0.7); border:1px solid rgba(255,255,255,0.2); }
+.hud .coop-control-heading { flex-basis:100%; text-align:center; }
 
 .hud .crosshair { position:absolute; left:0; top:0; width:24px; height:24px; margin:-12px 0 0 -12px; border:2px solid; border-radius:50%;
   box-shadow:0 0 4px rgba(0,0,0,0.7); display:none; }
@@ -271,7 +274,7 @@ const STYLE = `
 
 .hud .overlay { position:absolute; inset:0; display:none; align-items:center; justify-content:center; flex-direction:column; gap:10px; pointer-events:auto;
   background:radial-gradient(ellipse at center, rgba(20,30,14,0.72), rgba(0,0,0,0.82)); backdrop-filter:blur(3px); }
-.hud.secondary .overlay { display:none !important; }
+.hud.coop-primary .overlay { position:fixed; inset:0; z-index:20; }
 .hud.secondary .overlay { display:none !important; }
 .hud .overlay h1 { margin:0; font-size:34px; letter-spacing:8px; color:#e8d9a4; text-shadow:0 3px 10px #000; font-weight:400; }
 .hud .tabs { display:flex; gap:6px; }
@@ -279,7 +282,7 @@ const STYLE = `
   border:1px solid rgba(214,196,138,0.3); border-bottom:none; }
 .hud .tab.on { background:rgba(214,196,138,0.9); color:#1c2414; }
 .hud .page { display:none; }
-.hud .page.on { display:flex; flex-direction:column; align-items:center; gap:8px; }
+.hud .page.on { display:flex; flex-direction:column; align-items:center; gap:8px; max-height:calc(100vh - 160px); overflow-y:auto; }
 .hud .legend { font-size:12.5px; opacity:0.9; display:flex; gap:14px; flex-wrap:wrap; justify-content:center; max-width:760px; }
 .hud .legend i { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:5px; vertical-align:-1px; }
 .hud .options { width:min(560px, 92vw); padding:10px; max-height:calc(100vh - 340px); overflow-y:auto; }
@@ -462,6 +465,10 @@ export class HUD {
   private readonly buddySlot: HTMLDivElement;
   private readonly minimapWrap: HTMLDivElement;
   private readonly mapLegends: HTMLDivElement[] = [];
+  private onFootControls = '';
+  private playerTwoControls = '';
+  private onFootMapLegend = '';
+  private onFootHasMap = false;
   private lastDrawnMap: MapView | null = null;
   private pausedOpen = false;
   private page: 'map' | 'options' | 'levels' = 'map';
@@ -689,6 +696,11 @@ export class HUD {
 
   /** Restricts this HUD to one local co-op viewport. Coordinates inside it remain viewport-local. */
   setViewport(viewport: { left: number; top: number; width: number; height: number } | null): void {
+    if (viewport && this.root.classList.contains('coop')) {
+      this.root.style.setProperty('--prompt-top', viewport.width < window.innerWidth * 0.75 ? '60%' : '73%');
+    } else {
+      this.root.style.removeProperty('--prompt-top');
+    }
     if (!viewport) {
       if (this.viewportLeft === 0 && this.viewportTop === 0 && this.viewportWidth === window.innerWidth && this.viewportHeight === window.innerHeight) return;
       this.viewportLeft = 0;
@@ -719,24 +731,42 @@ export class HUD {
 
   setCoopLayout(enabled: boolean): void {
     this.mirror?.setCoopLayout(enabled);
+    if (this.root.classList.contains('coop') === enabled) return;
     this.root.classList.toggle('coop', enabled);
     this.root.classList.toggle('coop-primary', enabled && !this.secondary);
     this.root.classList.toggle('coop-secondary', enabled && this.secondary);
+    if (!enabled) this.root.style.removeProperty('--prompt-top');
+    this.renderOnFootControls();
   }
 
   /**
    * The bonus prison level: the player's on foot, so there's no map, rocket, AA, jam cannon or
    * buddy meter. The pause screen's map page shows the controls instead.
    */
-  setOnFoot(controls: string, withMap?: { legend: string }): void {
-    this.mirror?.setOnFoot(controls);
+  setOnFoot(controls: string, withMap?: { legend: string }, secondaryControls = controls): void {
+    this.mirror?.setOnFoot(secondaryControls);
+    this.onFootControls = controls;
+    this.playerTwoControls = secondaryControls;
+    this.onFootMapLegend = withMap?.legend ?? '';
+    this.onFootHasMap = !!withMap;
     this.minimapWrap.style.display = withMap ? '' : 'none';
     this.bigMapCanvas.style.display = withMap ? '' : 'none';
     this.tabs.map.textContent = withMap ? 'MAP' : 'CONTROLS';
     this.mapLegends[0].innerHTML = withMap
       ? withMap.legend
       : '<span><i style="background:#4b7a2e"></i>Green army: you and your buddies</span><span><i style="background:#c4a468"></i>Tan army: the guards</span>';
-    this.mapLegends[1].innerHTML = controls;
+    this.renderOnFootControls();
+  }
+
+  private renderOnFootControls(): void {
+    if (!this.onFootControls) return;
+    const mapLegend = this.onFootHasMap
+      ? this.onFootMapLegend
+      : '<span><i style="background:#4b7a2e"></i>Green army: you and your buddies</span><span><i style="background:#c4a468"></i>Tan army: the guards</span>';
+    this.mapLegends[0].innerHTML = mapLegend;
+    this.mapLegends[1].innerHTML = `${this.onFootControls}${this.root.classList.contains('coop') && this.playerTwoControls !== this.onFootControls
+      ? `<div class="coop-control-heading"><b>Player 2 on keyboard / mouse (on a pad, use the buttons above)</b></div>${this.playerTwoControls}`
+      : ''}`;
   }
 
   setWorldMap(map: WorldMap): void {
@@ -822,6 +852,7 @@ export class HUD {
 
   private setPausePresentation(paused: boolean): void {
     this.pausedOpen = paused;
+    this.overlay.style.display = paused ? 'flex' : 'none';
     if (paused) this.showPage('map');
   }
 
@@ -1232,7 +1263,7 @@ export class HUD {
     this.rocketText.textContent = state.rocketDamaged
       ? 'DAMAGED · REPAIR AT BASE'
       : rocketReady
-        ? `READY · ${state.usingGamepad ? 'LB' : 'F'}`
+        ? `READY · ${state.keyboardEnabled ? state.keyboardPlayer === 2 ? 'NUM 3' : 'F' : 'LB'}`
         : `${Math.floor(charge * 100)}%`;
 
     // Jeep / chopper timer: counts down, and flashes red near the end (and while the chopper lands).
@@ -1257,7 +1288,7 @@ export class HUD {
       const reloading = launcher.reloadLeft > 0;
       this.rocketName.textContent = launcher.name ?? 'GRENADE LAUNCHER';
       this.rocketFill.style.width = `${Math.round((reloading ? 1 - launcher.reloadLeft / launcher.reloadTime : launcher.shots / launcher.max) * 100)}%`;
-      this.rocketText.textContent = reloading ? `RELOADING · ${Math.ceil(launcher.reloadLeft)}s` : `${launcher.shots} / ${launcher.max} · ${state.usingGamepad ? 'LB' : 'F'}`;
+      this.rocketText.textContent = reloading ? `RELOADING · ${Math.ceil(launcher.reloadLeft)}s` : `${launcher.shots} / ${launcher.max} · ${state.keyboardEnabled ? state.keyboardPlayer === 2 ? 'NUM 3' : 'F' : 'LB'}`;
       this.rocketText.style.color = reloading ? '#ff8a7a' : '#ff9a5a';
       this.rocketSlot.classList.toggle('ready', !reloading);
     }
@@ -1289,7 +1320,7 @@ export class HUD {
         : state.aaLoaded === 0
           ? 'EMPTY · RETURN TO BASE'
           : aaLocked
-            ? `LOCKED · ${state.usingGamepad ? 'RB' : 'Q'}`
+            ? `LOCKED · ${state.keyboardEnabled ? state.keyboardPlayer === 2 ? 'NUM 5' : 'Q' : 'RB'}`
             : `${state.aaLoaded} · NO LOCK`;
     this.aaText.style.color = state.aaLoaded === 0 ? '#ff8a7a' : aaLocked ? '#8fd3ff' : '#eef3f8';
     this.aaSlot.classList.toggle('ready', aaLocked);
@@ -1297,7 +1328,7 @@ export class HUD {
     this.aaSlot.style.display = bombs ? '' : bike || prison ? 'none' : '';
     this.aaName.textContent = bombs ? 'BOMBS' : 'AA MISSILES';
     if (bombs) {
-      this.aaText.textContent = bombs.count > 0 ? `${state.usingGamepad ? 'RB' : 'Q'} · PLANT AT A DUMP` : 'NONE LEFT';
+      this.aaText.textContent = bombs.count > 0 ? `${state.keyboardEnabled ? state.keyboardPlayer === 2 ? 'NUM 5' : 'Q' : 'RB'} · PLANT AT A DUMP` : 'NONE LEFT';
       this.aaText.style.color = bombs.count > 0 ? '#eef3f8' : '#ff8a7a';
       this.aaSlot.classList.toggle('ready', false);
     }
@@ -1312,11 +1343,11 @@ export class HUD {
       this.aaLockMarker.style.display = 'none';
     }
 
-    const hold = state.usingGamepad ? 'HOLD LT' : 'HOLD E';
+    const hold = state.keyboardEnabled ? state.keyboardPlayer === 2 ? 'HOLD NUM 1' : 'HOLD E' : 'HOLD LT';
     this.jamText.textContent = prison
       ? `${hold} · ${Math.floor(prison.jam * 100)}%`
       : state.megaJamCharge >= 1
-        ? `${hold} · X MEGA`
+        ? `${hold} · ${state.keyboardEnabled && state.keyboardPlayer === 2 ? 'NUM 7' : 'X'} MEGA`
         : `${hold} · MEGA ${Math.floor(state.megaJamCharge * 100)}%`;
 
     // Buddies roll in by themselves when the meter fills.
@@ -1334,23 +1365,26 @@ export class HUD {
     const fire = ride ? (chopper ? 'chin gun' : bike ? 'machine gun' : 'jam gun') : 'fire';
     const rocket = ride ? (chopper ? 'missiles' : bike ? 'rocket jump' : 'missile') : 'rocket';
     const drive = chopper ? 'fly' : 'drive';
+    const jailbreak = !!prison && /jailbreak|dungeon/i.test(prison.title);
+    const p2Special = jailbreak ? 'disguise' : 'squad';
+    const p2Decimal = jailbreak ? 'gate' : prison?.title.includes('TRENCH') ? 'use' : 'checkpoint';
     this.setHTML(
       this.keys,
       (prison?.vehicle
-        ? state.usingGamepad
+        ? !state.keyboardEnabled
           ? prison.vehicle.keysPad
-          : prison.vehicle.keysKb + (state.mouseCaptureHint ? '<br><span style="color:#ffd24a">Click the game to capture the mouse</span>' : '')
+          : prison.vehicle.keysKb + (state.mouseCaptureHint ? '<br><span style="color:#ffd24a">Click the game to capture the mouse for aiming</span>' : '')
         : prison
-        ? state.usingGamepad
-          ? `${k('LS', 'move')}${k('RS', 'aim')}${k('RB', 'creep')}${k('RT', 'fire')}${k('LT', 'jam')}${prison.launcher ? `${k('LB', 'grenade')}${k('RB', 'bomb')}` : ''}${k('X', 'squad')}${k('Y', 'camera')}${k('Start', 'pause · options')}${k('Back', 'checkpoint')}`
+        ? !state.keyboardEnabled
+          ? `${k('LS', 'move')}${k('RS', 'aim')}${k('RB', 'creep')}${k('RT', 'fire')}${k('LT', 'jam')}${prison.launcher ? `${k('LB', 'grenade')}${k('RB', 'bomb')}` : ''}${k('X', jailbreak ? 'disguise' : 'squad')}${k('Y', 'camera')}${k('Start', 'pause · options')}${k('Back', jailbreak ? 'gate' : 'checkpoint')}`
           : this.secondary
-            ? `${k('Arrows', 'move')}${k('Mouse', 'aim')}${k('Shift', 'creep')}${k('Num 0', 'fire')}${k('Num 1', 'jam')}${k('Num 7', 'squad')}${k('Num 9', 'camera')}${k('Num ↵', 'pause · options')}${k('Num .', 'checkpoint')}`
-            : `${k('WASD', 'move')}${k('Mouse', 'aim')}${k('Shift', 'creep')}${k('Click', 'fire')}${k('E', 'jam')}${prison.launcher ? `${k('F', 'grenade')}${k('Q', 'bomb')}` : ''}${k('X', 'squad')}${k('C', 'camera')}${k('M', 'pause · options')}${k('R', 'checkpoint')}` +
+            ? `${k('Arrows', 'move')}${k('Num 4/6/8/2', 'aim')}${k('Right Shift', 'creep')}${k('Num 0', 'fire')}${k('Num 1', 'jam')}${prison.launcher ? `${k('Num 3', 'grenade')}${prison.bombs ? k('Num 5', 'bomb') : ''}` : ''}${k('Num 7', p2Special)}${k('Num 9', 'camera')}${k('Num ↵', 'pause · map')}${k('Num .', p2Decimal)}`
+            : `${k('WASD', 'move')}${k('Mouse', 'aim')}${k('Shift', 'creep')}${k('Click', 'fire')}${k('E', 'jam')}${prison.launcher ? `${k('F', 'grenade')}${k('Q', 'bomb')}` : ''}${k('X', jailbreak ? 'disguise' : 'squad')}${k('C', 'camera')}${k('M', 'pause · options')}${k('R', jailbreak ? 'gate' : 'checkpoint')}` +
             (state.mouseCaptureHint ? '<br><span style="color:#ffd24a">Click the game to capture the mouse for aiming</span>' : '')
-        : state.usingGamepad
+        : !state.keyboardEnabled
         ? `${k('LS', drive)}${k('RS', 'aim')}${k('RT', fire)}${bike ? '' : k('LT', 'jam')}${k('LB', rocket)}${bike ? '' : k('RB', 'AA')}<br>${bike ? '' : k('X', 'mega jam')}${k('Y', 'camera')}${k('Start', 'pause · options')}${k('Back', 'home')}`
         : this.secondary
-          ? `${k('Arrows', drive)}${k('Mouse', 'aim')}${k('Num 0', fire)}${bike ? '' : k('Num 1', 'jam')}${k('Num 3', rocket)}${bike ? '' : k('Num 5', 'AA')}<br>${bike ? '' : k('Num 7', 'mega jam')}${k('Num 9', 'camera')}${k('Num ↵', 'pause · options')}${k('Num .', 'home')}` +
+          ? `${k('Arrows', drive)}${k('Num 4/6/8/2', 'aim')}${k('Num 0', fire)}${bike ? '' : k('Num 1', 'jam')}${k('Num 3', rocket)}${bike ? '' : k('Num 5', 'AA')}<br>${bike ? '' : k('Num 7', 'mega jam')}${k('Num 9', 'camera')}${k('Num ↵', 'pause · options')}${k('Num .', 'home')}` +
             (state.mouseCaptureHint ? '<br><span style="color:#ffd24a">Move the cursor into this view to aim</span>' : '')
           : `${k('WASD', drive)}${k('Mouse', 'aim')}${k('Click', fire)}${bike ? '' : k('E', 'jam')}${k('F', rocket)}${bike ? '' : k('Q', 'AA')}<br>${bike ? '' : k('X', 'mega jam')}${k('C', 'camera')}${k('M', 'pause · options')}${k('R', 'home')}` +
             (state.mouseCaptureHint ? '<br><span style="color:#ffd24a">Click the game to capture the mouse for aiming</span>' : '')) +
@@ -1427,7 +1461,7 @@ export class HUD {
       const at = state.aimScreen ?? { x: this.viewportWidth / 2, y: this.viewportHeight / 2 };
       this.heliTag.style.display = 'flex';
       this.heliTag.style.transform = `translate(${at.x}px, ${at.y}px)`;
-      this.heliTagText.textContent = `${KNIGHTS ? 'DRAGON' : 'HELI'} LOCKED · ${state.usingGamepad ? 'RB' : 'Q'}`;
+      this.heliTagText.textContent = `${KNIGHTS ? 'DRAGON' : 'HELI'} LOCKED · ${state.keyboardEnabled ? state.keyboardPlayer === 2 ? 'NUM 5' : 'Q' : 'RB'}`;
     } else {
       this.heliTag.style.display = 'none';
     }

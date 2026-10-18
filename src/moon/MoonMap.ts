@@ -239,8 +239,8 @@ export class MoonMap {
     }
     // The buggy: an arrow pointing the way it faces (yaw 0 is south, down the screen).
     ctx.save();
-    ctx.translate(sx(d.player.x), sy(d.player.z));
-    ctx.rotate(Math.PI - d.player.yaw);
+    ctx.translate(sx(_view.playerX), sy(_view.playerZ));
+    ctx.rotate(Math.PI - _view.playerYaw);
     const a = r * (opts.arrowScale > 1 ? 1.4 : 1.8);
     ctx.fillStyle = '#ffffff';
     ctx.strokeStyle = '#000';

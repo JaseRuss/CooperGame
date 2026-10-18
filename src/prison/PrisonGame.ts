@@ -10,7 +10,7 @@ import { JamCannon } from '../combat/JamCannon';
 import { NightSky } from '../world/NightSky';
 import { loadSettings, saveSettings, AIM_SPEED_SCALE, GRAPHICS_QUALITY, type Settings } from '../core/Settings';
 import { MISSION, startMission } from '../core/config';
-import { Facility, ROOF_TOP, JETTY, type ClimbSpot, type FacilityLayout } from './Facility';
+import { Facility, isOutsidePrisonPerimeter, ROOF_TOP, JETTY, type ClimbSpot, type FacilityLayout } from './Facility';
 import { Lighthouse } from './Lighthouse';
 import { Searchlights } from './Searchlights';
 import { Outside, SHORE, SHORE_CHECKPOINTS, SHORE_GUARDS, HOME_REACH, loadTreeModels } from './Outside';
@@ -108,10 +108,15 @@ const LAMP_LIGHTS = 4;
 /** What the pause screen's first page shows on foot, instead of the map. */
 const CONTROLS =
   '<span><b>Move</b> left stick · W A S D</span><span><b>Aim</b> right stick · mouse</span>' +
-  '<span><b>Creep</b> (guards see half as far; lie flat on the raft) RB · Shift</span><span><b>Fire</b> RT · click (a shot is heard from far off)</span>' +
+  '<span><b>Creep</b> (guards see half as far; lie flat on the raft) RB · Left Shift</span><span><b>Fire</b> RT · click (a shot is heard from far off)</span>' +
   '<span><b>Jam riot cannon</b> (quiet) hold LT · hold E</span><span><b>Squad: follow me / hold here</b> X · X</span>' +
   '<span><b>Camera</b> Y · C</span><span><b>Back to checkpoint</b> Back · R</span>' +
   '<span><b>On the raft</b> W paddle · S back water · A D steer · mouse swings the camera</span>';
+const CONTROLS_P2 =
+  '<span><b>Move</b> arrow keys · <b>Aim</b> mouse in your view or numpad 4/6 and 8/2</span>' +
+  '<span><b>Fire</b> numpad 0 · <b>Creep</b> Right Shift · <b>Jam gun</b> hold numpad 1 · <b>Squad</b> numpad 7</span>' +
+  '<span><b>Camera</b> numpad 9 · <b>Back to checkpoint</b> numpad decimal · <b>Pause / map</b> numpad enter</span>' +
+  '<span><b>On the raft</b> Up paddle · Down back water · Left/right steer · Right Shift lie flat</span>';
 
 /** Nothing on the map: the HUD needs one, but the prison has no minimap. */
 const NO_MAP: MapView = {
@@ -375,7 +380,8 @@ export class PrisonGame {
       },
     };
 
-    this.hud.setOnFoot(CONTROLS);
+    this.hud.setOnFoot(CONTROLS, undefined, CONTROLS_P2);
+    this.hud2.setOnFoot(CONTROLS_P2);
     this.hud.setSettings(this.settings, (s) => {
       this.settings = s;
       saveSettings(s);
@@ -435,6 +441,7 @@ export class PrisonGame {
       this.hud2.setActive(false);
     }
     this.splitDivider.style.display = this.player2 ? 'block' : 'none';
+    this.hud.setCoopLayout(!!this.player2);
     this.hud2.setViewport(this.player2 ? this.playerViewport(2) : null);
   }
 
@@ -447,7 +454,7 @@ export class PrisonGame {
       return player === 1 ? { left: 0, top: 0, width: half, height: h } : { left: half, top: 0, width: w - half, height: h };
     }
     const half = Math.floor(h / 2);
-    return player === 1 ? { left: 0, top: half, width: w, height: h - half } : { left: 0, top: 0, width: w, height: half };
+    return player === 1 ? { left: 0, top: 0, width: w, height: h - half } : { left: 0, top: h - half, width: w, height: half };
   }
 
   private withPlayer2<T>(run: () => T): T {
@@ -1022,7 +1029,7 @@ export class PrisonGame {
     if (!this.leaking && this.leakIndex < LEAKS.length && progress >= LEAKS[this.leakIndex]) {
       this.leaking = true;
       this.sound.play('clang', { volume: 0.5, rate: 0.7 });
-      this.hud.showBanner('A SEAM HAS SPLIT!', 'The raft is losing air: mash A (or Space / click) to pump it up!');
+      this.hud.showBanner('A SEAM HAS SPLIT!', 'The raft is losing air: mash A / Space / click / numpad 0 to pump it up!');
     }
     const pressed = input.firing && !this.wasFiring;
     this.wasFiring = input.firing;
@@ -1119,7 +1126,7 @@ export class PrisonGame {
     const a = t * 0.25;
     this.camera.position.set(c.x + Math.sin(a) * 9, c.y + 4.5, c.z + Math.cos(a) * 9);
     this.camera.lookAt(c.x, c.y + 1.4, c.z);
-    if (t > 3) this.hud.setVictoryFooter('Press A / Enter to play it again (or Start / M for the level select)');
+    if (t > 3) this.hud.setVictoryFooter('Press A / Enter / numpad 0 to play again (or Start / M / numpad enter for level select)');
     if (t > 3 && input.menu.confirm) startMission(MISSION);
     this.world.step();
     this.impacts.update(dt);
@@ -1210,6 +1217,18 @@ export class PrisonGame {
         else if (!this.climbing && (this.stage === 'roof' || this.stage === 'out') && near(layout.bakeryPipe)) this.startClimb(layout.bakeryPipe, false);
         else if (!this.climbing && this.stage === 'out' && !this.player.isDown && this.gear.complete && Math.hypot(p.x - layout.launch.x, p.z - layout.launch.z) < LAUNCH_REACH) this.startRaft();
       });
+    }
+    // Keep an early fence escape recoverable even if a future collider/layout change opens a
+    // route around the locked gate. Once the gate is open, the beach route is intentional.
+    if (!this.seaGate.opened) {
+      if (isOutsidePrisonPerimeter(this.player.position.x, this.player.position.z)) {
+        this.player.teleport(this.checkpoint.x, this.checkpoint.z, this.checkpoint.yaw, this.checkpoint.y ?? 0);
+        this.hud.showCallout('THE SEA GATE IS STILL LOCKED · BACK INSIDE', '#ffd24a');
+      }
+      if (this.player2 && isOutsidePrisonPerimeter(this.player2.position.x, this.player2.position.z)) {
+        this.player2.teleport(this.checkpoint.x + 1.5, this.checkpoint.z, this.checkpoint.yaw, this.checkpoint.y ?? 0);
+        this.hud2.showCallout('THE SEA GATE IS STILL LOCKED · BACK INSIDE', '#ffd24a');
+      }
     }
     const anyoneOnRoof = layout.onRoof(this.player.position.x, this.player.position.y, this.player.position.z)
       || (!!this.player2 && layout.onRoof(this.player2.position.x, this.player2.position.y, this.player2.position.z));
@@ -1366,7 +1385,7 @@ export class PrisonGame {
     return { level: 0, label: `UNSEEN${creeping}`, color: '#9be27a' };
   }
 
-  private prisonHUD(): PrisonHUD {
+  private prisonHUD(input: InputState): PrisonHUD {
     const p = this.player.position;
     const down = this.player.downFor;
     const layout = this.facility.layout;
@@ -1382,13 +1401,21 @@ export class PrisonGame {
       prompt = this.climbing.up ? 'Climbing up the pipes…' : 'Sliding down the bakery pipe…';
     } else if (this.stage === 'raft') {
       const r = this.heliReport;
+      const lieFlatKey = !input.keyboardEnabled ? 'RB' : input.keyboardPlayer === 2 ? 'Right Shift' : 'Shift';
       if (this.raftPhase === 'inflating') prompt = 'Pumping up the raft…';
       else if (this.raftPhase === 'sinking') prompt = 'The raft is going down…';
-      else if (this.leaking) prompt = this.air <= 0 ? 'FLAT! Mash A to pump!' : 'The raft is losing air! MASH A (Space / click) to pump it up!';
-      else if (r?.hunting) prompt = 'They\'ve found you! Head for a white mist bank and lie flat (Shift)';
-      else if (r?.lit) prompt = 'You\'re in a searchlight! Paddle out of it, or lie flat (Shift)';
+      else if (this.leaking) {
+        const pump = input.keyboardEnabled ? input.keyboardPlayer === 2 ? 'Numpad 0' : 'Space / click' : 'A';
+        prompt = this.air <= 0 ? `FLAT! Mash ${pump} to pump!` : `The raft is losing air! MASH ${pump} to pump it up!`;
+      }
+      else if (r?.hunting) prompt = `They've found you! Head for a white mist bank and lie flat (${lieFlatKey})`;
+      else if (r?.lit) prompt = `You're in a searchlight! Paddle out of it, or lie flat (${lieFlatKey})`;
       else if (this.raft.atEdge) prompt = 'The current is pushing you back: keep to the channel';
-      else if (this.raftTimer < 14) prompt = 'W paddle · A D steer · mouse swings the camera · Shift lie flat';
+      else if (this.raftTimer < 14) prompt = input.keyboardEnabled && input.keyboardPlayer === 2
+        ? 'Up paddle · Down back water · Left/right steer · mouse swings the camera · Right Shift lie flat'
+        : input.keyboardEnabled
+          ? 'W paddle · A D steer · mouse swings the camera · Shift lie flat'
+          : 'Left stick paddle / steer · RB lie flat';
     } else if (this.stage === 'roof' && this.spotted > 0) {
       prompt = "You're in the light! Get out of it!";
     } else if (down > 0) {
@@ -1548,6 +1575,8 @@ export class PrisonGame {
       ride: null,
       cameraMode: this.stage === 'raft' ? 'third' : this.cam.mode,
       usingGamepad: input.usingGamepad,
+      keyboardPlayer: input.keyboardPlayer,
+      keyboardEnabled: input.keyboardEnabled,
       insideBase: null,
       map: NO_MAP,
       aimScreen: this.hud.paused || this.ending !== null || this.stage === 'raft' || this.intro !== null ? null : { x: viewport.width / 2, y: viewport.height / 2 },
@@ -1575,9 +1604,9 @@ export class PrisonGame {
       airSupport: null,
       tanker: null,
       siege: null,
-      prison: this.prisonHUD(),
+      prison: this.prisonHUD(input),
       driveStyle: this.settings.driveStyle,
-      mouseCaptureHint: !input.usingGamepad && !input.pointerLocked && input.pointerLockAvailable,
+      mouseCaptureHint: input.keyboardEnabled && !input.pointerLocked && input.pointerLockAvailable,
       soundLocked: this.sound.locked && (this.settings.sfxVolume > 0 || this.settings.musicVolume > 0),
     };
   }

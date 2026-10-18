@@ -12,6 +12,7 @@ export interface SiegeSnapshot {
   /** Enemy prisons whose prisoners have been freed (their wave is out). */
   freed: number[];
   player: { x: number; z: number; yaw: number; health: number };
+  player2?: { x: number; z: number; yaw: number; health: number };
   rocketCharge: number;
 }
 
