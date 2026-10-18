@@ -2207,6 +2207,7 @@ export class Game {
         6: 'The Great Castle has fallen! The siege is over and the prisoners are free.',
         7: '',
         8: '',
+        9: '',
       };
       const bombed = MISSION === 1 && this.tanker?.active;
       this.hud.showVictory(bombed ? 'The bomb tanker blew the Fortress sky-high! The toy box is saved!' : message[MISSION], NEXT_MISSION ? '' : 'Keep driving around and enjoy it!');

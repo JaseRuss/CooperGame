@@ -21,6 +21,8 @@ export type TrooperState = 'active' | 'jammed' | 'down';
 export class Trooper {
   /** Where to head from (fx, fz) to get to (tx, tz): the target itself, or the end of a bridge if there's a river between. */
   static route: ((fx: number, fz: number, tx: number, tz: number) => { x: number; z: number }) | null = null;
+  /** The height of the ground at (x, z) on a level with hills (null: flat ground at 0). */
+  static ground: ((x: number, z: number) => number) | null = null;
   readonly root = new THREE.Group();
   readonly pos = new THREE.Vector3();
   readonly collider: RAPIER.Collider;
@@ -75,8 +77,8 @@ export class Trooper {
     this.startledTag.position.y = 2.4;
     this.startledTag.visible = false;
     this.root.add(this.figure, this.tag, this.startledTag);
-    this.pos.set(x, 0, z);
-    this.body = world.createRigidBody(RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(x, 0.9, z));
+    this.pos.set(x, this.feetY(x, z), z);
+    this.body = world.createRigidBody(RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(x, this.bodyY(x, z), z));
     this.collider = world.createCollider(RAPIER.ColliderDesc.capsule(HALF_HEIGHT, RADIUS).setCollisionGroups(side === 'friend' ? FRIEND_GROUPS : ENEMY_GROUPS), this.body);
     this.controller = world.createCharacterController(0.02);
     this.controller.enableSnapToGround(0.3);
@@ -124,8 +126,8 @@ export class Trooper {
     this.controller.computeColliderMovement(this.collider, { x: ux * step, y: 0, z: uz * step }, undefined, WALK_ONLY);
     const m = this.controller.computedMovement();
     const t = this.body.translation();
-    this.body.setNextKinematicTranslation({ x: t.x + m.x, y: 0.9 + this.lift, z: t.z + m.z });
-    this.pos.set(t.x + m.x, this.lift, t.z + m.z);
+    this.body.setNextKinematicTranslation({ x: t.x + m.x, y: this.bodyY(t.x + m.x, t.z + m.z), z: t.z + m.z });
+    this.pos.set(t.x + m.x, this.feetY(t.x + m.x, t.z + m.z), t.z + m.z);
     // Head-on into a trunk gets nowhere: after a moment, step off to one side.
     if (Math.hypot(m.x, m.z) < step * 0.3 && step > 0.01) {
       this.stuck += dt;
@@ -138,6 +140,19 @@ export class Trooper {
     if (face) this.faceToward(go.x, go.z, dt);
     this.moving = true;
     return Math.hypot(m.x, m.z);
+  }
+
+  /** Where his feet are at (x, z): the ground there, plus any lift. */
+  private feetY(x: number, z: number): number {
+    return (Trooper.ground?.(x, z) ?? 0) + this.lift;
+  }
+
+  /**
+   * Where his capsule's middle goes. On hills it rides a little above the ground, so sliding it
+   * sideways up a slope doesn't run it into the ground (the height is set each step anyway).
+   */
+  private bodyY(x: number, z: number): number {
+    return this.feetY(x, z) + 0.9 + (Trooper.ground ? 0.3 : 0);
   }
 
   faceToward(x: number, z: number, dt: number, rate = 9): void {
@@ -159,8 +174,8 @@ export class Trooper {
   /** Stands him `h` metres up (on a fire step) or back down on the ground. */
   setLift(h: number): void {
     this.lift = h;
-    this.body.setTranslation({ x: this.pos.x, y: 0.9 + h, z: this.pos.z }, true);
-    this.pos.y = h;
+    this.body.setTranslation({ x: this.pos.x, y: this.bodyY(this.pos.x, this.pos.z), z: this.pos.z }, true);
+    this.pos.y = this.feetY(this.pos.x, this.pos.z);
   }
 
   /** Kneels him down (or stands him up); `cover` also takes him out of the line of fire while he's down there. */
@@ -205,8 +220,8 @@ export class Trooper {
 
   /** Jumps him to (x, z), clear of whatever he was stuck on. */
   warp(x: number, z: number): void {
-    this.body.setTranslation({ x, y: 0.9 + this.lift, z }, true);
-    this.pos.set(x, this.lift, z);
+    this.body.setTranslation({ x, y: this.bodyY(x, z), z }, true);
+    this.pos.set(x, this.feetY(x, z), z);
     this.stuck = 0;
     this.detour = 0;
   }
