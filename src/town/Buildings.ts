@@ -7,11 +7,23 @@ import { inPolygon, centroid, type TownData, type Pt, type Footprint } from './T
 
 /** Harled and painted walls, as on the estates round Penicuik, and slate grey or red-brown roofs. */
 const WALLS = [0xece4d2, 0xf2efe6, 0xd9cfba, 0xe6d6b8, 0xcfc8bc, 0xe9dcc9, 0xd8c3a5, 0xf0e2c8, 0xc9b79c];
-const ROOFS = [0x4c5056, 0x5a5e66, 0x6b4a3a, 0x7a4f3c, 0x45484d, 0x5e4b42];
+const ROOFS = [0x4c5056, 0x5a5e66, 0x45484d, 0x52565c, 0x3f4247, 0x5e6268, 0x4a4d52, 0x6b4a3a, 0x5e4b42];
 const DOORS = [0x7a2a2a, 0x2a4a7a, 0x2f5a35, 0xe8e8e0, 0x3a3a3a, 0x8a6a2a];
 const CARS = [0xc0392b, 0x2e5fa8, 0xe8e8e8, 0x2c2c2c, 0x8e9499, 0x3c7a4a, 0xd4a017, 0x6d3b8a];
 const GLASS = 0x2d3d4a;
 const FOOT = new Set(['footway', 'path', 'cycleway', 'steps', 'pedestrian', 'track']);
+/**
+ * Mauricewood Primary's blocks, as the aerial photos show them: one storey of flat roofs (light
+ * grey with rows of rooflights, one darker block), a taller hall with a hipped roof, and a low
+ * annex. The walls are buff brick.
+ */
+const SCHOOL_STYLE: Record<string, { h: number; roof: number; hip?: true; rooflights?: true }> = {
+  hall: { h: 6.6, roof: 0x8d9195, hip: true },
+  dark: { h: 4.9, roof: 0x4c5056, rooflights: true },
+  light: { h: 4.1, roof: 0xb5b9bb, rooflights: true },
+  annex: { h: 3.3, roof: 0x9a7a5c },
+};
+const SCHOOL_WALL = 0xc49a72;
 
 /** Triangles with a colour at every corner: everything in the town shares a couple of materials. */
 class Writer {
@@ -219,7 +231,7 @@ export class Buildings {
     const walls = new Writer();
     const rng = mulberry32(2611);
     for (const b of town.buildings) this.building(b, walls, rng);
-    this.school = this.buildSchool(walls);
+    this.school = this.buildSchool();
     const mesh = walls.build(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85 }));
     this.group.add(mesh);
     this.count.buildings = town.buildings.length;
@@ -248,9 +260,10 @@ export class Buildings {
     if (area < 4) return;
     const garage = b.kind === 'garage' || b.kind === 'garages' || b.kind === 'shed' || b.kind === 'carport';
     const flats = b.kind === 'apartments';
-    const levels = b.levels ?? (garage ? 1 : flats ? 3 : area < 55 ? 1 : rng() < 0.12 ? 1 : 2);
-    const storey = 2.7;
-    const wallH = garage ? 2.5 : levels * storey + 0.3;
+    const school = b.kind.startsWith('school-') ? SCHOOL_STYLE[b.kind.slice(7)] : undefined;
+    const levels = school ? (school.hip ? 2 : 1) : b.levels ?? (garage ? 1 : flats ? 3 : area < 55 ? 1 : rng() < 0.12 ? 1 : 2);
+    const storey = school ? school.h / levels : 2.7;
+    const wallH = school ? school.h : garage ? 2.5 : levels * storey + 0.3;
     let lo = Infinity, hi = -Infinity;
     for (const p of pts) {
       const h = this.ground(p);
@@ -259,13 +272,15 @@ export class Buildings {
     }
     const y0 = lo - 0.6;
     const y1 = hi + wallH;
-    const wallColor = garage ? (rng() < 0.5 ? 0xd6d3cc : 0xb9b4aa) : WALLS[Math.floor(rng() * WALLS.length)];
-    const roofColor = garage ? 0x55585c : ROOFS[Math.floor(rng() * ROOFS.length)];
+    const wallColor = school ? SCHOOL_WALL : garage ? (rng() < 0.5 ? 0xd6d3cc : 0xb9b4aa) : WALLS[Math.floor(rng() * WALLS.length)];
+    const roofColor = school ? school.roof : garage ? 0x55585c : ROOFS[Math.floor(rng() * ROOFS.length)];
     const rect = minRect(pts);
     const fill = area / (4 * rect.hl * rect.hw);
-    const street = this.roads.nearest(rect.c);
-    if (fill > 0.82 && !garage && rect.hw > 2) {
-      this.gabled(w, rect, y0, y1, wallColor, roofColor, levels, street?.at ?? null, lo, rng);
+    const street = school ? null : this.roads.nearest(rect.c);
+    if (school?.hip || (!school && fill > 0.82 && !garage && rect.hw > 2)) {
+      // Most of the detached houses round here have hipped roofs; terraces and long semis are gabled.
+      const hip = !!school?.hip || rng() < (rect.hl / rect.hw < 1.7 ? 0.85 : 0.25);
+      this.gabled(w, rect, y0, y1, wallColor, roofColor, levels, street?.at ?? null, lo, rng, hip, storey);
       return;
     }
     // Any other shape: its own walls round the footprint and a flat roof.
@@ -283,7 +298,9 @@ export class Buildings {
       if (up) this.solid(w, A, B, C, roofColor);
       else this.solid(w, A, C, B, roofColor);
     }
-    if (garage) {
+    if (school?.rooflights) this.rooflights(w, pts, y1);
+    if (school) this.windowsAround(w, pts, lo, 1, storey);
+    else if (garage) {
       // A pale up-and-over door on the side nearest the street.
       const s = street?.at;
       if (s) this.doorOnNearestEdge(w, pts, s, lo, 2.3, 2.0, 0xe6e6e0);
@@ -293,8 +310,26 @@ export class Buildings {
     }
   }
 
-  /** A plain box house with a pitched roof along its length. */
-  private gabled(w: Writer, r: Rect, y0: number, y1: number, wallColor: number, roofColor: number, levels: number, street: Pt | null, floor: number, rng: () => number): void {
+  /** Rows of little white rooflights on a flat roof (the school's). */
+  private rooflights(w: Writer, pts: Pt[], y: number): void {
+    const r = minRect(pts);
+    for (let s = -r.hl + 2.5; s < r.hl - 1.5; s += 3.6) {
+      for (let t = -r.hw + 2.5; t < r.hw - 1.5; t += 4.2) {
+        const at = (ds: number, dt: number, h: number) => new THREE.Vector3(r.c.x + r.ux * (s + ds) - r.uz * (t + dt), y + h, r.c.z + r.uz * (s + ds) + r.ux * (t + dt));
+        const mid = at(0, 0, 0);
+        if (!inPolygon({ x: mid.x, z: mid.z }, pts)) continue;
+        const c: [number, number][] = [[-0.7, -0.45], [-0.7, 0.45], [0.7, 0.45], [0.7, -0.45]];
+        for (let i = 0; i < 4; i++) {
+          const [a0, b0] = c[i], [a1, b1] = c[(i + 1) % 4];
+          w.quad(at(a0, b0, 0), at(a1, b1, 0), at(a1, b1, 0.35), at(a0, b0, 0.35), 0xd8dde0);
+        }
+        w.quad(at(-0.7, -0.45, 0.35), at(-0.7, 0.45, 0.35), at(0.7, 0.45, 0.35), at(0.7, -0.45, 0.35), 0xf4f6f7);
+      }
+    }
+  }
+
+  /** A plain box house with a pitched roof along its length: gabled, or hipped (sloping down at the ends too). */
+  private gabled(w: Writer, r: Rect, y0: number, y1: number, wallColor: number, roofColor: number, levels: number, street: Pt | null, floor: number, rng: () => number, hip = false, storey = 2.7): void {
     const at = (s: number, t: number, y: number) => new THREE.Vector3(r.c.x + r.ux * s - r.uz * t, y, r.c.z + r.uz * s + r.ux * t);
     const L = r.hl, W = r.hw;
     // Corners in the order that makes each wall face out.
@@ -306,12 +341,21 @@ export class Buildings {
     const rise = Math.min(3.2, W * 0.8);
     const o = 0.35;
     const ridge = y1 + rise;
-    // Gable ends (wall-coloured triangles) and the two roof slopes, with a little overhang.
-    this.solid(w, at(-L, -W, y1), at(-L, W, y1), at(-L, 0, ridge), wallColor);
-    this.solid(w, at(L, W, y1), at(L, -W, y1), at(L, 0, ridge), wallColor);
     const eave = y1 - o * (rise / W);
-    this.roofQuad(w, at(-L - o, W + o, eave), at(L + o, W + o, eave), at(L + o, 0, ridge), at(-L - o, 0, ridge), roofColor);
-    this.roofQuad(w, at(L + o, -W - o, eave), at(-L - o, -W - o, eave), at(-L - o, 0, ridge), at(L + o, 0, ridge), roofColor);
+    if (hip) {
+      // The ridge stops short of each end, and the ends slope down to the eaves too.
+      const rl = Math.max(0, L - W);
+      this.roofQuad(w, at(-L - o, W + o, eave), at(L + o, W + o, eave), at(rl, 0, ridge), at(-rl, 0, ridge), roofColor);
+      this.roofQuad(w, at(L + o, -W - o, eave), at(-L - o, -W - o, eave), at(-rl, 0, ridge), at(rl, 0, ridge), roofColor);
+      this.roofTri(w, at(-L - o, -W - o, eave), at(-L - o, W + o, eave), at(-rl, 0, ridge), roofColor);
+      this.roofTri(w, at(L + o, W + o, eave), at(L + o, -W - o, eave), at(rl, 0, ridge), roofColor);
+    } else {
+      // Gable ends (wall-coloured triangles) and the two roof slopes, with a little overhang.
+      this.solid(w, at(-L, -W, y1), at(-L, W, y1), at(-L, 0, ridge), wallColor);
+      this.solid(w, at(L, W, y1), at(L, -W, y1), at(L, 0, ridge), wallColor);
+      this.roofQuad(w, at(-L - o, W + o, eave), at(L + o, W + o, eave), at(L + o, 0, ridge), at(-L - o, 0, ridge), roofColor);
+      this.roofQuad(w, at(L + o, -W - o, eave), at(-L - o, -W - o, eave), at(-L - o, 0, ridge), at(L + o, 0, ridge), roofColor);
+    }
     // A chimney on many of them.
     if (rng() < 0.55) {
       const cs = (rng() < 0.5 ? -1 : 1) * (L - 0.9);
@@ -324,7 +368,6 @@ export class Buildings {
       w.quad(at(cs - 0.4, -0.35, cy), at(cs - 0.4, 0.35, cy), at(cs + 0.4, 0.35, cy), at(cs + 0.4, -0.35, cy), 0x5a4a40);
     }
     // Windows along both long sides, a storey at a time, and the front door on the street side.
-    const storey = 2.7;
     const n = Math.max(1, Math.floor((2 * L) / 3.1));
     const front = street ? Math.sign((street.x - r.c.x) * -r.uz + (street.z - r.c.z) * r.ux) || 1 : 1;
     const doorAt = n > 1 ? Math.floor(n / 2) : -1;
@@ -366,6 +409,12 @@ export class Buildings {
     // The underside too, so the overhang isn't see-through from below.
     w.quad(d, c, b, a, 0x3a3a38);
     this.colliderTris.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z, a.x, a.y, a.z, c.x, c.y, c.z, d.x, d.y, d.z);
+  }
+
+  private roofTri(w: Writer, a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3, color: number): void {
+    w.tri(a, b, c, color);
+    w.tri(c, b, a, 0x3a3a38);
+    this.colliderTris.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z);
   }
 
   /** Windows along each wall long enough for them, on every storey. */
@@ -414,86 +463,38 @@ export class Buildings {
   }
 
   /**
-   * Mauricewood Primary: its grounds are on the map but the building isn't, so it's a one-storey
-   * L of classrooms set back in the grounds, with big windows, a sign over the door, a playground
-   * in front and the flagpole.
+   * Mauricewood Primary: its blocks are traced from aerial photos (they aren't on the map) and
+   * built with the other buildings (`schoolStyle`). Here go the sign over the side facing Muirhead
+   * Place, the flagpole on the playground, and the spots round it all for its defenders.
    */
-  private buildSchool(w: Writer): School {
-    const grounds = this.town.schoolGrounds;
-    const mid = centroid(grounds);
-    // Face the way the attack comes from: the end of the route down the hill.
-    const route = this.town.route;
-    const arrive = route[route.length - 1];
-    let fx = arrive.x - mid.x, fz = arrive.z - mid.z;
-    const fl = Math.hypot(fx, fz) || 1;
-    fx /= fl;
-    fz /= fl;
-    // Long side across the way in; the building sits back from the middle of the grounds.
-    const ux = -fz, uz = fx;
-    const c = { x: mid.x - fx * 12, z: mid.z - fz * 12 };
-    const at = (s: number, t: number, y: number) => new THREE.Vector3(c.x + ux * s + fx * t, y, c.z + uz * s + fz * t);
-    const block = (s0: number, s1: number, t0: number, t1: number, h: number) => {
-      const pts = [{ s: s0, t: t0 }, { s: s1, t: t0 }, { s: s1, t: t1 }, { s: s0, t: t1 }].map((q) => ({ x: c.x + ux * q.s + fx * q.t, z: c.z + uz * q.s + fz * q.t }));
-      let lo = Infinity, hi = -Infinity;
-      for (const p of pts) {
-        lo = Math.min(lo, this.ground(p));
-        hi = Math.max(hi, this.ground(p));
-      }
-      const y0 = lo - 0.6, y1 = hi + h;
-      const quad = (sa: number, ta: number, sb: number, tb: number) => {
-        const A = at(sa, ta, y0), B = at(sb, tb, y0), C = at(sb, tb, y1), D = at(sa, ta, y1);
-        // Wind each wall to face out of the block.
-        const n = B.clone().sub(A).cross(D.clone().sub(A));
-        const o = at((sa + sb) / 2, (ta + tb) / 2, 0).sub(at((s0 + s1) / 2, (t0 + t1) / 2, 0));
-        if (n.dot(o) >= 0) this.wall(w, A, B, C, D, 0xc98f5e);
-        else this.wall(w, B, A, D, C, 0xc98f5e);
-      };
-      quad(s0, t0, s1, t0);
-      quad(s1, t0, s1, t1);
-      quad(s1, t1, s0, t1);
-      quad(s0, t1, s0, t0);
-      const R = [at(s0, t0, y1), at(s1, t0, y1), at(s1, t1, y1), at(s0, t1, y1)];
-      const up = R[1].clone().sub(R[0]).cross(R[2].clone().sub(R[0])).y > 0;
-      if (up) {
-        this.solid(w, R[0], R[1], R[2], 0x6a6e72);
-        this.solid(w, R[0], R[2], R[3], 0x6a6e72);
-      } else {
-        this.solid(w, R[0], R[2], R[1], 0x6a6e72);
-        this.solid(w, R[0], R[3], R[2], 0x6a6e72);
-      }
-      return { y1, lo };
-    };
-    const main = block(-26, 26, -8, 8, 4.4);
-    block(14, 30, -26, -8, 4.4);
-    // Big classroom windows along the front, and blue panels under them.
-    const front = 8.04;
-    for (let s = -24; s <= 24; s += 4) {
-      if (Math.abs(s) < 2) continue;
-      const g0 = this.ground({ x: c.x + ux * s + fx * front, z: c.z + uz * s + fz * front });
-      const glass = [at(s - 1.5, front, g0 + 1.1), at(s + 1.5, front, g0 + 1.1), at(s + 1.5, front, g0 + 3.2), at(s - 1.5, front, g0 + 3.2)];
-      const panel = [at(s - 1.5, front, g0 + 0.3), at(s + 1.5, front, g0 + 0.3), at(s + 1.5, front, g0 + 1.05), at(s - 1.5, front, g0 + 1.05)];
-      const facing = glass[1].clone().sub(glass[0]).cross(glass[3].clone().sub(glass[0])).dot(new THREE.Vector3(fx, 0, fz)) > 0;
-      if (facing) {
-        w.quad(glass[0], glass[1], glass[2], glass[3], 0x5f8fb0);
-        w.quad(panel[0], panel[1], panel[2], panel[3], 0x2d5fa0);
-      } else {
-        w.quad(glass[1], glass[0], glass[3], glass[2], 0x5f8fb0);
-        w.quad(panel[1], panel[0], panel[3], panel[2], 0x2d5fa0);
-      }
+  private buildSchool(): School {
+    const blocks = this.town.buildings.filter((b) => b.kind.startsWith('school-'));
+    const all = blocks.flatMap((b) => b.pts);
+    const c = centroid(all);
+    // The sign: on the longest wall of the main block that faces north-west, toward Muirhead Place.
+    const main = blocks.find((b) => b.kind === 'school-dark') ?? blocks[0];
+    let pts = main.pts;
+    if (polyArea(pts) > 0) pts = [...pts].reverse();
+    let best = { score: -Infinity, a: pts[0], b: pts[1], nx: 0, nz: 0 };
+    for (let i = 0; i < pts.length; i++) {
+      const a = pts[i], b = pts[(i + 1) % pts.length];
+      const len = Math.hypot(b.x - a.x, b.z - a.z);
+      const nx = -(b.z - a.z) / len, nz = (b.x - a.x) / len;
+      const score = (-nx - nz) * len;
+      if (score > best.score) best = { score, a, b, nx, nz };
     }
-    // The main door and a sign over it.
-    const gd = this.ground({ x: c.x + fx * front, z: c.z + fz * front });
-    const door = [at(-1.6, front + 0.02, gd), at(1.6, front + 0.02, gd), at(1.6, front + 0.02, gd + 2.6), at(-1.6, front + 0.02, gd + 2.6)];
-    const facing = door[1].clone().sub(door[0]).cross(door[3].clone().sub(door[0])).dot(new THREE.Vector3(fx, 0, fz)) > 0;
-    if (facing) w.quad(door[0], door[1], door[2], door[3], 0x1f4a8a);
-    else w.quad(door[1], door[0], door[3], door[2], 0x1f4a8a);
+    const mid = { x: (best.a.x + best.b.x) / 2, z: (best.a.z + best.b.z) / 2 };
+    let top = -Infinity;
+    for (const p of main.pts) top = Math.max(top, this.ground(p));
     const sign = this.schoolSign();
-    sign.position.copy(at(0, front + 0.08, main.y1 - 0.9));
-    sign.lookAt(sign.position.clone().add(new THREE.Vector3(fx, 0, fz)));
+    sign.position.set(mid.x + best.nx * 0.08, top + SCHOOL_STYLE.dark.h - 1.1, mid.z + best.nz * 0.08);
+    sign.lookAt(sign.position.clone().add(new THREE.Vector3(best.nx, 0, best.nz)));
     this.group.add(sign);
 
-    // The flagpole out in front, where the playground is.
-    const poleAt = { x: c.x + fx * 26, z: c.z + fz * 26 };
+    // The flagpole on the playground, toward its corner by the buildings.
+    const court = this.town.areas.find((a) => a.kind === 'court');
+    const cc = court ? centroid(court.pts) : { x: c.x + 15, z: c.z };
+    const poleAt = { x: cc.x + (c.x - cc.x) * 0.25, z: cc.z + (c.z - cc.z) * 0.25 };
     const py = this.ground(poleAt);
     const p = new PartBuilder();
     p.add(new THREE.CylinderGeometry(0.09, 0.12, 11, 10), plastic(0xdedede), poleAt.x, py + 5.5, poleAt.z);
@@ -502,21 +503,29 @@ export class Buildings {
     p.buildInto(this.group);
     const flag = new THREE.Mesh(new THREE.PlaneGeometry(2.2, 1.4).translate(1.15, 0, 0), new THREE.MeshStandardMaterial({ color: 0x4b7a2e, side: THREE.DoubleSide }));
     flag.position.set(poleAt.x, py + 1.2, poleAt.z);
-    flag.rotation.y = Math.atan2(-fz, fx) + Math.PI / 2;
+    flag.rotation.y = Math.atan2(cc.z - c.z, c.x - cc.x);
     this.group.add(flag);
-    this.footprints.add([at(-26, -8, 0), at(26, -8, 0), at(26, 8, 0), at(-26, 8, 0)].map((v) => ({ x: v.x, z: v.z })));
-    this.footprints.add([at(14, -26, 0), at(30, -26, 0), at(30, -8, 0), at(14, -8, 0)].map((v) => ({ x: v.x, z: v.z })));
+
+    // Defenders: on the playground, the lawn and the yard, and a ring round the buildings.
     const posts: Pt[] = [];
-    for (const [s, t] of [[-20, 13], [-8, 14], [6, 13], [18, 14], [-28, 2], [32, -4], [-10, 22], [10, 24], [0, 30], [22, -14]]) {
-      const v = at(s, t, 0);
-      posts.push({ x: v.x, z: v.z });
+    for (const a of this.town.areas) if (a.kind === 'court' || a.kind === 'lawn' || a.kind === 'yard') posts.push(centroid(a.pts));
+    if (court) for (const q of court.pts) posts.push({ x: q.x + (cc.x - q.x) * 0.3, z: q.z + (cc.z - q.z) * 0.3 });
+    for (let i = 0; i < 16 && posts.length < 14; i++) {
+      const ang = (i / 16) * Math.PI * 2;
+      for (let r = 26; r < 45; r += 3) {
+        const q = { x: c.x + Math.cos(ang) * r, z: c.z + Math.sin(ang) * r };
+        if (this.clear(q, 1)) {
+          posts.push(q);
+          break;
+        }
+      }
     }
     return {
       centre: c,
       pole: new THREE.Vector3(poleAt.x, py, poleAt.z),
       flag,
       raise: (k: number) => (flag.position.y = py + 1.2 + Math.max(0, Math.min(1, k)) * 9.4),
-      posts,
+      posts: posts.filter((q) => !this.footprints.hit(q, 0.6)),
     };
   }
 
@@ -577,6 +586,8 @@ export class Buildings {
         }
       }
     }
+    // Trees traced from aerial photos round the school.
+    for (const t of this.town.trees) spots.push({ p: t, conifer: false, size: 0.9 + rng() * 0.4 });
     for (const l of this.town.lines) {
       if (l.kind !== 'trees') continue;
       for (let i = 1; i < l.pts.length; i++) {
