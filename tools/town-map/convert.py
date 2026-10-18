@@ -11,7 +11,8 @@ SRC_DIR holds:
                    https://s3.amazonaws.com/elevation-tiles-prod/terrarium/15/X/Y.png
 
 The level starts outside 64 Sycamore Drive and ends at Mauricewood Primary School's grounds
-(the school building isn't mapped, so the game builds one). No third-party Python packages needed.
+(its buildings aren't mapped, so they and the playground are traced from aerial photos in
+extras.json). No third-party Python packages needed.
 """
 import sys, json, math, base64, struct, heapq, os
 sys.path.insert(0, os.path.dirname(__file__))
@@ -108,11 +109,47 @@ for e in d['elements']:
         for run in clip_line(p): barriers.append({'k': 'stream', 'p': flat(run)})
     elif t.get('natural') == 'tree_row':
         for run in clip_line(p): barriers.append({'k': 'trees', 'p': flat(run)})
+    elif t.get('natural') == 'water' and t.get('intermittent') == 'yes' and p[0] == p[-1]:
+        # A drainage basin that's dry most of the time: grass, as in the aerial photos.
+        areas.append({'k': 'basin', 'p': flat([(max(-HALF, min(HALF, x)), max(-HALF, min(HALF, z))) for x, z in p[:-1]])})
     else:
         for (kk, vv), name in AREA.items():
             if t.get(kk) == vv and p[0] == p[-1]:
                 areas.append({'k': name, 'p': flat([(max(-HALF, min(HALF, x)), max(-HALF, min(HALF, z))) for x, z in p[:-1]])})
                 break
+
+# --- hand-traced extras (the school's buildings and playground, trees): see extras.json ---
+extras = json.load(open(os.path.join(os.path.dirname(__file__), 'extras.json'), encoding='utf-8'))
+for b in extras['school']:
+    buildings.append({'k': 'school-' + b['k'], 'p': flat(b['p'])})
+for a in extras['areas']:
+    areas.append({'k': a['k'], 'p': flat(a['p'])})
+for l in extras['lines']:
+    barriers.append({'k': l['k'], 'p': flat(l['p'])})
+
+# --- driveways: from each house to the street in front of it ---
+DRIVE = {'residential', 'service', 'unclassified', 'tertiary', 'living_street'}
+street_segs = [(a, b, r['w']) for r in roads if r['k'] in DRIVE for pp in [list(zip(r['p'][0::2], r['p'][1::2]))] for a, b in zip(pp, pp[1:])]
+def near_seg(p, a, b):
+    dx, dz = b[0] - a[0], b[1] - a[1]
+    t = max(0, min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dz) / (dx * dx + dz * dz or 1)))
+    return (a[0] + dx * t, a[1] + dz * t)
+driveways = []
+for i, b in enumerate(buildings):
+    if b['k'] not in ('house', 'detached', 'garage', 'yes'): continue
+    bp = list(zip(b['p'][0::2], b['p'][1::2]))
+    c = (sum(x for x, _ in bp) / len(bp), sum(z for _, z in bp) / len(bp))
+    best = None
+    for a, e, w in street_segs:
+        if abs(a[0] - c[0]) > 40 or abs(a[1] - c[1]) > 40: continue
+        q = near_seg(c, a, e)
+        d = math.dist(q, c) - w / 2
+        if best is None or d < best[0]: best = (d, q, w)
+    if best is None or best[0] > 20: continue
+    d, q, w = best
+    k = (math.dist(q, c) - w / 2) / max(1e-6, math.dist(q, c))
+    end = (c[0] + (q[0] - c[0]) * k, c[1] + (q[1] - c[1]) * k)
+    driveways.append([round(c[0], 1), round(c[1], 1), round(end[0], 1), round(end[1], 1), i % 5 < 3 and 1 or 0])
 
 # --- start, school and the road route between them ---
 # 64 Sycamore Drive: start in front of it, most of the way from the house to its street.
@@ -133,8 +170,9 @@ def in_poly(q, poly):
         if (z1 > q[1]) != (z2 > q[1]) and q[0] < x1 + (q[1] - z1) * (x2 - x1) / (z2 - z1): c = not c
     return c
 def area(p): return abs(sum(x1 * z2 - x2 * z1 for (x1, z1), (x2, z2) in zip(p, p[1:] + p[:1]))) / 2
-# The school building itself isn't mapped (only its grounds), so the game builds one: aim for the middle of the grounds.
-school = (sum(x for x, _ in gp) / len(gp), sum(z for _, z in gp) / len(gp))
+# The school's buildings aren't mapped (only its grounds), so they're traced in extras.json: aim for the middle of them.
+sp = [q for b in extras['school'] for q in b['p']]
+school = (sum(x for x, _ in sp) / len(sp), sum(z for _, z in sp) / len(sp))
 print('school grounds area', round(area(gp)), 'm2; buildings inside:', sum(in_poly((b['p'][0], b['p'][1]), gp) for b in buildings))
 adj = {}
 def key(q): return (round(q[0], 1), round(q[1], 1))
@@ -172,5 +210,6 @@ json.dump({
     'start': [round(v, 1) for v in start], 'home': [round(v, 1) for v in home], 'school': [round(v, 1) for v in school], 'schoolGrounds': school_area['p'],
     'route': flat(route), 'junctions': flat(junctions),
     'roads': roads, 'buildings': buildings, 'areas': [a for a in areas if a is not school_area] + [school_area], 'barriers': barriers,
+    'trees': extras['trees'], 'driveways': driveways,
 }, open(out, 'w'), separators=(',', ':'))
 print('wrote', os.path.getsize(out), 'bytes')
