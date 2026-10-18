@@ -3,7 +3,7 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import { mulberry32 } from '../utils/rng';
 import { plastic } from '../utils/plastic';
 import { PartBuilder, sandbagGeometry } from '../utils/modelKit';
-import { inPolygon, centroid, type TownData, type Pt, type Footprint } from './TownData';
+import { inPolygon, centroid, type TownData, type Pt, type Footprint, type Line } from './TownData';
 
 /** Harled and painted walls, as on the estates round Penicuik, and slate grey or red-brown roofs. */
 const WALLS = [0xece4d2, 0xf2efe6, 0xd9cfba, 0xe6d6b8, 0xcfc8bc, 0xe9dcc9, 0xd8c3a5, 0xf0e2c8, 0xc9b79c];
@@ -216,12 +216,15 @@ export interface Roadblock {
  */
 export class Buildings {
   readonly group = new THREE.Group();
-  readonly count: { buildings: number; trees: number; cars: number; triangles: number } = { buildings: 0, trees: 0, cars: 0, triangles: 0 };
+  readonly count: { buildings: number; trees: number; cars: number; triangles: number; gardens: number } = { buildings: 0, trees: 0, cars: 0, triangles: 0, gardens: 0 };
   readonly school: School;
   private readonly body: RAPIER.RigidBody;
   private readonly roads = new SegmentGrid();
   private readonly footprints = new PolyGrid();
   private readonly colliderTris: number[] = [];
+  /** Each house and the street it faces, for its back garden; and the fences round those gardens. */
+  private readonly plots: { r: Rect; street: Pt }[] = [];
+  private readonly gardenLines: Line[] = [];
 
   constructor(private readonly world: RAPIER.World, scene: THREE.Scene, private readonly town: TownData) {
     this.body = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
@@ -242,6 +245,7 @@ export class Buildings {
     world.createCollider(RAPIER.ColliderDesc.trimesh(verts, idx), this.body);
 
     this.trees(rng);
+    this.gardens();
     this.barriers();
     this.cars(rng);
     scene.add(this.group);
@@ -277,6 +281,7 @@ export class Buildings {
     const rect = minRect(pts);
     const fill = area / (4 * rect.hl * rect.hw);
     const street = school ? null : this.roads.nearest(rect.c);
+    if (street && !garage && !flats && !school) this.plots.push({ r: rect, street: street.at });
     if (school?.hip || (!school && fill > 0.82 && !garage && rect.hw > 2)) {
       // Most of the detached houses round here have hipped roofs; terraces and long semis are gabled.
       const hip = !!school?.hip || rng() < (rect.hl / rect.hw < 1.7 ? 0.85 : 0.25);
@@ -369,7 +374,12 @@ export class Buildings {
     }
     // Windows along both long sides, a storey at a time, and the front door on the street side.
     const n = Math.max(1, Math.floor((2 * L) / 3.1));
-    const front = street ? Math.sign((street.x - r.c.x) * -r.uz + (street.z - r.c.z) * r.ux) || 1 : 1;
+    // The front faces the road: a long side, or an end when the road runs past that end instead
+    // (the same test the back garden uses, so the garden is always behind).
+    const ds = street ? (street.x - r.c.x) * r.ux + (street.z - r.c.z) * r.uz : 0;
+    const dt = street ? (street.x - r.c.x) * -r.uz + (street.z - r.c.z) * r.ux : 1;
+    const endOn = Math.abs(ds) / L > Math.abs(dt) / W;
+    const front = endOn ? 0 : Math.sign(dt) || 1;
     const doorAt = n > 1 ? Math.floor(n / 2) : -1;
     for (const side of [-1, 1]) {
       const t = side * (W + 0.03);
@@ -385,6 +395,17 @@ export class Buildings {
         }
       }
       if (side === front && doorAt < 0) this.pane(w, at, 0, t, side, floor + 0.02, 0.5, 2.05, DOORS[Math.floor(rng() * DOORS.length)]);
+    }
+    if (endOn) {
+      // The front door in the end wall facing the road, a window beside it if there's room, and one above on each storey.
+      const side = Math.sign(ds) || 1;
+      const s = side * (L + 0.03);
+      const end = (t: number, yb: number, hw: number, h: number, color: number) =>
+        w.quad(at(s, t + side * hw, yb), at(s, t - side * hw, yb), at(s, t - side * hw, yb + h), at(s, t + side * hw, yb + h), color);
+      const wide = W > 2.6;
+      end(wide ? -W * 0.4 : 0, floor + 0.02, 0.5, 2.05, DOORS[Math.floor(rng() * DOORS.length)]);
+      if (wide) end(W * 0.4, floor + 0.95, 0.6, 1.2, GLASS);
+      for (let lv = 1; lv < levels; lv++) end(0, floor + 0.95 + lv * storey, 0.6, 1.2, GLASS);
     }
   }
 
@@ -637,6 +658,42 @@ export class Buildings {
     }
   }
 
+  /**
+   * A fenced back garden behind every house: the side away from its street, as wide as the house,
+   * running back until just short of the next building or a road (up to 14 m). Gardens less than
+   * 3 m deep are left out. Side fences sit a hair inside the house's width, so the fences of two
+   * semis back to back don't land on top of each other.
+   */
+  private gardens(): void {
+    for (const { r, street } of this.plots) {
+      const dx = street.x - r.c.x, dz = street.z - r.c.z;
+      const ds = dx * r.ux + dz * r.uz;
+      const dt = -dx * r.uz + dz * r.ux;
+      // Out the back (a) and across it (b): the street is off the end, or off a long side.
+      const px = -r.uz, pz = r.ux;
+      const endOn = Math.abs(ds) / r.hl > Math.abs(dt) / r.hw;
+      const sign = -Math.sign(endOn ? ds : dt) || 1;
+      const ax = (endOn ? r.ux : px) * sign, az = (endOn ? r.uz : pz) * sign;
+      const bx = endOn ? px : r.ux, bz = endOn ? pz : r.uz;
+      const e = endOn ? r.hl : r.hw;
+      const half = (endOn ? r.hw : r.hl) - 0.06;
+      const at = (d: number, k: number): Pt => ({ x: r.c.x + ax * (e + d) + bx * half * k, z: r.c.z + az * (e + d) + bz * half * k });
+      let depth = 0;
+      for (let d = 1; d <= 14; d += 0.5) {
+        const blocked = [-0.9, 0, 0.9].some((k) => {
+          const p = at(d, k);
+          const road = this.roads.nearest(p);
+          return this.footprints.hit(p, 0.4) || (!!road && road.d < 0.6);
+        });
+        if (blocked) break;
+        depth = d;
+      }
+      if (depth < 3) continue;
+      this.gardenLines.push({ kind: 'garden', pts: [at(0, -1), at(depth, -1), at(depth, 1), at(0, 1)] });
+    }
+    this.count.gardens = this.gardenLines.length;
+  }
+
   /** Hedges, garden walls and fences, as runs of short boxes that follow the ground. */
   private barriers(): void {
     const kinds: Record<string, { h: number; t: number; color: number; solid: boolean }> = {
@@ -644,10 +701,12 @@ export class Buildings {
       wall: { h: 1.1, t: 0.35, color: 0x9c968a, solid: true },
       retaining_wall: { h: 1.0, t: 0.45, color: 0x8e8a80, solid: true },
       fence: { h: 1.15, t: 0.08, color: 0x7a5a3a, solid: false },
+      // The back-garden fences: tall wooden panels you can't see or climb over.
+      garden: { h: 1.8, t: 0.08, color: 0x8a6440, solid: true },
     };
     for (const [kind, k] of Object.entries(kinds)) {
       const pieces: { a: Pt; b: Pt }[] = [];
-      for (const l of this.town.lines) {
+      for (const l of kind === 'garden' ? this.gardenLines : this.town.lines) {
         if (l.kind !== kind) continue;
         for (let i = 1; i < l.pts.length; i++) {
           const a = l.pts[i - 1], b = l.pts[i];
@@ -663,7 +722,7 @@ export class Buildings {
       const m = new THREE.Matrix4();
       pieces.forEach((p, i) => {
         const mid = { x: (p.a.x + p.b.x) / 2, z: (p.a.z + p.b.z) / 2 };
-        const len = Math.hypot(p.b.x - p.a.x, p.b.z - p.a.z) + (kind === 'fence' ? 0.02 : k.t * 0.5);
+        const len = Math.hypot(p.b.x - p.a.x, p.b.z - p.a.z) + (kind === 'fence' || kind === 'garden' ? 0.02 : k.t * 0.5);
         const yaw = Math.atan2(-(p.b.z - p.a.z), p.b.x - p.a.x);
         const y = Math.min(this.ground(p.a), this.ground(p.b)) - 0.25;
         const top = Math.max(this.ground(p.a), this.ground(p.b)) + k.h;
@@ -755,6 +814,8 @@ export class Buildings {
     const fx = facing.x / fl, fz = facing.z / fl;
     const yawFacing = Math.atan2(-fx, -fz);
     for (let i = -5; i <= 5; i++) {
+      // A gap in the middle to get through: with the back gardens fenced, there's no way round.
+      if (i === 0 || i === 1) continue;
       const a = i * 0.16;
       const r = 7;
       // The curve bows toward the attack.
