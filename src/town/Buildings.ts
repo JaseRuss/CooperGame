@@ -6,8 +6,11 @@ import { PartBuilder, sandbagGeometry } from '../utils/modelKit';
 import { inPolygon, centroid, type TownData, type Pt, type Footprint, type Line } from './TownData';
 
 /** Harled and painted walls, as on the estates round Penicuik, and slate grey or red-brown roofs. */
-const WALLS = [0xece4d2, 0xf2efe6, 0xd9cfba, 0xe6d6b8, 0xcfc8bc, 0xe9dcc9, 0xd8c3a5, 0xf0e2c8, 0xc9b79c];
-const ROOFS = [0x4c5056, 0x5a5e66, 0x45484d, 0x52565c, 0x3f4247, 0x5e6268, 0x4a4d52, 0x6b4a3a, 0x5e4b42];
+/** White and pale grey render on most of the new houses (as in a drone shot of Sycamore Drive), some buff, a few rows of red brick. */
+const WALLS = [0xf4f3ef, 0xefeee9, 0xe9e8e3, 0xf6f4ee, 0xe3e2dd, 0xdcdbd6, 0xece6d8, 0xd9c7a8, 0xf1f0ec, 0xa9654e, 0xb5765c];
+/** Blue-grey slate (or slate-look tiles), and now and then a brown one. */
+const ROOFS = [0x4e5664, 0x56606e, 0x48505c, 0x5d6672, 0x434a55, 0x515a68, 0x6a5246];
+const SOLAR = 0x1e2a46;
 const DOORS = [0x7a2a2a, 0x2a4a7a, 0x2f5a35, 0xe8e8e0, 0x3a3a3a, 0x8a6a2a];
 const CARS = [0xc0392b, 0x2e5fa8, 0xe8e8e8, 0x2c2c2c, 0x8e9499, 0x3c7a4a, 0xd4a017, 0x6d3b8a];
 const GLASS = 0x2d3d4a;
@@ -216,7 +219,7 @@ export interface Roadblock {
  */
 export class Buildings {
   readonly group = new THREE.Group();
-  readonly count: { buildings: number; trees: number; cars: number; triangles: number; gardens: number } = { buildings: 0, trees: 0, cars: 0, triangles: 0, gardens: 0 };
+  readonly count: { buildings: number; trees: number; cars: number; triangles: number; gardens: number; lamps: number } = { buildings: 0, trees: 0, cars: 0, triangles: 0, gardens: 0, lamps: 0 };
   readonly school: School;
   private readonly body: RAPIER.RigidBody;
   private readonly roads = new SegmentGrid();
@@ -244,8 +247,9 @@ export class Buildings {
     const idx = new Uint32Array(verts.length / 3).map((_, i) => i);
     world.createCollider(RAPIER.ColliderDesc.trimesh(verts, idx), this.body);
 
-    this.trees(rng);
     this.gardens();
+    this.trees(rng);
+    this.lampPosts();
     this.barriers();
     this.cars(rng);
     scene.add(this.group);
@@ -276,16 +280,16 @@ export class Buildings {
     }
     const y0 = lo - 0.6;
     const y1 = hi + wallH;
-    const wallColor = school ? SCHOOL_WALL : garage ? (rng() < 0.5 ? 0xd6d3cc : 0xb9b4aa) : WALLS[Math.floor(rng() * WALLS.length)];
-    const roofColor = school ? school.roof : garage ? 0x55585c : ROOFS[Math.floor(rng() * ROOFS.length)];
+    const wallColor = school ? SCHOOL_WALL : WALLS[Math.floor(rng() * WALLS.length)];
+    const roofColor = school ? school.roof : ROOFS[Math.floor(rng() * ROOFS.length)];
     const rect = minRect(pts);
     const fill = area / (4 * rect.hl * rect.hw);
     const street = school ? null : this.roads.nearest(rect.c);
     if (street && !garage && !flats && !school) this.plots.push({ r: rect, street: street.at });
-    if (school?.hip || (!school && fill > 0.82 && !garage && rect.hw > 2)) {
-      // Most of the detached houses round here have hipped roofs; terraces and long semis are gabled.
-      const hip = !!school?.hip || rng() < (rect.hl / rect.hw < 1.7 ? 0.85 : 0.25);
-      this.gabled(w, rect, y0, y1, wallColor, roofColor, levels, street?.at ?? null, lo, rng, hip, storey);
+    if (school?.hip || (!school && fill > 0.82 && rect.hw > (garage ? 1.2 : 2))) {
+      // Most of the detached houses round here have hipped roofs; terraces and long semis are gabled. Garages get a low pitched roof too.
+      const hip = !!school?.hip || rng() < (garage ? 0.5 : rect.hl / rect.hw < 1.7 ? 0.85 : 0.25);
+      this.gabled(w, rect, y0, y1, wallColor, roofColor, levels, street?.at ?? null, lo, rng, hip, storey, garage, !school && !garage && rng() < 0.3);
       return;
     }
     // Any other shape: its own walls round the footprint and a flat roof.
@@ -334,7 +338,7 @@ export class Buildings {
   }
 
   /** A plain box house with a pitched roof along its length: gabled, or hipped (sloping down at the ends too). */
-  private gabled(w: Writer, r: Rect, y0: number, y1: number, wallColor: number, roofColor: number, levels: number, street: Pt | null, floor: number, rng: () => number, hip = false, storey = 2.7): void {
+  private gabled(w: Writer, r: Rect, y0: number, y1: number, wallColor: number, roofColor: number, levels: number, street: Pt | null, floor: number, rng: () => number, hip = false, storey = 2.7, garage = false, solar = false): void {
     const at = (s: number, t: number, y: number) => new THREE.Vector3(r.c.x + r.ux * s - r.uz * t, y, r.c.z + r.uz * s + r.ux * t);
     const L = r.hl, W = r.hw;
     // Corners in the order that makes each wall face out.
@@ -361,8 +365,19 @@ export class Buildings {
       this.roofQuad(w, at(-L - o, W + o, eave), at(L + o, W + o, eave), at(L + o, 0, ridge), at(-L - o, 0, ridge), roofColor);
       this.roofQuad(w, at(L + o, -W - o, eave), at(-L - o, -W - o, eave), at(-L - o, 0, ridge), at(L + o, 0, ridge), roofColor);
     }
+    // Solar panels on the slope that faces south (+z), as on many of the new houses.
+    if (solar) {
+      const sd = Math.sign(r.ux) || 1; // the +t slope faces (-uz, ux): south when ux > 0
+      const rl = hip ? Math.max(0, L - W) : L + o;
+      const hs = Math.min(2.6, 0.85 * (rl + (L + o - rl) * 0.3));
+      const pt = (s: number, f: number) => at(s, sd * (W + o) * (1 - f), eave + (ridge - eave) * f + 0.07);
+      if (hs > 0.8) {
+        if (sd > 0) w.quad(pt(-hs, 0.2), pt(hs, 0.2), pt(hs, 0.7), pt(-hs, 0.7), SOLAR);
+        else w.quad(pt(hs, 0.2), pt(-hs, 0.2), pt(-hs, 0.7), pt(hs, 0.7), SOLAR);
+      }
+    }
     // A chimney on many of them.
-    if (rng() < 0.55) {
+    if (!garage && rng() < 0.45) {
       const cs = (rng() < 0.5 ? -1 : 1) * (L - 0.9);
       const cy = ridge + 0.9;
       const ch = [[-0.4, -0.35], [-0.4, 0.35], [0.4, 0.35], [0.4, -0.35]] as const;
@@ -381,6 +396,16 @@ export class Buildings {
     const endOn = Math.abs(ds) / L > Math.abs(dt) / W;
     const front = endOn ? 0 : Math.sign(dt) || 1;
     const doorAt = n > 1 ? Math.floor(n / 2) : -1;
+    if (garage) {
+      // A pale up-and-over door on the side facing the road, and nothing else.
+      if (endOn) {
+        const side = Math.sign(ds) || 1;
+        const s = side * (L + 0.03);
+        const hw = Math.min(1.15, W - 0.2);
+        w.quad(at(s, side * hw, floor + 0.02), at(s, -side * hw, floor + 0.02), at(s, -side * hw, floor + 2.0), at(s, side * hw, floor + 2.0), 0xe6e6e0);
+      } else this.pane(w, at, 0, front * (W + 0.03), front, floor + 0.02, Math.min(1.15, L - 0.2), 2.0, 0xe6e6e0);
+      return;
+    }
     for (const side of [-1, 1]) {
       const t = side * (W + 0.03);
       for (let lv = 0; lv < levels; lv++) {
@@ -620,6 +645,25 @@ export class Buildings {
         }
       }
     }
+    // Rows of young trees planted either side of the path along the old railway line by Sycamore Drive.
+    const gardens = new PolyGrid();
+    for (const g of this.gardenLines) gardens.add(g.pts);
+    const rail = this.railwayPath();
+    if (rail) {
+      for (let i = 1; i < rail.length; i++) {
+        const a = rail[i - 1], b = rail[i];
+        const len = Math.hypot(b.x - a.x, b.z - a.z);
+        const ux = (b.x - a.x) / len, uz = (b.z - a.z) / len;
+        for (let m = 0; m < len; m += 3.5) {
+          for (const side of [-1, 1]) {
+            if (rng() > 0.7) continue;
+            const off = side * (4 + rng() * 6);
+            const p = { x: a.x + ux * m - uz * off + (rng() - 0.5), z: a.z + uz * m + ux * off + (rng() - 0.5) };
+            if (this.clear(p, 1.2) && !gardens.hit(p, 1)) spots.push({ p, conifer: false, size: 0.32 + rng() * 0.15 });
+          }
+        }
+      }
+    }
     const n = spots.length;
     this.count.trees = n;
     const trunk = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.18, 0.28, 1, 6, 1, true).translate(0, 0.5, 0), plastic(0x6b4a2e), n);
@@ -694,6 +738,65 @@ export class Buildings {
     this.count.gardens = this.gardenLines.length;
   }
 
+  /** The tarmac path along the old railway line past Sycamore Drive: the long path nearest the start. */
+  private railwayPath(): Pt[] | null {
+    let best: Pt[] | null = null, bestD = 80;
+    for (const r of this.town.roads) {
+      if (r.kind !== 'path' && r.kind !== 'cycleway') continue;
+      let len = 0;
+      for (let i = 1; i < r.pts.length; i++) len += Math.hypot(r.pts[i].x - r.pts[i - 1].x, r.pts[i].z - r.pts[i - 1].z);
+      if (len < 600) continue;
+      const d = Math.min(...r.pts.map((p) => Math.hypot(p.x - this.town.start.x, p.z - this.town.start.z)));
+      if (d < bestD) {
+        bestD = d;
+        best = r.pts;
+      }
+    }
+    return best;
+  }
+
+  /** Street lamps: along the pavements of the housing streets, and down the railway path. */
+  private lampPosts(): void {
+    const spots: { p: Pt; yaw: number }[] = [];
+    const along = (pts: Pt[], gap: number, off: number) => {
+      let carry = gap / 2;
+      for (let i = 1; i < pts.length; i++) {
+        const a = pts[i - 1], b = pts[i];
+        const len = Math.hypot(b.x - a.x, b.z - a.z);
+        const ux = (b.x - a.x) / len, uz = (b.z - a.z) / len;
+        for (let m = carry; m < len; m += gap) {
+          const p = { x: a.x + ux * m - uz * off, z: a.z + uz * m + ux * off };
+          // The lamp leans out over the road, toward its middle line.
+          if (!this.footprints.hit(p, 0.8)) spots.push({ p, yaw: Math.atan2(ux * off, uz * off) });
+          carry = m + gap - len;
+        }
+        if (carry < 0) carry = 0;
+      }
+    };
+    for (const r of this.town.roads) {
+      if (r.kind === 'residential' || r.kind === 'tertiary' || r.kind === 'unclassified' || r.kind === 'primary') along(r.pts, 34, r.width / 2 + 1.1);
+    }
+    const rail = this.railwayPath();
+    if (rail) along(rail, 30, 1.4);
+    const n = spots.length;
+    this.count.lamps = n;
+    const pole = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.06, 0.09, 6, 6).translate(0, 3, 0), plastic(0x9aa0a4), n);
+    const head = new THREE.InstancedMesh(new THREE.BoxGeometry(0.75, 0.12, 0.26).translate(0.32, 6, 0), plastic(0x6f767b), n);
+    const m = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    spots.forEach((s, i) => {
+      q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), s.yaw);
+      m.compose(new THREE.Vector3(s.p.x, this.ground(s.p) - 0.1, s.p.z), q, new THREE.Vector3(1, 1, 1));
+      pole.setMatrixAt(i, m);
+      head.setMatrixAt(i, m);
+    });
+    for (const im of [pole, head]) {
+      im.castShadow = true;
+      im.computeBoundingSphere();
+      this.group.add(im);
+    }
+  }
+
   /** Hedges, garden walls and fences, as runs of short boxes that follow the ground. */
   private barriers(): void {
     const kinds: Record<string, { h: number; t: number; color: number; solid: boolean }> = {
@@ -702,7 +805,7 @@ export class Buildings {
       retaining_wall: { h: 1.0, t: 0.45, color: 0x8e8a80, solid: true },
       fence: { h: 1.15, t: 0.08, color: 0x7a5a3a, solid: false },
       // The back-garden fences: tall wooden panels you can't see or climb over.
-      garden: { h: 1.8, t: 0.08, color: 0x8a6440, solid: true },
+      garden: { h: 1.8, t: 0.08, color: 0xa08566, solid: true },
     };
     for (const [kind, k] of Object.entries(kinds)) {
       const pieces: { a: Pt; b: Pt }[] = [];

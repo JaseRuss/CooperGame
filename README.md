@@ -693,7 +693,10 @@ and long semis, as in aerial photos of the estate), windows on each storey, and 
 road (the door goes in the gable end when the road runs past that end) with a driveway to it. Behind
 each house is a back garden with a tall wooden fence round it, running back to the next building or
 road (they're solid, so the way down is along the streets and paths). The rest are built to their own
-outline with a flat roof. Cars are
+outline with a flat roof. As in a drone shot of Sycamore Drive, most walls are white or pale grey
+render (with some buff and a few rows of red brick), roofs are blue-grey slate with solar panels on
+some south-facing slopes, and garages have low pitched roofs. Street lamps line the pavements and
+the path along the old railway line, which has rows of young trees either side. Cars are
 parked along the kerbs, and hedges, garden walls and trees make cover. The drainage basins that are
 dry most of the time are grass.
 
