@@ -936,9 +936,11 @@ export class Buildings {
     const g = this.ground({ x: px, z: pz });
     p.add(new THREE.CylinderGeometry(0.06, 0.06, 4.5, 8), plastic(0x6b4a2e), px, g + 2.25, pz);
     p.buildInto(this.group);
-    const flagMaterial = plastic(color);
+    // Its own copy of the army's plastic: it turns green when the roadblock is taken, and the shared
+    // one is the soldiers' own colour (recolouring that turned every soldier of that army green).
+    const flagMaterial = plastic(color).clone();
+    flagMaterial.side = THREE.DoubleSide;
     const flag = new THREE.Mesh(new THREE.PlaneGeometry(1.4, 0.9).translate(0.72, 0, 0), flagMaterial);
-    (flag.material as THREE.MeshPhysicalMaterial).side = THREE.DoubleSide;
     flag.position.set(px, g + 4, pz);
     flag.rotation.y = yawFacing;
     this.group.add(flag);
