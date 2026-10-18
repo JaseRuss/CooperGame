@@ -682,13 +682,41 @@ prisoners. This level supports local co-op: both players can fight, rescue priso
 
 The plan is in `docs/plans/under-siege.md`.
 
+## Bonus: Penicuik
+
+A bonus level in a real town, in the level select as **9 · Bonus: Penicuik** (`?mission=9`). Every
+house, garage and block of flats, every street and path, the gardens, woods, playing fields and
+car parks are where they really are in Penicuik, Midlothian (from OpenStreetMap), on the real
+hill (from elevation data): about 1,500 buildings over a square kilometre and a bit. Houses with a
+plain rectangular footprint get a pitched roof, windows on each storey and a front door facing the
+street; the rest are built to their own outline with a flat roof. Cars are parked along the kerbs,
+and hedges, garden walls and trees make cover.
+
+You start at the top of the hill with a squad of four and fight down the hill to
+**Mauricewood Primary School**, about 1.1 km away by road and 30 m lower. The way is dotted in gold
+on the map. The enemy has five sandbagged **roadblocks** at junctions on the way down (taking one
+makes it your checkpoint), pairs on patrol in the side streets, and ten defenders round the school.
+Clear the school, then stand at the flagpole in front of it to raise our flag and win. The school
+building itself isn't on OpenStreetMap (only its grounds are), so the one in the game is made up.
+
+You have the rifle, the jam gun and the grenade launcher. The HUD shows the street you're on and
+how high above sea level you are. Two players can play: either can raise the flag, and standing next
+to a knocked-down partner helps them back up (otherwise it's back to the checkpoint).
+
+- Code is in `src/town/` (`TownGame` is the level, `TownData` loads the map, `TownTerrain` the
+  ground and its painted map, `Buildings` the houses, school, trees, hedges, cars and roadblocks,
+  `TownMap` the minimap and pause map).
+- The map is `public/maps/penicuik.json`, made by `tools/town-map/convert.py` from an Overpass
+  API download of OpenStreetMap and AWS Terrain Tiles (zoom 15); the script's header has the area
+  and the start and school coordinates.
+
 ## Level select
 
 Pause, open **Options** and pick a level under **Level select** at the bottom,
 then press A or Enter (or click it). It starts that mission from the beginning.
-You can also open the game with `?mission=1` up to `?mission=8`. Those numbers are fixed ids, not
+You can also open the game with `?mission=1` up to `?mission=9`. Those numbers are fixed ids, not
 the level numbers: 1 is Day to Night, 2 the jungle, 3 the castles, 4 the zombies, 5 the prison
-break, 6 Under Siege, 7 the Moon and 8 the trenches. The level numbers come from the order in the
+break, 6 Under Siege, 7 the Moon, 8 the trenches and 9 Penicuik. The level numbers come from the order in the
 level select.
 
 ## Credits
@@ -706,3 +734,7 @@ too:
   `public/models/huts/LICENSE-quaternius-huts.txt`.
 - **[fonts.google.com](https://fonts.google.com/specimen/Black+Ops+One)**: the
   Black Ops One font by James Grieshaber and Eben Sorkin. SIL Open Font License.
+- **[OpenStreetMap](https://www.openstreetmap.org/copyright)**: the streets, houses, gardens and
+  woods of the Penicuik level. © OpenStreetMap contributors, Open Database License (ODbL).
+- **[Terrain Tiles](https://registry.opendata.aws/terrain-tiles/)** on AWS (Mapzen terrarium):
+  the elevation of the Penicuik level, from public sources including SRTM and EU-DEM.
