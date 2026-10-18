@@ -689,15 +689,18 @@ house, garage and block of flats, every street and path, the gardens, woods, pla
 car parks are where they really are in Penicuik, Midlothian (from OpenStreetMap), on the real
 hill (from elevation data): about 1,500 buildings over a square kilometre and a bit. Houses with a
 plain rectangular footprint get a pitched roof (hipped on most detached houses, gabled on terraces
-and long semis, as in aerial photos of the estate), windows on each storey, a front door facing the
-street and a driveway to it; the rest are built to their own outline with a flat roof. Cars are
+and long semis, as in aerial photos of the estate), windows on each storey, and a front facing the
+road (the door goes in the gable end when the road runs past that end) with a driveway to it. Behind
+each house is a back garden with a tall wooden fence round it, running back to the next building or
+road (they're solid, so the way down is along the streets and paths). The rest are built to their own
+outline with a flat roof. Cars are
 parked along the kerbs, and hedges, garden walls and trees make cover. The drainage basins that are
 dry most of the time are grass.
 
 You start outside **64 Sycamore Drive** with a squad of four and fight down the hill to
 **Mauricewood Primary School**, about 1.1 km away by road and 30 m lower. The way is dotted in gold
-on the map. The enemy has five sandbagged **roadblocks** at junctions on the way down (taking one
-makes it your checkpoint), pairs on patrol in the side streets, and ten defenders round the school.
+on the map. The enemy has five sandbagged **roadblocks** at junctions on the way down, each with a gap in
+the middle to get through (taking one makes it your checkpoint), pairs on patrol in the side streets, and ten defenders round the school.
 Clear the school, then stand at the flagpole on its playground to raise our flag and win. The school's
 buildings aren't on OpenStreetMap (only its grounds are), so they're traced from aerial photos: the
 single-storey flat-roofed blocks with their rooflights, the taller hall with its hipped roof, the
