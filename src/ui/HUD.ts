@@ -17,6 +17,8 @@ const CREDITS: { site: string; url: string; items: string }[] = [
     items: 'City Kit Suburban, Commercial, Industrial and Roads, Car Kit, Nature Kit (jungle trees and plants); Sci-fi, Impact and Interface Sounds · CC0',
   },
   { site: 'poly.pizza', url: 'https://poly.pizza', items: 'Wooden huts and shacks by Quaternius · CC0' },
+  { site: 'openstreetmap.org', url: 'https://www.openstreetmap.org/copyright', items: 'The streets, houses, gardens and woods of Penicuik © OpenStreetMap contributors · ODbL' },
+  { site: 'registry.opendata.aws', url: 'https://registry.opendata.aws/terrain-tiles/', items: 'The lie of the land in Penicuik: Terrain Tiles (Mapzen terrarium elevation, from public sources incl. SRTM and EU-DEM)' },
   { site: 'fonts.google.com', url: 'https://fonts.google.com/specimen/Black+Ops+One', items: 'Black Ops One font by James Grieshaber and Eben Sorkin · SIL Open Font License' },
 ];
 
