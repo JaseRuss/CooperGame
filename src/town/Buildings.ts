@@ -1,0 +1,778 @@
+import * as THREE from 'three';
+import RAPIER from '@dimforge/rapier3d-compat';
+import { mulberry32 } from '../utils/rng';
+import { plastic } from '../utils/plastic';
+import { PartBuilder, sandbagGeometry } from '../utils/modelKit';
+import { inPolygon, centroid, type TownData, type Pt, type Footprint } from './TownData';
+
+/** Harled and painted walls, as on the estates round Penicuik, and slate grey or red-brown roofs. */
+const WALLS = [0xece4d2, 0xf2efe6, 0xd9cfba, 0xe6d6b8, 0xcfc8bc, 0xe9dcc9, 0xd8c3a5, 0xf0e2c8, 0xc9b79c];
+const ROOFS = [0x4c5056, 0x5a5e66, 0x6b4a3a, 0x7a4f3c, 0x45484d, 0x5e4b42];
+const DOORS = [0x7a2a2a, 0x2a4a7a, 0x2f5a35, 0xe8e8e0, 0x3a3a3a, 0x8a6a2a];
+const CARS = [0xc0392b, 0x2e5fa8, 0xe8e8e8, 0x2c2c2c, 0x8e9499, 0x3c7a4a, 0xd4a017, 0x6d3b8a];
+const GLASS = 0x2d3d4a;
+const FOOT = new Set(['footway', 'path', 'cycleway', 'steps', 'pedestrian', 'track']);
+
+/** Triangles with a colour at every corner: everything in the town shares a couple of materials. */
+class Writer {
+  readonly pos: number[] = [];
+  readonly col: number[] = [];
+  readonly norm: number[] = [];
+  private readonly c = new THREE.Color();
+
+  tri(a: THREE.Vector3, b: THREE.Vector3, d: THREE.Vector3, color: number): void {
+    this.c.setHex(color);
+    const n = b.clone().sub(a).cross(d.clone().sub(a)).normalize();
+    for (const p of [a, b, d]) {
+      this.pos.push(p.x, p.y, p.z);
+      this.norm.push(n.x, n.y, n.z);
+      this.col.push(this.c.r, this.c.g, this.c.b);
+    }
+  }
+
+  /** A quad a-b-c-d, counter-clockwise seen from the side it faces. */
+  quad(a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3, d: THREE.Vector3, color: number): void {
+    this.tri(a, b, c, color);
+    this.tri(a, c, d, color);
+  }
+
+  build(material: THREE.Material): THREE.Mesh {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(this.pos, 3));
+    g.setAttribute('normal', new THREE.Float32BufferAttribute(this.norm, 3));
+    g.setAttribute('color', new THREE.Float32BufferAttribute(this.col, 3));
+    g.computeBoundingSphere();
+    const m = new THREE.Mesh(g, material);
+    m.castShadow = true;
+    m.receiveShadow = true;
+    return m;
+  }
+}
+
+/** The smallest rectangle round a footprint: its middle, the long axis, and half its length and width. */
+interface Rect {
+  c: Pt;
+  ux: number;
+  uz: number;
+  hl: number;
+  hw: number;
+}
+
+function hull(pts: Pt[]): Pt[] {
+  const p = [...pts].sort((a, b) => a.x - b.x || a.z - b.z);
+  const cross = (o: Pt, a: Pt, b: Pt) => (a.x - o.x) * (b.z - o.z) - (a.z - o.z) * (b.x - o.x);
+  const lower: Pt[] = [];
+  for (const q of p) {
+    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], q) <= 0) lower.pop();
+    lower.push(q);
+  }
+  const upper: Pt[] = [];
+  for (let i = p.length - 1; i >= 0; i--) {
+    const q = p[i];
+    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], q) <= 0) upper.pop();
+    upper.push(q);
+  }
+  return lower.slice(0, -1).concat(upper.slice(0, -1));
+}
+
+function minRect(pts: Pt[]): Rect {
+  const h = hull(pts);
+  let best: Rect | null = null;
+  let bestArea = Infinity;
+  for (let i = 0; i < h.length; i++) {
+    const a = h[i], b = h[(i + 1) % h.length];
+    const len = Math.hypot(b.x - a.x, b.z - a.z);
+    if (len < 1e-6) continue;
+    const ux = (b.x - a.x) / len, uz = (b.z - a.z) / len;
+    let lo = Infinity, hi = -Infinity, lo2 = Infinity, hi2 = -Infinity;
+    for (const q of h) {
+      const s = q.x * ux + q.z * uz;
+      const t = -q.x * uz + q.z * ux;
+      lo = Math.min(lo, s); hi = Math.max(hi, s); lo2 = Math.min(lo2, t); hi2 = Math.max(hi2, t);
+    }
+    const area = (hi - lo) * (hi2 - lo2);
+    if (area < bestArea) {
+      bestArea = area;
+      const s = (lo + hi) / 2, t = (lo2 + hi2) / 2;
+      const r = { c: { x: s * ux - t * uz, z: s * uz + t * ux }, ux, uz, hl: (hi - lo) / 2, hw: (hi2 - lo2) / 2 };
+      best = r.hl >= r.hw ? r : { c: r.c, ux: -uz, uz: ux, hl: r.hw, hw: r.hl };
+    }
+  }
+  return best as Rect;
+}
+
+function polyArea(p: Pt[]): number {
+  let a = 0;
+  for (let i = 0, j = p.length - 1; i < p.length; j = i++) a += p[j].x * p[i].z - p[i].x * p[j].z;
+  return a / 2;
+}
+
+/** Distance from a point to a segment. */
+function segDist(p: Pt, a: Pt, b: Pt): { d: number; at: Pt } {
+  const dx = b.x - a.x, dz = b.z - a.z;
+  const l2 = dx * dx + dz * dz || 1;
+  const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.z - a.z) * dz) / l2));
+  const at = { x: a.x + dx * t, z: a.z + dz * t };
+  return { d: Math.hypot(p.x - at.x, p.z - at.z), at };
+}
+
+/** Segments bucketed by 20 m cells, for "how near is the nearest road" questions. */
+class SegmentGrid {
+  private readonly cells = new Map<number, { a: Pt; b: Pt; w: number }[]>();
+  private static readonly CELL = 20;
+  private key(cx: number, cz: number): number {
+    return (cx + 500) * 1000 + (cz + 500);
+  }
+  add(a: Pt, b: Pt, w: number): void {
+    const C = SegmentGrid.CELL;
+    const x0 = Math.floor(Math.min(a.x, b.x) / C) - 1, x1 = Math.floor(Math.max(a.x, b.x) / C) + 1;
+    const z0 = Math.floor(Math.min(a.z, b.z) / C) - 1, z1 = Math.floor(Math.max(a.z, b.z) / C) + 1;
+    for (let cx = x0; cx <= x1; cx++) for (let cz = z0; cz <= z1; cz++) {
+      const k = this.key(cx, cz);
+      let list = this.cells.get(k);
+      if (!list) this.cells.set(k, (list = []));
+      list.push({ a, b, w });
+    }
+  }
+  /** The nearest segment within about 20 m: how far its edge is, and the nearest point on its middle line. */
+  nearest(p: Pt): { d: number; at: Pt } | null {
+    const list = this.cells.get(this.key(Math.floor(p.x / SegmentGrid.CELL), Math.floor(p.z / SegmentGrid.CELL)));
+    let best: { d: number; at: Pt } | null = null;
+    for (const s of list ?? []) {
+      const r = segDist(p, s.a, s.b);
+      const d = r.d - s.w / 2;
+      if (!best || d < best.d) best = { d, at: r.at };
+    }
+    return best;
+  }
+}
+
+/** Polygons bucketed the same way, for "is this spot inside a building". */
+class PolyGrid {
+  private readonly cells = new Map<number, Pt[][]>();
+  add(poly: Pt[]): void {
+    let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+    for (const p of poly) {
+      x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x); z0 = Math.min(z0, p.z); z1 = Math.max(z1, p.z);
+    }
+    for (let cx = Math.floor(x0 / 20); cx <= Math.floor(x1 / 20); cx++) for (let cz = Math.floor(z0 / 20); cz <= Math.floor(z1 / 20); cz++) {
+      const k = (cx + 500) * 1000 + (cz + 500);
+      let list = this.cells.get(k);
+      if (!list) this.cells.set(k, (list = []));
+      list.push(poly);
+    }
+  }
+  /** Inside one of the polygons, or within `margin` of its middle-ish bulk. */
+  hit(p: Pt, margin = 0): boolean {
+    const list = this.cells.get((Math.floor(p.x / 20) + 500) * 1000 + (Math.floor(p.z / 20) + 500));
+    if (!list) return false;
+    for (const poly of list) {
+      if (inPolygon(p, poly)) return true;
+      if (margin > 0) for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) if (segDist(p, poly[j], poly[i]).d < margin) return true;
+    }
+    return false;
+  }
+}
+
+/** The school's own building, flagpole and flag (it isn't on the map, so it's built here). */
+export interface School {
+  centre: Pt;
+  /** The flagpole in front of it, where our flag goes up. */
+  pole: THREE.Vector3;
+  flag: THREE.Mesh;
+  /** The flag's height up the pole: 0 at the bottom, 1 at the top. */
+  raise(k: number): void;
+  /** Spots round the building and playground for its defenders. */
+  posts: Pt[];
+}
+
+/** An enemy roadblock on the way down the hill: a curve of sandbags across the street. */
+export interface Roadblock {
+  at: Pt;
+  /** Uphill, the way the attack comes from. */
+  facing: Pt;
+  flagMaterial: THREE.MeshPhysicalMaterial;
+  posts: Pt[];
+}
+
+/**
+ * Everything standing in the town: every house, garage and block of flats from the map (with a
+ * pitched roof where the footprint is a plain rectangle, windows, a door facing the street), the
+ * school (built where its grounds are), trees in the woods and gardens, hedges, walls and fences,
+ * and cars parked along the kerbs. Each kind is merged or instanced into a few meshes, and the
+ * solid parts become colliders: buildings, trunks, cars, walls and hedges.
+ */
+export class Buildings {
+  readonly group = new THREE.Group();
+  readonly count: { buildings: number; trees: number; cars: number; triangles: number } = { buildings: 0, trees: 0, cars: 0, triangles: 0 };
+  readonly school: School;
+  private readonly body: RAPIER.RigidBody;
+  private readonly roads = new SegmentGrid();
+  private readonly footprints = new PolyGrid();
+  private readonly colliderTris: number[] = [];
+
+  constructor(private readonly world: RAPIER.World, scene: THREE.Scene, private readonly town: TownData) {
+    this.body = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+    for (const r of town.roads) for (let i = 1; i < r.pts.length; i++) this.roads.add(r.pts[i - 1], r.pts[i], FOOT.has(r.kind) ? r.width : r.width + 3.4);
+    for (const b of town.buildings) this.footprints.add(b.pts);
+
+    const walls = new Writer();
+    const rng = mulberry32(2611);
+    for (const b of town.buildings) this.building(b, walls, rng);
+    this.school = this.buildSchool(walls);
+    const mesh = walls.build(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85 }));
+    this.group.add(mesh);
+    this.count.buildings = town.buildings.length;
+    this.count.triangles = walls.pos.length / 9;
+    // All the buildings are one trimesh to walk into and shoot at.
+    const verts = new Float32Array(this.colliderTris);
+    const idx = new Uint32Array(verts.length / 3).map((_, i) => i);
+    world.createCollider(RAPIER.ColliderDesc.trimesh(verts, idx), this.body);
+
+    this.trees(rng);
+    this.barriers();
+    this.cars(rng);
+    scene.add(this.group);
+  }
+
+  private ground(p: Pt): number {
+    return this.town.heightAt(p.x, p.z);
+  }
+
+  /** Walls and a roof for one footprint from the map. */
+  private building(b: Footprint, w: Writer, rng: () => number): void {
+    let pts = b.pts;
+    // Wound so each wall quad faces out (with x east and z south, that's a negative shoelace area).
+    if (polyArea(pts) > 0) pts = [...pts].reverse();
+    const area = Math.abs(polyArea(pts));
+    if (area < 4) return;
+    const garage = b.kind === 'garage' || b.kind === 'garages' || b.kind === 'shed' || b.kind === 'carport';
+    const flats = b.kind === 'apartments';
+    const levels = b.levels ?? (garage ? 1 : flats ? 3 : area < 55 ? 1 : rng() < 0.12 ? 1 : 2);
+    const storey = 2.7;
+    const wallH = garage ? 2.5 : levels * storey + 0.3;
+    let lo = Infinity, hi = -Infinity;
+    for (const p of pts) {
+      const h = this.ground(p);
+      lo = Math.min(lo, h);
+      hi = Math.max(hi, h);
+    }
+    const y0 = lo - 0.6;
+    const y1 = hi + wallH;
+    const wallColor = garage ? (rng() < 0.5 ? 0xd6d3cc : 0xb9b4aa) : WALLS[Math.floor(rng() * WALLS.length)];
+    const roofColor = garage ? 0x55585c : ROOFS[Math.floor(rng() * ROOFS.length)];
+    const rect = minRect(pts);
+    const fill = area / (4 * rect.hl * rect.hw);
+    const street = this.roads.nearest(rect.c);
+    if (fill > 0.82 && !garage && rect.hw > 2) {
+      this.gabled(w, rect, y0, y1, wallColor, roofColor, levels, street?.at ?? null, lo, rng);
+      return;
+    }
+    // Any other shape: its own walls round the footprint and a flat roof.
+    const v = (p: Pt, y: number) => new THREE.Vector3(p.x, y, p.z);
+    for (let i = 0; i < pts.length; i++) {
+      const a = pts[i], c = pts[(i + 1) % pts.length];
+      this.wall(w, v(a, y0), v(c, y0), v(c, y1), v(a, y1), wallColor);
+    }
+    const shape = pts.map((p) => new THREE.Vector2(p.x, p.z));
+    const tris = THREE.ShapeUtils.triangulateShape(shape, []);
+    for (const [i, j, k] of tris) {
+      const A = v(pts[i], y1), B = v(pts[j], y1), C = v(pts[k], y1);
+      // Facing up: wound counter-clockwise seen from above.
+      const up = B.clone().sub(A).cross(C.clone().sub(A)).y > 0;
+      if (up) this.solid(w, A, B, C, roofColor);
+      else this.solid(w, A, C, B, roofColor);
+    }
+    if (garage) {
+      // A pale up-and-over door on the side nearest the street.
+      const s = street?.at;
+      if (s) this.doorOnNearestEdge(w, pts, s, lo, 2.3, 2.0, 0xe6e6e0);
+    } else {
+      this.windowsAround(w, pts, lo, levels, storey);
+      if (street) this.doorOnNearestEdge(w, pts, street.at, lo, 0.95, 2.05, DOORS[Math.floor(rng() * DOORS.length)]);
+    }
+  }
+
+  /** A plain box house with a pitched roof along its length. */
+  private gabled(w: Writer, r: Rect, y0: number, y1: number, wallColor: number, roofColor: number, levels: number, street: Pt | null, floor: number, rng: () => number): void {
+    const at = (s: number, t: number, y: number) => new THREE.Vector3(r.c.x + r.ux * s - r.uz * t, y, r.c.z + r.uz * s + r.ux * t);
+    const L = r.hl, W = r.hw;
+    // Corners in the order that makes each wall face out.
+    const corners: [number, number][] = [[-L, -W], [-L, W], [L, W], [L, -W]];
+    for (let i = 0; i < 4; i++) {
+      const [s0, t0] = corners[i], [s1, t1] = corners[(i + 1) % 4];
+      this.wall(w, at(s0, t0, y0), at(s1, t1, y0), at(s1, t1, y1), at(s0, t0, y1), wallColor);
+    }
+    const rise = Math.min(3.2, W * 0.8);
+    const o = 0.35;
+    const ridge = y1 + rise;
+    // Gable ends (wall-coloured triangles) and the two roof slopes, with a little overhang.
+    this.solid(w, at(-L, -W, y1), at(-L, W, y1), at(-L, 0, ridge), wallColor);
+    this.solid(w, at(L, W, y1), at(L, -W, y1), at(L, 0, ridge), wallColor);
+    const eave = y1 - o * (rise / W);
+    this.roofQuad(w, at(-L - o, W + o, eave), at(L + o, W + o, eave), at(L + o, 0, ridge), at(-L - o, 0, ridge), roofColor);
+    this.roofQuad(w, at(L + o, -W - o, eave), at(-L - o, -W - o, eave), at(-L - o, 0, ridge), at(L + o, 0, ridge), roofColor);
+    // A chimney on many of them.
+    if (rng() < 0.55) {
+      const cs = (rng() < 0.5 ? -1 : 1) * (L - 0.9);
+      const cy = ridge + 0.9;
+      const ch = [[-0.4, -0.35], [-0.4, 0.35], [0.4, 0.35], [0.4, -0.35]] as const;
+      for (let i = 0; i < 4; i++) {
+        const [a0, b0] = ch[i], [a1, b1] = ch[(i + 1) % 4];
+        this.wall(w, at(cs + a0, b0, y1), at(cs + a1, b1, y1), at(cs + a1, b1, cy), at(cs + a0, b0, cy), 0x9a8a7a, false);
+      }
+      w.quad(at(cs - 0.4, -0.35, cy), at(cs - 0.4, 0.35, cy), at(cs + 0.4, 0.35, cy), at(cs + 0.4, -0.35, cy), 0x5a4a40);
+    }
+    // Windows along both long sides, a storey at a time, and the front door on the street side.
+    const storey = 2.7;
+    const n = Math.max(1, Math.floor((2 * L) / 3.1));
+    const front = street ? Math.sign((street.x - r.c.x) * -r.uz + (street.z - r.c.z) * r.ux) || 1 : 1;
+    const doorAt = n > 1 ? Math.floor(n / 2) : -1;
+    for (const side of [-1, 1]) {
+      const t = side * (W + 0.03);
+      for (let lv = 0; lv < levels; lv++) {
+        for (let k = 0; k < n; k++) {
+          const s = -L + ((k + 0.5) * 2 * L) / n;
+          const yb = floor + 0.95 + lv * storey;
+          if (lv === 0 && side === front && k === doorAt) {
+            this.pane(w, at, s, t, side, floor + 0.02, 0.5, 2.05, DOORS[Math.floor(rng() * DOORS.length)]);
+            continue;
+          }
+          this.pane(w, at, s, t, side, yb, 0.6, 1.2, GLASS);
+        }
+      }
+      if (side === front && doorAt < 0) this.pane(w, at, 0, t, side, floor + 0.02, 0.5, 2.05, DOORS[Math.floor(rng() * DOORS.length)]);
+    }
+  }
+
+  /** A window (or door) on a long wall of a box house: centred at `s` along it, `hw` half wide (`side` flips it to face out). */
+  private pane(w: Writer, at: (s: number, t: number, y: number) => THREE.Vector3, s: number, t: number, side: number, yb: number, hw: number, h: number, color: number): void {
+    w.quad(at(s - hw * side, t, yb), at(s + hw * side, t, yb), at(s + hw * side, t, yb + h), at(s - hw * side, t, yb + h), color);
+  }
+
+  /** A wall quad, and (unless it's a chimney) the same two triangles in the collider. */
+  private wall(w: Writer, a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3, d: THREE.Vector3, color: number, solid = true): void {
+    w.quad(a, b, c, d, color);
+    if (solid) this.colliderTris.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z, a.x, a.y, a.z, c.x, c.y, c.z, d.x, d.y, d.z);
+  }
+
+  private solid(w: Writer, a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3, color: number): void {
+    w.tri(a, b, c, color);
+    this.colliderTris.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z);
+  }
+
+  private roofQuad(w: Writer, a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3, d: THREE.Vector3, color: number): void {
+    w.quad(a, b, c, d, color);
+    // The underside too, so the overhang isn't see-through from below.
+    w.quad(d, c, b, a, 0x3a3a38);
+    this.colliderTris.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z, a.x, a.y, a.z, c.x, c.y, c.z, d.x, d.y, d.z);
+  }
+
+  /** Windows along each wall long enough for them, on every storey. */
+  private windowsAround(w: Writer, pts: Pt[], floor: number, levels: number, storey: number): void {
+    for (let i = 0; i < pts.length; i++) {
+      const a = pts[i], b = pts[(i + 1) % pts.length];
+      const len = Math.hypot(b.x - a.x, b.z - a.z);
+      if (len < 2.6) continue;
+      const ux = (b.x - a.x) / len, uz = (b.z - a.z) / len;
+      // Just out from the wall: the way it faces is (-uz, ux).
+      const nx = -uz * 0.03, nz = ux * 0.03;
+      const n = Math.max(1, Math.floor(len / 3.1));
+      for (let lv = 0; lv < levels; lv++) {
+        for (let k = 0; k < n; k++) {
+          const m = ((k + 0.5) * len) / n;
+          const yb = floor + 0.95 + lv * storey;
+          const p0 = { x: a.x + ux * (m - 0.6) + nx, z: a.z + uz * (m - 0.6) + nz };
+          const p1 = { x: a.x + ux * (m + 0.6) + nx, z: a.z + uz * (m + 0.6) + nz };
+          w.quad(new THREE.Vector3(p0.x, yb, p0.z), new THREE.Vector3(p1.x, yb, p1.z), new THREE.Vector3(p1.x, yb + 1.2, p1.z), new THREE.Vector3(p0.x, yb + 1.2, p0.z), GLASS);
+        }
+      }
+    }
+  }
+
+  /** A door in the middle of the wall nearest `street`. */
+  private doorOnNearestEdge(w: Writer, pts: Pt[], street: Pt, floor: number, half: number, h: number, color: number): void {
+    let best = -1, bestD = Infinity;
+    for (let i = 0; i < pts.length; i++) {
+      const a = pts[i], b = pts[(i + 1) % pts.length];
+      if (Math.hypot(b.x - a.x, b.z - a.z) < half * 2 + 0.4) continue;
+      const d = segDist(street, a, b).d;
+      if (d < bestD) {
+        bestD = d;
+        best = i;
+      }
+    }
+    if (best < 0) return;
+    const a = pts[best], b = pts[(best + 1) % pts.length];
+    const len = Math.hypot(b.x - a.x, b.z - a.z);
+    const ux = (b.x - a.x) / len, uz = (b.z - a.z) / len;
+    const nx = -uz * 0.04, nz = ux * 0.04;
+    const m = len / 2;
+    const p0 = new THREE.Vector3(a.x + ux * (m - half) + nx, floor + 0.02, a.z + uz * (m - half) + nz);
+    const p1 = new THREE.Vector3(a.x + ux * (m + half) + nx, floor + 0.02, a.z + uz * (m + half) + nz);
+    w.quad(p0, p1, p1.clone().setY(floor + h), p0.clone().setY(floor + h), color);
+  }
+
+  /**
+   * Mauricewood Primary: its grounds are on the map but the building isn't, so it's a one-storey
+   * L of classrooms set back in the grounds, with big windows, a sign over the door, a playground
+   * in front and the flagpole.
+   */
+  private buildSchool(w: Writer): School {
+    const grounds = this.town.schoolGrounds;
+    const mid = centroid(grounds);
+    // Face the way the attack comes from: the end of the route down the hill.
+    const route = this.town.route;
+    const arrive = route[route.length - 1];
+    let fx = arrive.x - mid.x, fz = arrive.z - mid.z;
+    const fl = Math.hypot(fx, fz) || 1;
+    fx /= fl;
+    fz /= fl;
+    // Long side across the way in; the building sits back from the middle of the grounds.
+    const ux = -fz, uz = fx;
+    const c = { x: mid.x - fx * 12, z: mid.z - fz * 12 };
+    const at = (s: number, t: number, y: number) => new THREE.Vector3(c.x + ux * s + fx * t, y, c.z + uz * s + fz * t);
+    const block = (s0: number, s1: number, t0: number, t1: number, h: number) => {
+      const pts = [{ s: s0, t: t0 }, { s: s1, t: t0 }, { s: s1, t: t1 }, { s: s0, t: t1 }].map((q) => ({ x: c.x + ux * q.s + fx * q.t, z: c.z + uz * q.s + fz * q.t }));
+      let lo = Infinity, hi = -Infinity;
+      for (const p of pts) {
+        lo = Math.min(lo, this.ground(p));
+        hi = Math.max(hi, this.ground(p));
+      }
+      const y0 = lo - 0.6, y1 = hi + h;
+      const quad = (sa: number, ta: number, sb: number, tb: number) => {
+        const A = at(sa, ta, y0), B = at(sb, tb, y0), C = at(sb, tb, y1), D = at(sa, ta, y1);
+        // Wind each wall to face out of the block.
+        const n = B.clone().sub(A).cross(D.clone().sub(A));
+        const o = at((sa + sb) / 2, (ta + tb) / 2, 0).sub(at((s0 + s1) / 2, (t0 + t1) / 2, 0));
+        if (n.dot(o) >= 0) this.wall(w, A, B, C, D, 0xc98f5e);
+        else this.wall(w, B, A, D, C, 0xc98f5e);
+      };
+      quad(s0, t0, s1, t0);
+      quad(s1, t0, s1, t1);
+      quad(s1, t1, s0, t1);
+      quad(s0, t1, s0, t0);
+      const R = [at(s0, t0, y1), at(s1, t0, y1), at(s1, t1, y1), at(s0, t1, y1)];
+      const up = R[1].clone().sub(R[0]).cross(R[2].clone().sub(R[0])).y > 0;
+      if (up) {
+        this.solid(w, R[0], R[1], R[2], 0x6a6e72);
+        this.solid(w, R[0], R[2], R[3], 0x6a6e72);
+      } else {
+        this.solid(w, R[0], R[2], R[1], 0x6a6e72);
+        this.solid(w, R[0], R[3], R[2], 0x6a6e72);
+      }
+      return { y1, lo };
+    };
+    const main = block(-26, 26, -8, 8, 4.4);
+    block(14, 30, -26, -8, 4.4);
+    // Big classroom windows along the front, and blue panels under them.
+    const front = 8.04;
+    for (let s = -24; s <= 24; s += 4) {
+      if (Math.abs(s) < 2) continue;
+      const g0 = this.ground({ x: c.x + ux * s + fx * front, z: c.z + uz * s + fz * front });
+      const glass = [at(s - 1.5, front, g0 + 1.1), at(s + 1.5, front, g0 + 1.1), at(s + 1.5, front, g0 + 3.2), at(s - 1.5, front, g0 + 3.2)];
+      const panel = [at(s - 1.5, front, g0 + 0.3), at(s + 1.5, front, g0 + 0.3), at(s + 1.5, front, g0 + 1.05), at(s - 1.5, front, g0 + 1.05)];
+      const facing = glass[1].clone().sub(glass[0]).cross(glass[3].clone().sub(glass[0])).dot(new THREE.Vector3(fx, 0, fz)) > 0;
+      if (facing) {
+        w.quad(glass[0], glass[1], glass[2], glass[3], 0x5f8fb0);
+        w.quad(panel[0], panel[1], panel[2], panel[3], 0x2d5fa0);
+      } else {
+        w.quad(glass[1], glass[0], glass[3], glass[2], 0x5f8fb0);
+        w.quad(panel[1], panel[0], panel[3], panel[2], 0x2d5fa0);
+      }
+    }
+    // The main door and a sign over it.
+    const gd = this.ground({ x: c.x + fx * front, z: c.z + fz * front });
+    const door = [at(-1.6, front + 0.02, gd), at(1.6, front + 0.02, gd), at(1.6, front + 0.02, gd + 2.6), at(-1.6, front + 0.02, gd + 2.6)];
+    const facing = door[1].clone().sub(door[0]).cross(door[3].clone().sub(door[0])).dot(new THREE.Vector3(fx, 0, fz)) > 0;
+    if (facing) w.quad(door[0], door[1], door[2], door[3], 0x1f4a8a);
+    else w.quad(door[1], door[0], door[3], door[2], 0x1f4a8a);
+    const sign = this.schoolSign();
+    sign.position.copy(at(0, front + 0.08, main.y1 - 0.9));
+    sign.lookAt(sign.position.clone().add(new THREE.Vector3(fx, 0, fz)));
+    this.group.add(sign);
+
+    // The flagpole out in front, where the playground is.
+    const poleAt = { x: c.x + fx * 26, z: c.z + fz * 26 };
+    const py = this.ground(poleAt);
+    const p = new PartBuilder();
+    p.add(new THREE.CylinderGeometry(0.09, 0.12, 11, 10), plastic(0xdedede), poleAt.x, py + 5.5, poleAt.z);
+    p.add(new THREE.SphereGeometry(0.18, 10, 8), plastic(0xd4a017), poleAt.x, py + 11.1, poleAt.z);
+    p.add(new THREE.CylinderGeometry(0.7, 0.8, 0.4, 12), plastic(0x9a9a92), poleAt.x, py + 0.1, poleAt.z);
+    p.buildInto(this.group);
+    const flag = new THREE.Mesh(new THREE.PlaneGeometry(2.2, 1.4).translate(1.15, 0, 0), new THREE.MeshStandardMaterial({ color: 0x4b7a2e, side: THREE.DoubleSide }));
+    flag.position.set(poleAt.x, py + 1.2, poleAt.z);
+    flag.rotation.y = Math.atan2(-fz, fx) + Math.PI / 2;
+    this.group.add(flag);
+    this.footprints.add([at(-26, -8, 0), at(26, -8, 0), at(26, 8, 0), at(-26, 8, 0)].map((v) => ({ x: v.x, z: v.z })));
+    this.footprints.add([at(14, -26, 0), at(30, -26, 0), at(30, -8, 0), at(14, -8, 0)].map((v) => ({ x: v.x, z: v.z })));
+    const posts: Pt[] = [];
+    for (const [s, t] of [[-20, 13], [-8, 14], [6, 13], [18, 14], [-28, 2], [32, -4], [-10, 22], [10, 24], [0, 30], [22, -14]]) {
+      const v = at(s, t, 0);
+      posts.push({ x: v.x, z: v.z });
+    }
+    return {
+      centre: c,
+      pole: new THREE.Vector3(poleAt.x, py, poleAt.z),
+      flag,
+      raise: (k: number) => (flag.position.y = py + 1.2 + Math.max(0, Math.min(1, k)) * 9.4),
+      posts,
+    };
+  }
+
+  private schoolSign(): THREE.Mesh {
+    const canvas = document.createElement('canvas');
+    canvas.width = 1024;
+    canvas.height = 128;
+    const ctx = canvas.getContext('2d') as CanvasRenderingContext2D;
+    ctx.fillStyle = '#1f4a8a';
+    ctx.fillRect(0, 0, 1024, 128);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '900 64px "Segoe UI", system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('MAURICEWOOD PRIMARY SCHOOL', 512, 68);
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    return new THREE.Mesh(new THREE.PlaneGeometry(12, 1.5), new THREE.MeshBasicMaterial({ map: tex }));
+  }
+
+  /** Whether a spot is clear of buildings and roads (for a tree or a soldier's post). */
+  clear(p: Pt, margin = 1): boolean {
+    const road = this.roads.nearest(p);
+    if (road && road.d < margin) return false;
+    return !this.footprints.hit(p, margin);
+  }
+
+  /** The nearest point on the middle of a road, if one is within about 20 m. */
+  nearestRoad(p: Pt): Pt | null {
+    return this.roads.nearest(p)?.at ?? null;
+  }
+
+  /** Trees in the woods, along tree rows and in about a third of the gardens. */
+  private trees(rng: () => number): void {
+    const spots: { p: Pt; conifer: boolean; size: number }[] = [];
+    for (const a of this.town.areas) {
+      if (a.kind === 'wood' || a.kind === 'scrub') {
+        let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+        for (const p of a.pts) {
+          x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x); z0 = Math.min(z0, p.z); z1 = Math.max(z1, p.z);
+        }
+        const gap = a.kind === 'wood' ? 6.5 : 11;
+        for (let x = x0; x < x1; x += gap) for (let z = z0; z < z1; z += gap) {
+          const p = { x: x + (rng() - 0.5) * gap * 0.8, z: z + (rng() - 0.5) * gap * 0.8 };
+          if (inPolygon(p, a.pts) && this.clear(p, 1.5)) spots.push({ p, conifer: rng() < 0.3, size: a.kind === 'wood' ? 0.9 + rng() * 0.6 : 0.55 + rng() * 0.3 });
+        }
+      } else if (a.kind === 'garden' && rng() < 0.35) {
+        for (let tries = 0; tries < 6; tries++) {
+          let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+          for (const p of a.pts) {
+            x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x); z0 = Math.min(z0, p.z); z1 = Math.max(z1, p.z);
+          }
+          const p = { x: x0 + rng() * (x1 - x0), z: z0 + rng() * (z1 - z0) };
+          if (inPolygon(p, a.pts) && this.clear(p, 2)) {
+            spots.push({ p, conifer: rng() < 0.2, size: 0.55 + rng() * 0.35 });
+            break;
+          }
+        }
+      }
+    }
+    for (const l of this.town.lines) {
+      if (l.kind !== 'trees') continue;
+      for (let i = 1; i < l.pts.length; i++) {
+        const a = l.pts[i - 1], b = l.pts[i];
+        const len = Math.hypot(b.x - a.x, b.z - a.z);
+        for (let m = 0; m < len; m += 7) {
+          const p = { x: a.x + ((b.x - a.x) * m) / len, z: a.z + ((b.z - a.z) * m) / len };
+          if (this.clear(p, 1)) spots.push({ p, conifer: false, size: 0.8 + rng() * 0.4 });
+        }
+      }
+    }
+    const n = spots.length;
+    this.count.trees = n;
+    const trunk = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.18, 0.28, 1, 6, 1, true).translate(0, 0.5, 0), plastic(0x6b4a2e), n);
+    const leafy = spots.filter((s) => !s.conifer);
+    const pines = spots.filter((s) => s.conifer);
+    const crown = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 0), new THREE.MeshStandardMaterial({ roughness: 0.9, flatShading: true }), leafy.length);
+    const cone = new THREE.InstancedMesh(new THREE.ConeGeometry(1, 1, 8).translate(0, 0.5, 0), new THREE.MeshStandardMaterial({ roughness: 0.9, flatShading: true }), pines.length);
+    const m = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    const col = new THREE.Color();
+    let li = 0, pi = 0;
+    spots.forEach((s, i) => {
+      const y = this.ground(s.p) - 0.2;
+      const h = (s.conifer ? 3 : 2.6) * s.size;
+      m.compose(new THREE.Vector3(s.p.x, y, s.p.z), q, new THREE.Vector3(s.size * 1.2, h + 0.4, s.size * 1.2));
+      trunk.setMatrixAt(i, m);
+      q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), rng() * Math.PI * 2);
+      if (s.conifer) {
+        m.compose(new THREE.Vector3(s.p.x, y + h * 0.5, s.p.z), q, new THREE.Vector3(2.2 * s.size, 7.5 * s.size, 2.2 * s.size));
+        cone.setMatrixAt(pi, m);
+        cone.setColorAt(pi++, col.setHSL(0.33 + rng() * 0.04, 0.45, 0.2 + rng() * 0.06));
+      } else {
+        const r = 2.4 * s.size * (0.85 + rng() * 0.3);
+        m.compose(new THREE.Vector3(s.p.x, y + h + r * 0.7, s.p.z), q, new THREE.Vector3(r, r * 0.9, r));
+        crown.setMatrixAt(li, m);
+        crown.setColorAt(li++, col.setHSL(0.24 + rng() * 0.08, 0.5, 0.28 + rng() * 0.1));
+      }
+      q.identity();
+      this.world.createCollider(RAPIER.ColliderDesc.cylinder(2, 0.3 * s.size).setTranslation(s.p.x, y + 2, s.p.z), this.body);
+    });
+    for (const im of [trunk, crown, cone]) {
+      im.castShadow = true;
+      im.receiveShadow = true;
+      im.computeBoundingSphere();
+      this.group.add(im);
+    }
+  }
+
+  /** Hedges, garden walls and fences, as runs of short boxes that follow the ground. */
+  private barriers(): void {
+    const kinds: Record<string, { h: number; t: number; color: number; solid: boolean }> = {
+      hedge: { h: 1.5, t: 0.9, color: 0x3d6a2a, solid: true },
+      wall: { h: 1.1, t: 0.35, color: 0x9c968a, solid: true },
+      retaining_wall: { h: 1.0, t: 0.45, color: 0x8e8a80, solid: true },
+      fence: { h: 1.15, t: 0.08, color: 0x7a5a3a, solid: false },
+    };
+    for (const [kind, k] of Object.entries(kinds)) {
+      const pieces: { a: Pt; b: Pt }[] = [];
+      for (const l of this.town.lines) {
+        if (l.kind !== kind) continue;
+        for (let i = 1; i < l.pts.length; i++) {
+          const a = l.pts[i - 1], b = l.pts[i];
+          const len = Math.hypot(b.x - a.x, b.z - a.z);
+          const n = Math.max(1, Math.ceil(len / 3));
+          for (let j = 0; j < n; j++) {
+            pieces.push({ a: { x: a.x + ((b.x - a.x) * j) / n, z: a.z + ((b.z - a.z) * j) / n }, b: { x: a.x + ((b.x - a.x) * (j + 1)) / n, z: a.z + ((b.z - a.z) * (j + 1)) / n } });
+          }
+        }
+      }
+      if (!pieces.length) continue;
+      const im = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0), kind === 'hedge' ? new THREE.MeshStandardMaterial({ color: k.color, roughness: 1 }) : plastic(k.color), pieces.length);
+      const m = new THREE.Matrix4();
+      pieces.forEach((p, i) => {
+        const mid = { x: (p.a.x + p.b.x) / 2, z: (p.a.z + p.b.z) / 2 };
+        const len = Math.hypot(p.b.x - p.a.x, p.b.z - p.a.z) + (kind === 'fence' ? 0.02 : k.t * 0.5);
+        const yaw = Math.atan2(-(p.b.z - p.a.z), p.b.x - p.a.x);
+        const y = Math.min(this.ground(p.a), this.ground(p.b)) - 0.25;
+        const top = Math.max(this.ground(p.a), this.ground(p.b)) + k.h;
+        m.compose(new THREE.Vector3(mid.x, y, mid.z), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw), new THREE.Vector3(len, top - y, k.t));
+        im.setMatrixAt(i, m);
+        if (k.solid) {
+          const hy = (top - y) / 2;
+          this.world.createCollider(
+            RAPIER.ColliderDesc.cuboid(len / 2, hy, k.t / 2).setTranslation(mid.x, y + hy, mid.z).setRotation({ x: 0, y: Math.sin(yaw / 2), z: 0, w: Math.cos(yaw / 2) }),
+            this.body,
+          );
+        }
+      });
+      im.castShadow = true;
+      im.receiveShadow = true;
+      im.computeBoundingSphere();
+      this.group.add(im);
+    }
+  }
+
+  /** Cars parked along the kerbs of the housing streets: cover in a street fight. */
+  private cars(rng: () => number): void {
+    const spots: { p: Pt; yaw: number; color: number }[] = [];
+    const start = this.town.start;
+    for (const r of this.town.roads) {
+      if (r.kind !== 'residential' && r.kind !== 'service' && r.kind !== 'unclassified') continue;
+      for (let i = 1; i < r.pts.length; i++) {
+        const a = r.pts[i - 1], b = r.pts[i];
+        const len = Math.hypot(b.x - a.x, b.z - a.z);
+        const ux = (b.x - a.x) / len, uz = (b.z - a.z) / len;
+        for (let m = 6; m < len - 6; m += 9 + rng() * 14) {
+          if (rng() > (r.kind === 'service' ? 0.25 : 0.4)) continue;
+          const side = rng() < 0.5 ? -1 : 1;
+          const off = r.width / 2 - 1.05;
+          const p = { x: a.x + ux * m - uz * off * side, z: a.z + uz * m + ux * off * side };
+          if (Math.hypot(p.x - start.x, p.z - start.z) < 14) continue;
+          if (this.footprints.hit(p, 1.2)) continue;
+          spots.push({ p, yaw: Math.atan2(-ux, -uz), color: CARS[Math.floor(rng() * CARS.length)] });
+        }
+      }
+    }
+    this.count.cars = spots.length;
+    const n = spots.length;
+    const bodyGeo = new THREE.BoxGeometry(1.8, 0.75, 4.1).translate(0, 0.6, 0);
+    const cabinGeo = new THREE.BoxGeometry(1.6, 0.6, 2.1).translate(0, 1.27, -0.15);
+    const wheelGeo = new THREE.CylinderGeometry(0.34, 0.34, 0.25, 10).rotateZ(Math.PI / 2);
+    const paint = new THREE.InstancedMesh(bodyGeo, new THREE.MeshPhysicalMaterial({ roughness: 0.35, clearcoat: 0.8 }), n);
+    const cabin = new THREE.InstancedMesh(cabinGeo, new THREE.MeshStandardMaterial({ color: 0x33414d, roughness: 0.2, metalness: 0.1 }), n);
+    const wheels = new THREE.InstancedMesh(wheelGeo, plastic(0x1e1e1e), n * 4);
+    const m = new THREE.Matrix4();
+    const col = new THREE.Color();
+    spots.forEach((s, i) => {
+      // Tilted to the slope of the street.
+      const fx = -Math.sin(s.yaw), fz = -Math.cos(s.yaw);
+      const hf = this.ground({ x: s.p.x + fx * 1.8, z: s.p.z + fz * 1.8 });
+      const hb = this.ground({ x: s.p.x - fx * 1.8, z: s.p.z - fz * 1.8 });
+      const y = (hf + hb) / 2;
+      const pitch = Math.atan2(hf - hb, 3.6);
+      const e = new THREE.Euler(pitch, s.yaw, 0, 'YXZ');
+      const q = new THREE.Quaternion().setFromEuler(e);
+      m.compose(new THREE.Vector3(s.p.x, y, s.p.z), q, new THREE.Vector3(1, 1, 1));
+      paint.setMatrixAt(i, m);
+      paint.setColorAt(i, col.setHex(s.color));
+      cabin.setMatrixAt(i, m);
+      let k = 0;
+      for (const [wx, wz] of [[-0.85, -1.35], [0.85, -1.35], [-0.85, 1.35], [0.85, 1.35]]) {
+        const local = new THREE.Matrix4().makeTranslation(wx, 0.34, wz);
+        wheels.setMatrixAt(i * 4 + k++, m.clone().multiply(local));
+      }
+      this.world.createCollider(
+        RAPIER.ColliderDesc.cuboid(0.9, 0.8, 2.05).setTranslation(s.p.x, y + 0.8, s.p.z).setRotation(q),
+        this.body,
+      );
+    });
+    for (const im of [paint, cabin, wheels]) {
+      im.castShadow = true;
+      im.receiveShadow = true;
+      im.computeBoundingSphere();
+      this.group.add(im);
+    }
+  }
+
+  /** A roadblock: sandbags in a curve across the street at `at`, facing back up the route, and a flag. */
+  roadblock(at: Pt, facing: Pt, color: number): Roadblock {
+    const p = new PartBuilder();
+    const bag = sandbagGeometry();
+    const bagMat = plastic(0xb5a47a);
+    const fl = Math.hypot(facing.x, facing.z) || 1;
+    const fx = facing.x / fl, fz = facing.z / fl;
+    const yawFacing = Math.atan2(-fx, -fz);
+    for (let i = -5; i <= 5; i++) {
+      const a = i * 0.16;
+      const r = 7;
+      // The curve bows toward the attack.
+      const cx = at.x + fx * (Math.cos(a) * r - r + 3) + -fz * Math.sin(a) * r;
+      const cz = at.z + fz * (Math.cos(a) * r - r + 3) + fx * Math.sin(a) * r;
+      const g = this.ground({ x: cx, z: cz });
+      for (let row = 0; row < 3; row++) p.add(bag, bagMat, cx, g + 0.2 + row * 0.38, cz, 0, yawFacing + a + (row % 2) * 0.05);
+      this.world.createCollider(
+        RAPIER.ColliderDesc.cuboid(0.62, 0.6, 0.35).setTranslation(cx, g + 0.6, cz).setRotation({ x: 0, y: Math.sin((yawFacing + a) / 2), z: 0, w: Math.cos((yawFacing + a) / 2) }),
+        this.body,
+      );
+    }
+    // A flag on a short pole behind the bags.
+    const px = at.x - fx * 3, pz = at.z - fz * 3;
+    const g = this.ground({ x: px, z: pz });
+    p.add(new THREE.CylinderGeometry(0.06, 0.06, 4.5, 8), plastic(0x6b4a2e), px, g + 2.25, pz);
+    p.buildInto(this.group);
+    const flagMaterial = plastic(color);
+    const flag = new THREE.Mesh(new THREE.PlaneGeometry(1.4, 0.9).translate(0.72, 0, 0), flagMaterial);
+    (flag.material as THREE.MeshPhysicalMaterial).side = THREE.DoubleSide;
+    flag.position.set(px, g + 4, pz);
+    flag.rotation.y = yawFacing;
+    this.group.add(flag);
+    const posts: Pt[] = [];
+    for (const [s, t] of [[-4, 1.2], [-1.5, 1.6], [1.5, 1.6], [4, 1.2], [0, -4], [-6, -2], [6, -2]]) {
+      // s across the street, t toward the attack (just behind the bags is about t = 1.5).
+      const q = { x: at.x + -fz * s + fx * t, z: at.z + fx * s + fz * t };
+      posts.push(this.footprints.hit(q, 0.6) ? at : q);
+    }
+    return { at, facing: { x: fx, z: fz }, flagMaterial, posts };
+  }
+}

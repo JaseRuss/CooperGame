@@ -44,7 +44,12 @@ export class Explosives {
   private readonly grenades: Grenade[] = [];
   readonly bombs: Bomb[] = [];
 
-  constructor(private readonly scene: THREE.Scene, private readonly world: RAPIER.World) {}
+  constructor(
+    private readonly scene: THREE.Scene,
+    private readonly world: RAPIER.World,
+    /** The height of the ground (flat at 0 unless the level has hills). */
+    private readonly groundAt: (x: number, z: number) => number = () => 0,
+  ) {}
 
   launch(origin: THREE.Vector3, dir: THREE.Vector3, speed = 24, byPlayer = true): void {
     const mesh = new THREE.Mesh(grenadeGeo, grenadeMat);
@@ -87,7 +92,8 @@ export class Explosives {
       g.vel.y -= GRAVITY * dt;
       const step = g.vel.clone().multiplyScalar(dt);
       const len = step.length();
-      let hit = g.mesh.position.y + step.y <= 0.15;
+      const ground = this.groundAt(g.mesh.position.x, g.mesh.position.z);
+      let hit = g.mesh.position.y + step.y <= ground + 0.15;
       if (!hit && len > 1e-4) {
         const ray = this.world.castRay(new RAPIER.Ray(from, step.clone().normalize()), len + 0.1, true, undefined, FRIEND_SHOTS);
         if (ray) {
@@ -98,7 +104,7 @@ export class Explosives {
       if (!hit) g.mesh.position.add(step);
       if (Math.random() < 0.5) trail(g.mesh.position);
       if (hit || g.age > FUSE) {
-        if (g.mesh.position.y < 0.2) g.mesh.position.y = 0.2;
+        if (g.mesh.position.y < ground + 0.2) g.mesh.position.y = ground + 0.2;
         burst({ at: g.mesh.position.clone(), radius: GRENADE_RADIUS, kind: 'grenade', byPlayer: g.byPlayer });
         this.scene.remove(g.mesh);
         this.grenades.splice(i, 1);
@@ -111,7 +117,7 @@ export class Explosives {
       const rate = b.left < 2 ? 22 : b.left < 4 ? 10 : 4;
       b.light.visible = Math.sin((BOMB_FUSE - b.left) * rate) > -0.2;
       if (b.left > 0) continue;
-      burst({ at: b.pos.clone().setY(0.6), radius: BOMB_RADIUS, kind: 'bomb', byPlayer: true });
+      burst({ at: b.pos.clone().setY(b.pos.y + 0.35), radius: BOMB_RADIUS, kind: 'bomb', byPlayer: true });
       this.scene.remove(b.mesh);
       this.bombs.splice(i, 1);
     }

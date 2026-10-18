@@ -61,7 +61,7 @@ const NIGHT_SONG: Song = {
   seed: 29,
 };
 
-const BASE_SONGS: Record<Exclude<Mission, 6 | 7 | 8>, Song> = {
+const BASE_SONGS: Record<Exclude<Mission, 6 | 7 | 8 | 9>, Song> = {
   // Day Battle: a jaunty toy-soldier march in C major, with a bugle playing the tune.
   1: {
     bpm: 112,
@@ -199,7 +199,7 @@ const WEIRD_SONG: Song = {
   seed: 4242,
 };
 
-const SONGS: Record<Mission, Song> = { ...BASE_SONGS, 6: BASE_SONGS[3], 7: MOON_SONG, 8: BASE_SONGS[2] };
+const SONGS: Record<Mission, Song> = { ...BASE_SONGS, 6: BASE_SONGS[3], 7: MOON_SONG, 8: BASE_SONGS[2], 9: { ...BASE_SONGS[1], bpm: 104, seed: 43 } };
 
 const LOOKAHEAD = 0.15; // seconds of notes scheduled ahead
 /** The band's overall level, leaving headroom for the sound effects on top. */
