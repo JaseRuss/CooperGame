@@ -9,14 +9,20 @@ const AREA_COLOR: Record<string, string> = {
   wood: '#3f6b2e',
   scrub: '#6a8a45',
   water: '#4a8fc4',
+  basin: '#6b9a4c',
   pitch: '#5fae48',
   parking: '#8c8e90',
   playground: '#b56d4e',
   allotment: '#8a7a4a',
   school: '#93c26a',
+  // Mauricewood Primary's playground, its little all-weather pitch, the lawn and the yard (traced from photos).
+  court: '#6f6c66',
+  astro: '#67b35e',
+  lawn: '#6fae4c',
+  yard: '#8c7c64',
 };
 /** Paint order: big, soft areas first, small hard ones on top. */
-const AREA_ORDER = ['grass', 'wood', 'scrub', 'allotment', 'school', 'garden', 'pitch', 'parking', 'playground', 'water'];
+const AREA_ORDER = ['grass', 'basin', 'wood', 'scrub', 'allotment', 'school', 'garden', 'pitch', 'parking', 'playground', 'water', 'yard', 'lawn', 'court', 'astro'];
 const FOOT = new Set(['footway', 'path', 'cycleway', 'steps', 'pedestrian', 'track']);
 
 /**
@@ -76,6 +82,31 @@ export class TownTerrain {
     }
   }
 
+  /** Painted games on the school playground: a hopscotch, a court outline and a centre line, along its longest side. */
+  private courtMarkings(ctx: CanvasRenderingContext2D, pts: Pt[], px: (p: Pt) => readonly [number, number], s: number): void {
+    let a = pts[0], b = pts[1];
+    for (let i = 0; i < pts.length; i++) {
+      const p = pts[i], q = pts[(i + 1) % pts.length];
+      if (Math.hypot(q.x - p.x, q.z - p.z) > Math.hypot(b.x - a.x, b.z - a.z)) [a, b] = [p, q];
+    }
+    const c = { x: pts.reduce((t, p) => t + p.x, 0) / pts.length, z: pts.reduce((t, p) => t + p.z, 0) / pts.length };
+    const len = Math.hypot(b.x - a.x, b.z - a.z);
+    const ux = (b.x - a.x) / len, uz = (b.z - a.z) / len;
+    const at = (u: number, v: number) => px({ x: c.x + ux * u - uz * v, z: c.z + uz * u + ux * v });
+    ctx.strokeStyle = 'rgba(245,245,235,0.9)';
+    ctx.lineWidth = Math.max(1, 0.15 * s);
+    ctx.beginPath();
+    ctx.moveTo(...at(-12, -7)); ctx.lineTo(...at(12, -7)); ctx.lineTo(...at(12, 7)); ctx.lineTo(...at(-12, 7)); ctx.closePath();
+    ctx.moveTo(...at(0, -7)); ctx.lineTo(...at(0, 7));
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,214,74,0.95)';
+    for (let k = 0; k < 6; k++) {
+      ctx.beginPath();
+      ctx.moveTo(...at(-16 + k * 0.9, -2)); ctx.lineTo(...at(-15.1 + k * 0.9, -2)); ctx.lineTo(...at(-15.1 + k * 0.9, -1.1)); ctx.lineTo(...at(-16 + k * 0.9, -1.1)); ctx.closePath();
+      ctx.stroke();
+    }
+  }
+
   /** The map painted at `size` pixels across. */
   private paint(size: number): HTMLCanvasElement {
     const town = this.town;
@@ -107,17 +138,37 @@ export class TownTerrain {
         poly(a.pts);
         ctx.fillStyle = AREA_COLOR[kind];
         ctx.fill();
+        if (kind === 'basin') {
+          // A damp, reedy bottom inside the grassy banks.
+          ctx.save();
+          ctx.clip();
+          ctx.strokeStyle = 'rgba(70,95,50,0.55)';
+          ctx.lineWidth = 9 * s;
+          ctx.stroke();
+          ctx.restore();
+        }
         if (kind === 'garden' || kind === 'school') {
           ctx.strokeStyle = 'rgba(40,60,20,0.25)';
           ctx.lineWidth = Math.max(1, 0.4 * s);
           ctx.stroke();
         }
+        if (kind === 'court') this.courtMarkings(ctx, a.pts, px, s);
         if (kind === 'pitch') {
           ctx.strokeStyle = 'rgba(255,255,255,0.75)';
           ctx.lineWidth = Math.max(1, 0.25 * s);
           ctx.stroke();
         }
       }
+    }
+    // Driveways from the houses to the street: red block paving, or tarmac.
+    ctx.lineCap = 'butt';
+    for (const d of town.driveways) {
+      ctx.beginPath();
+      ctx.moveTo(...px(d.a));
+      ctx.lineTo(...px(d.b));
+      ctx.strokeStyle = d.paved ? '#a0634c' : '#77736c';
+      ctx.lineWidth = 3.2 * s;
+      ctx.stroke();
     }
     // Paths and steps (packed gravel), then the roads with their pavements.
     const line = (pts: Pt[]) => {
