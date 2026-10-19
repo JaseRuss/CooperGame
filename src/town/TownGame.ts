@@ -29,6 +29,8 @@ const TITLE = 'DOWN THE HILL';
 /** The squad starts captured: two of them in each of the enemy's pens, away from the route. */
 const PENS = 4;
 const PEN_MEN = 2;
+/** The squad names from Options cover the first four prisoners; these are the other four. */
+const MORE_BUDDIES = ['Eleanor', 'Robert', 'Luca', 'Zoey'];
 /** Pens stand this far from the way down the hill (metres), and at least this far from each other. */
 const PEN_MIN = 45;
 const PEN_MAX = 140;
@@ -424,7 +426,7 @@ export class TownGame {
       }
       if (best) chosen.push(best);
     }
-    const names = this.settings.buddyNames;
+    const names = [...this.settings.buddyNames, ...MORE_BUDDIES];
     chosen.forEach((c, i) => {
       const army = i % 2 ? ARMY_BLUE : ARMY_TAN;
       const pen = this.buildings.pen(c.p, c.road, army);
