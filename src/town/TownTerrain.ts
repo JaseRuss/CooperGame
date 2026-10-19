@@ -21,6 +21,50 @@ const AREA_COLOR: Record<string, string> = {
   lawn: '#6fae4c',
   yard: '#8c7c64',
 };
+/**
+ * A tile of grass blades for the ground's detail (see groundMaterial): mid grey on average, so it
+ * lightens and darkens the painted colour without shifting it, with short blades leaning every way
+ * in darker green, lighter green and straw, drawn wrapped round the edges so it tiles.
+ */
+function grassDetail(): THREE.CanvasTexture {
+  const size = 512;
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  const g = c.getContext('2d') as CanvasRenderingContext2D;
+  let seed = 91;
+  const r = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  g.fillStyle = 'rgb(124,128,120)';
+  g.fillRect(0, 0, size, size);
+  // Soft clumps first, then thousands of blades.
+  for (let i = 0; i < 260; i++) {
+    const x = r() * size, y = r() * size, rad = 8 + r() * 30;
+    g.fillStyle = r() < 0.5 ? 'rgba(90,100,80,0.18)' : 'rgba(165,170,140,0.16)';
+    for (const [ox, oy] of [[0, 0], [size, 0], [-size, 0], [0, size], [0, -size]]) {
+      g.beginPath();
+      g.arc(x + ox, y + oy, rad, 0, Math.PI * 2);
+      g.fill();
+    }
+  }
+  const shades = ['rgba(70,86,58,0.75)', 'rgba(98,116,80,0.7)', 'rgba(176,184,146,0.7)', 'rgba(196,186,140,0.55)', 'rgba(58,70,50,0.8)'];
+  g.lineCap = 'round';
+  for (let i = 0; i < 9000; i++) {
+    const x = r() * size, y = r() * size;
+    const len = 4 + r() * 9, a = r() * Math.PI * 2;
+    g.strokeStyle = shades[Math.floor(r() * shades.length)];
+    g.lineWidth = 0.8 + r() * 1.2;
+    for (const [ox, oy] of [[0, 0], [size, 0], [-size, 0], [0, size], [0, -size]]) {
+      g.beginPath();
+      g.moveTo(x + ox, y + oy);
+      g.quadraticCurveTo(x + ox + Math.cos(a) * len * 0.5 + 1.5, y + oy + Math.sin(a) * len * 0.5, x + ox + Math.cos(a) * len, y + oy + Math.sin(a) * len);
+      g.stroke();
+    }
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.anisotropy = 8;
+  return t;
+}
+
 /** Paint order: big, soft areas first, small hard ones on top. */
 const AREA_ORDER = ['grass', 'basin', 'wood', 'scrub', 'allotment', 'school', 'garden', 'pitch', 'parking', 'playground', 'water', 'yard', 'lawn', 'court', 'astro'];
 const FOOT = new Set(['footway', 'path', 'cycleway', 'steps', 'pedestrian', 'track']);
@@ -69,7 +113,7 @@ export class TownTerrain {
     map.flipY = false;
     map.colorSpace = THREE.SRGBColorSpace;
     map.anisotropy = 8;
-    this.mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ map, roughness: 0.95 }));
+    this.mesh = new THREE.Mesh(geo, this.groundMaterial(map));
     this.mesh.receiveShadow = true;
     scene.add(this.mesh);
 
@@ -105,6 +149,37 @@ export class TownTerrain {
       ctx.moveTo(...at(-16 + k * 0.9, -2)); ctx.lineTo(...at(-15.1 + k * 0.9, -2)); ctx.lineTo(...at(-15.1 + k * 0.9, -1.1)); ctx.lineTo(...at(-16 + k * 0.9, -1.1)); ctx.closePath();
       ctx.stroke();
     }
+  }
+
+  /**
+   * The ground's material: the painted map, with a fine tiling texture of grass blades worked into it
+   * wherever the map is green (gardens, verges, fields), at two scales so the repeat doesn't show:
+   * blades about every 2.5 m, and broad lighter and darker patches about every 37 m.
+   */
+  private groundMaterial(map: THREE.Texture): THREE.MeshStandardMaterial {
+    const mat = new THREE.MeshStandardMaterial({ map, roughness: 0.95 });
+    const detail = grassDetail();
+    mat.onBeforeCompile = (shader) => {
+      shader.uniforms.grassDetail = { value: detail };
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', '#include <common>\nvarying vec2 vTownXZ;')
+        .replace('#include <begin_vertex>', '#include <begin_vertex>\nvTownXZ = position.xz;');
+      shader.fragmentShader = shader.fragmentShader
+        .replace('#include <common>', '#include <common>\nuniform sampler2D grassDetail;\nvarying vec2 vTownXZ;')
+        .replace(
+          '#include <map_fragment>',
+          [
+            '#include <map_fragment>',
+            // How green the painted map is here: grass gets the full detail, grey and brown ground none.
+            'float grassy = clamp((diffuseColor.g - max(diffuseColor.r, diffuseColor.b)) * 7.0, 0.0, 1.0);',
+            'vec3 blades = texture2D(grassDetail, vTownXZ / 2.5).rgb * 2.0;',
+            'vec3 patches = texture2D(grassDetail, vTownXZ / 37.0 + 0.37).rgb * 2.0;',
+            'vec3 detail = blades * mix(vec3(1.0), patches, 0.45);',
+            'diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * detail, grassy);',
+          ].join('\n'),
+        );
+    };
+    return mat;
   }
 
   /** The map painted at `size` pixels across. */
