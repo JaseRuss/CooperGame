@@ -5,6 +5,7 @@ import { plastic } from '../utils/plastic';
 import { PartBuilder, sandbagGeometry } from '../utils/modelKit';
 import { inPolygon, centroid, type TownData, type Pt, type Footprint, type Line } from './TownData';
 import { WATER_GROUPS } from '../prison/groups';
+import { withDetail } from './Surfaces';
 
 /** White and pale grey render on most of the new houses (as in a drone shot of Sycamore Drive), some buff, a few rows of red brick. */
 const WALLS = [0xf4f3ef, 0xefeee9, 0xe9e8e3, 0xf6f4ee, 0xe3e2dd, 0xdcdbd6, 0xece6d8, 0xd9c7a8, 0xf1f0ec, 0xa9654e, 0xb5765c];
@@ -15,6 +16,30 @@ const DOORS = [0x7a2a2a, 0x2a4a7a, 0x2f5a35, 0xe8e8e0, 0x3a3a3a, 0x8a6a2a];
 const CARS = [0xc0392b, 0x2e5fa8, 0xe8e8e8, 0x2c2c2c, 0x8e9499, 0x3c7a4a, 0xd4a017, 0x6d3b8a];
 const GLASS = 0x2d3d4a;
 const FOOT = new Set(['footway', 'path', 'cycleway', 'steps', 'pedestrian', 'track']);
+
+let penSignTexture: THREE.CanvasTexture | null = null;
+/** The board by each pen's gate (one texture, shared). */
+function penSign(): THREE.CanvasTexture {
+  if (penSignTexture) return penSignTexture;
+  const c = document.createElement('canvas');
+  c.width = 256;
+  c.height = 110;
+  const g = c.getContext('2d') as CanvasRenderingContext2D;
+  g.fillStyle = '#e8e2cf';
+  g.fillRect(0, 0, 256, 110);
+  g.strokeStyle = '#7a2a22';
+  g.lineWidth = 8;
+  g.strokeRect(4, 4, 248, 102);
+  g.fillStyle = '#7a2a22';
+  g.font = '900 34px "Segoe UI", system-ui, sans-serif';
+  g.textAlign = 'center';
+  g.fillText('PRISONERS', 128, 48);
+  g.font = '700 22px "Segoe UI", system-ui, sans-serif';
+  g.fillText('KEEP OUT', 128, 84);
+  penSignTexture = new THREE.CanvasTexture(c);
+  penSignTexture.colorSpace = THREE.SRGBColorSpace;
+  return penSignTexture;
+}
 /**
  * Mauricewood Primary's blocks, as the aerial photos show them: one storey of flat roofs (light
  * grey with rows of rooflights, one darker block), a taller hall with a hipped roof, and a low
@@ -257,7 +282,7 @@ export class Buildings {
     const rng = mulberry32(2611);
     for (const b of town.buildings) this.building(b, walls, rng);
     this.school = this.buildSchool();
-    const mesh = walls.build(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85 }));
+    const mesh = walls.build(withDetail(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85 }), 'building'));
     this.group.add(mesh);
     this.count.buildings = town.buildings.length;
     this.count.triangles = walls.pos.length / 9;
@@ -622,10 +647,14 @@ export class Buildings {
   }
 
   /**
-   * An enemy prisoner pen at `at`, its gate toward `toward` (the nearest road): a cage of bars on a
-   * square of trodden dirt, with a gate that swings open, a few sandbags and an oil-drum brazier by
-   * the gate for the guards, and the army's flag. The bars stop you walking but not seeing or
-   * shooting through them.
+   * An enemy prisoner pen at `at`, its gate toward `toward` (the nearest road). The cage: bars with
+   * spiked tops on a concrete footing, rails at the top, middle and bottom, X-braces between the
+   * posts, angled arms carrying coils of barbed wire along the top, and a braced gate with a padlock
+   * and chain that swings open. Inside, a corrugated-tin shelter over a bunk, a bucket and a blanket.
+   * Outside, a watchtower (legs and braces, a ladder, a boarded platform, a tin roof and a searchlight
+   * trained on the cage), a plank guard hut with a door, window and stovepipe, a table and stools by
+   * a glowing brazier, sandbags, a lamp post, a sign and the army's flag. The bars stop you walking
+   * but not seeing or shooting through them.
    */
   pen(at: Pt, toward: Pt, color: number): Pen {
     const p = new PartBuilder();
@@ -634,89 +663,267 @@ export class Buildings {
     fx /= fl;
     fz /= fl;
     const yaw = Math.atan2(-fx, -fz);
+    // s across the front, t toward the gate (and the road).
     const P = (s: number, t: number): Pt => ({ x: at.x - fz * s + fx * t, z: at.z + fx * s + fz * t });
     const G = (s: number, t: number) => this.ground(P(s, t));
+    const W = (s: number, t: number, y: number, ground = G(s, t)) => {
+      const q = P(s, t);
+      return new THREE.Vector3(q.x, ground + y, q.z);
+    };
     const rot = (a: number) => ({ x: 0, y: Math.sin(a / 2), z: 0, w: Math.cos(a / 2) });
+    const euler = new THREE.Euler();
+    const quat = new THREE.Quaternion();
+    const mat4 = new THREE.Matrix4();
+    const ONE = new THREE.Vector3(1, 1, 1);
+    /** A part at (s, t), `y` above the ground there (or `ground`), turned `ry` from the pen's facing and tilted `rx` (nose up) and `rz`. */
+    const put = (geo: THREE.BufferGeometry, m: THREE.Material, s: number, t: number, y: number, ry = 0, rx = 0, rz = 0, ground = G(s, t)) => {
+      euler.set(rx, yaw + ry, rz, 'YXZ');
+      quat.setFromEuler(euler);
+      mat4.compose(W(s, t, y, ground), quat, ONE);
+      p.addMatrix(geo, m, mat4);
+    };
+    /** A part pointed along `dir` (its own +Y), centred at `c`. */
+    const along = (geo: THREE.BufferGeometry, m: THREE.Material, c: THREE.Vector3, dir: THREE.Vector3) => {
+      quat.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.clone().normalize());
+      mat4.compose(c, quat, ONE);
+      p.addMatrix(geo, m, mat4);
+    };
+
     const H = 3.5, GATE = 0.85, BAR_H = 2.5;
+    const steel = plastic(0x50555a), post = plastic(0x3a3d40), concrete = plastic(0xa8a59c), wire = plastic(0x5b5f63);
+    const wood = plastic(0x6b4a2e), woodLight = plastic(0x7d5a38), woodDark = plastic(0x4f3622), tin = plastic(0x8d9396), tinDark = plastic(0x6f7578);
+    const glow = new THREE.MeshStandardMaterial({ color: 0xffb060, emissive: 0xff7a20, emissiveIntensity: 1.6 });
     const bar = new THREE.CylinderGeometry(0.035, 0.035, BAR_H, 5);
-    const steel = plastic(0x50555a), post = plastic(0x3a3d40);
-    // Bars all the way round except the gate, posts at the corners, a rail along the top.
-    const side = (s0: number, t0: number, s1: number, t1: number) => {
-      const len = Math.hypot(s1 - s0, t1 - t0);
-      const n = Math.round(len / 0.32);
-      for (let j = 0; j <= n; j++) {
-        const s = s0 + ((s1 - s0) * j) / n, t = t0 + ((t1 - t0) * j) / n;
-        const q = P(s, t);
-        p.add(bar, steel, q.x, G(s, t) + BAR_H / 2 - 0.05, q.z);
+    const spike = new THREE.ConeGeometry(0.055, 0.16, 5);
+    const barb = new THREE.BoxGeometry(0.12, 0.011, 0.011);
+    const UP = new THREE.Vector3(0, 1, 0);
+
+    /** A coil of barbed wire from `a` to `b`, `r` across, with barbs. */
+    const coil = (a: THREE.Vector3, b: THREE.Vector3, r: number, phase: number) => {
+      const dir = b.clone().sub(a);
+      const len = dir.length();
+      dir.normalize();
+      const side = new THREE.Vector3().crossVectors(dir, UP).normalize();
+      const up2 = new THREE.Vector3().crossVectors(side, dir).normalize();
+      const turns = Math.max(3, Math.round(len / 0.3));
+      const helix = (u: number) => {
+        const th = Math.PI * 2 * turns * u + phase;
+        const rr = r * (1 + 0.08 * Math.sin(th * 0.37 + phase));
+        return a.clone().addScaledVector(dir, len * u).addScaledVector(side, Math.cos(th) * rr).addScaledVector(up2, Math.sin(th) * rr);
+      };
+      const steps = turns * 12;
+      p.add(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(Array.from({ length: steps + 1 }, (_, j) => helix(j / steps))), steps, 0.014, 3, false), wire);
+      const n = Math.round((turns * Math.PI * 2 * r) / 0.5);
+      for (let j = 0; j < n; j++) {
+        const q = helix((j + 0.5) / n);
+        p.add(barb, wire, q.x, q.y, q.z, j * 1.3, j * 0.7, 0.8);
+        p.add(barb, wire, q.x, q.y, q.z, j * 1.3 + 1.2, j * 0.7 + 1.5, -0.8);
       }
-      const a = P(s0, t0), b = P(s1, t1);
-      for (const h of [BAR_H - 0.1, 0.25]) p.beam(new THREE.Vector3(a.x, G(s0, t0) + h, a.z), new THREE.Vector3(b.x, G(s1, t1) + h, b.z), 0.08, post);
+    };
+
+    // ---- the cage ----
+    const side = (s0: number, t0: number, s1: number, t1: number, posts: number) => {
+      const len = Math.hypot(s1 - s0, t1 - t0);
+      const ns = (t1 - t0) / len, nt = -(s1 - s0) / len; // outward
+      const at2 = (k: number) => [s0 + (s1 - s0) * k, t0 + (t1 - t0) * k] as const;
+      // Bars with spiked tops, on a concrete footing.
+      const n = Math.round(len / 0.3);
+      for (let j = 0; j <= n; j++) {
+        const [s, t] = at2(j / n);
+        put(bar, steel, s, t, BAR_H / 2 + 0.1);
+        put(spike, steel, s, t, BAR_H + 0.18);
+      }
+      p.beam(W(s0, t0, 0.12), W(s1, t1, 0.12), 0.3, concrete);
+      for (const h of [BAR_H - 0.05, 1.3, 0.38]) p.beam(W(s0, t0, h), W(s1, t1, h), 0.07, post);
+      // Posts, X-braces between them on the outside, and the arms and wire along the top.
+      const tips: THREE.Vector3[] = [];
+      for (let k = 0; k <= posts; k++) {
+        const [s, t] = at2(k / posts);
+        put(new THREE.BoxGeometry(0.16, BAR_H + 0.35, 0.16), post, s, t, (BAR_H + 0.35) / 2);
+        const base = W(s, t, BAR_H + 0.25);
+        const tip = W(s + ns * 0.55, t + nt * 0.55, BAR_H + 0.8);
+        p.beam(base, tip, 0.06, post);
+        tips.push(tip);
+        if (k < posts) {
+          const [s2, t2] = at2((k + 1) / posts);
+          const o = 0.09;
+          p.beam(W(s + ns * o, t + nt * o, 0.45), W(s2 + ns * o, t2 + nt * o, BAR_H - 0.15), 0.05, post);
+          p.beam(W(s2 + ns * o, t2 + nt * o, 0.45), W(s + ns * o, t + nt * o, BAR_H - 0.15), 0.05, post);
+        }
+      }
+      coil(tips[0], tips[tips.length - 1], 0.3, s0 + t0);
+      for (const dy of [-0.15, 0.15]) p.beam(tips[0].clone().setY(tips[0].y + dy), tips[tips.length - 1].clone().setY(tips[tips.length - 1].y + dy), 0.012, wire, true);
       const mid = P((s0 + s1) / 2, (t0 + t1) / 2);
       this.world.createCollider(
-        RAPIER.ColliderDesc.cuboid(len / 2, 1.3, 0.12).setTranslation(mid.x, G((s0 + s1) / 2, (t0 + t1) / 2) + 1.25, mid.z).setRotation(rot(yaw + Math.atan2(t1 - t0, s1 - s0))).setCollisionGroups(WATER_GROUPS),
+        RAPIER.ColliderDesc.cuboid(len / 2, 1.3, 0.15).setTranslation(mid.x, G((s0 + s1) / 2, (t0 + t1) / 2) + 1.25, mid.z).setRotation(rot(yaw + Math.atan2(t1 - t0, s1 - s0))).setCollisionGroups(WATER_GROUPS),
         this.body,
       );
     };
-    side(-H, -H, H, -H);
-    side(H, -H, H, H);
-    side(-H, H, -H, -H);
-    side(H, H, GATE, H);
-    side(-GATE, H, -H, H);
-    for (const [s, t] of [[-H, -H], [H, -H], [H, H], [-H, H], [GATE, H], [-GATE, H]]) {
-      const q = P(s, t);
-      p.add(new THREE.BoxGeometry(0.16, BAR_H + 0.2, 0.16), post, q.x, G(s, t) + BAR_H / 2, q.z, 0, yaw);
-    }
-    // The ground inside: trodden dirt, and a straw pallet.
-    const dirt = new THREE.Mesh(new THREE.CircleGeometry(H * 1.25, 20).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0x7d6a4e, roughness: 1, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4 }));
+    side(-H, -H, H, -H, 2);
+    side(H, -H, H, H, 2);
+    side(-H, H, -H, -H, 2);
+    side(H, H, GATE, H, 1);
+    side(-GATE, H, -H, H, 1);
+
+    // The ground: trodden dirt, darker where they pace inside.
+    const dirtMat = new THREE.MeshStandardMaterial({ color: 0x7d6a4e, roughness: 1, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4 });
+    const dirt = new THREE.Mesh(new THREE.CircleGeometry(H * 1.75, 24).rotateX(-Math.PI / 2), dirtMat);
     dirt.position.set(at.x, this.ground(at) + 0.06, at.z);
     dirt.receiveShadow = true;
     this.group.add(dirt);
-    const straw = P(-1.8, -2.4);
-    p.add(new THREE.BoxGeometry(1.8, 0.18, 1.0), plastic(0xc9b26a), straw.x, G(-1.8, -2.4) + 0.12, straw.z, 0, yaw);
-    // The guards' post by the gate: sandbags, a brazier in an oil drum, the flag.
-    const bag = sandbagGeometry();
-    const bagMat = plastic(0xb5a47a);
-    for (let j = 0; j < 4; j++) {
-      const s = 2.6 + j * 0.9, t = H + 2.4;
-      const q = P(s, t);
-      for (let row = 0; row < 2; row++) p.add(bag, bagMat, q.x, G(s, t) + 0.2 + row * 0.38, q.z, 0, yaw);
-    }
-    const bq = P(-2.6, H + 2.2);
-    p.add(new THREE.CylinderGeometry(0.29, 0.29, 0.88, 12), plastic(0x6a3a2a), bq.x, G(-2.6, H + 2.2) + 0.44, bq.z);
-    const fq = P(H + 0.8, -H);
-    p.add(new THREE.CylinderGeometry(0.06, 0.06, 4.5, 8), plastic(0x6b4a2e), fq.x, G(H + 0.8, -H) + 2.25, fq.z);
-    p.buildInto(this.group);
-    const flag = new THREE.Mesh(new THREE.PlaneGeometry(1.4, 0.9).translate(0.72, 0, 0), new THREE.MeshStandardMaterial({ color, side: THREE.DoubleSide }));
-    flag.position.set(fq.x, G(H + 0.8, -H) + 4, fq.z);
-    flag.rotation.y = yaw;
-    this.group.add(flag);
-    // The gate: its own bars, hinged at the -s post, and its own collider until it opens.
+    const inner = new THREE.Mesh(new THREE.CircleGeometry(H * 0.95, 20).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0x5f5038, roughness: 1, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -6 }));
+    inner.position.set(at.x, this.ground(at) + 0.07, at.z);
+    inner.receiveShadow = true;
+    this.group.add(inner);
+
+    // ---- inside: a tin shelter over a bunk, a bucket and a blanket ----
+    for (const [s, t, h] of [[-2.9, -3.1, 2.2], [2.9, -3.1, 2.2], [-2.9, -0.9, 2.5], [2.9, -0.9, 2.5]]) put(new THREE.BoxGeometry(0.1, h, 0.1), wood, s, t, h / 2);
+    const slope = Math.atan2(0.35, 2.75);
+    const roofG = G(0, -2);
+    put(new THREE.BoxGeometry(6.6, 0.04, 2.95), tin, 0, -1.98, 2.34, 0, slope, 0, roofG);
+    const ridge = new THREE.CylinderGeometry(0.035, 0.035, 2.95, 4).rotateX(Math.PI / 2);
+    for (let s = -3.2; s <= 3.2; s += 0.24) put(ridge, tinDark, s, -1.98, 2.37, 0, slope, 0, roofG);
+    put(new THREE.BoxGeometry(2.0, 0.08, 0.85), wood, -1.5, -2.5, 0.45);
+    for (const [ds, dt] of [[-0.95, -0.38], [0.95, -0.38], [-0.95, 0.38], [0.95, 0.38]]) put(new THREE.BoxGeometry(0.07, 0.45, 0.07), woodDark, -1.5 + ds, -2.5 + dt, 0.22);
+    put(new THREE.BoxGeometry(1.85, 0.13, 0.72), plastic(0x8a8f6a), -1.5, -2.5, 0.56);
+    put(new THREE.BoxGeometry(0.9, 0.06, 0.74), plastic(0x6a4a3a), -1.1, -2.5, 0.65);
+    put(new THREE.CylinderGeometry(0.19, 0.15, 0.34, 12), plastic(0x7b8287), 2.2, -2.5, 0.17);
+    put(new THREE.TorusGeometry(0.17, 0.012, 4, 12, Math.PI), plastic(0x55595d), 2.2, -2.5, 0.34);
+    put(new THREE.BoxGeometry(1.6, 0.16, 0.9), plastic(0xc9b26a), 1.4, -1.6, 0.1, 0.3);
+
+    // ---- the gate: braced, padlocked, with its own bars, and its own collider until it opens ----
     const door = new THREE.Group();
     const dp = new PartBuilder();
     const dn = 6;
-    for (let j = 0; j <= dn; j++) dp.add(bar, steel, (j / dn) * GATE * 2, BAR_H / 2 - 0.05, 0);
-    dp.beam(new THREE.Vector3(0, BAR_H - 0.1, 0), new THREE.Vector3(GATE * 2, BAR_H - 0.1, 0), 0.08, post);
-    dp.beam(new THREE.Vector3(0, 0.25, 0), new THREE.Vector3(GATE * 2, 0.25, 0), 0.08, post);
+    for (let j = 0; j <= dn; j++) {
+      dp.add(bar, steel, (j / dn) * GATE * 2, BAR_H / 2 + 0.1, 0);
+      dp.add(spike, steel, (j / dn) * GATE * 2, BAR_H + 0.18, 0);
+    }
+    for (const h of [BAR_H - 0.05, 1.3, 0.38]) dp.beam(new THREE.Vector3(0, h, 0), new THREE.Vector3(GATE * 2, h, 0), 0.08, post);
+    dp.beam(new THREE.Vector3(0.05, 0.4, 0), new THREE.Vector3(GATE * 2 - 0.05, BAR_H - 0.1, 0), 0.06, post);
+    dp.add(new THREE.BoxGeometry(0.12, 0.14, 0.06), plastic(0xb08d2a), GATE * 2 - 0.1, 1.15, 0.07);
+    dp.add(new THREE.TorusGeometry(0.045, 0.012, 4, 10, Math.PI), plastic(0x9a9ea2), GATE * 2 - 0.1, 1.22, 0.07);
+    for (let j = 0; j < 5; j++) dp.add(new THREE.TorusGeometry(0.035, 0.01, 4, 8), plastic(0x9a9ea2), GATE * 2 - 0.02, 1.0 + j * 0.06, 0.04, 0, j % 2 ? Math.PI / 2 : 0);
     dp.buildInto(door);
-    const hinge = P(-GATE, H);
-    door.position.set(hinge.x, G(-GATE, H), hinge.z);
+    door.position.copy(W(-GATE, H, 0));
     door.rotation.y = yaw;
     this.group.add(door);
     const gq = P(0, H);
     const gate = this.world.createCollider(
-      RAPIER.ColliderDesc.cuboid(GATE, 1.3, 0.12).setTranslation(gq.x, G(0, H) + 1.25, gq.z).setRotation(rot(yaw)).setCollisionGroups(WATER_GROUPS),
+      RAPIER.ColliderDesc.cuboid(GATE, 1.3, 0.15).setTranslation(gq.x, G(0, H) + 1.25, gq.z).setRotation(rot(yaw)).setCollisionGroups(WATER_GROUPS),
       this.body,
     );
+
+    // ---- the watchtower, off the back corner ----
+    const ts = H + 2.4, tt = -H - 2.4, tg = G(ts, tt);
+    const leg = (cs: number, ct: number, h: number) => {
+      const o = 1.1 - (0.2 * (h + 0.2)) / 4.4;
+      return W(ts + cs * o, tt + ct * o, h, tg);
+    };
+    const corners: [number, number][] = [[-1, -1], [1, -1], [1, 1], [-1, 1]];
+    for (const [cs, ct] of corners) {
+      p.beam(leg(cs, ct, -0.2), leg(cs, ct, 4.2), 0.16, wood);
+      const c = leg(cs, ct, 2);
+      this.world.createCollider(RAPIER.ColliderDesc.cylinder(2.2, 0.12).setTranslation(c.x, tg + 2, c.z), this.body);
+    }
+    for (let k = 0; k < 4; k++) {
+      const [a0, b0] = corners[k], [a1, b1] = corners[(k + 1) % 4];
+      p.beam(leg(a0, b0, 0.5), leg(a1, b1, 3.7), 0.08, woodLight);
+      p.beam(leg(a1, b1, 0.5), leg(a0, b0, 3.7), 0.08, woodLight);
+      p.beam(leg(a0, b0, 2.1), leg(a1, b1, 2.1), 0.08, woodLight);
+    }
+    put(new THREE.BoxGeometry(2.4, 0.14, 2.4), woodDark, ts, tt, 4.25, 0, 0, 0, tg);
+    for (let j = 0; j < 8; j++) put(new THREE.BoxGeometry(2.4, 0.03, 0.26), j % 2 ? wood : woodLight, ts, tt - 1.05 + j * 0.3, 4.33, 0, 0, 0, tg);
+    // Boarded walls round three sides (the ladder side open), corner posts and a tin roof.
+    for (let j = 0; j < 3; j++) {
+      const y = 4.5 + j * 0.24;
+      put(new THREE.BoxGeometry(2.4, 0.2, 0.05), j % 2 ? wood : woodLight, ts, tt - 1.18, y, 0, 0, 0, tg);
+      put(new THREE.BoxGeometry(0.05, 0.2, 2.4), j % 2 ? woodLight : wood, ts - 1.18, tt, y, 0, 0, 0, tg);
+      put(new THREE.BoxGeometry(0.05, 0.2, 2.4), j % 2 ? woodLight : wood, ts + 1.18, tt, y, 0, 0, 0, tg);
+    }
+    for (const [cs, ct] of corners) put(new THREE.BoxGeometry(0.1, 2.1, 0.1), wood, ts + cs * 1.12, tt + ct * 1.12, 5.35, 0, 0, 0, tg);
+    p.beam(W(ts - 1.12, tt + 1.12, 5.0, tg), W(ts + 1.12, tt + 1.12, 5.0, tg), 0.07, wood);
+    put(new THREE.ConeGeometry(1.95, 0.8, 4, 1, true), tin, ts, tt, 6.8, Math.PI / 4, 0, 0, tg);
+    put(new THREE.BoxGeometry(2.3, 0.06, 2.3), tinDark, ts, tt, 6.4, 0, 0, 0, tg);
+    // The ladder up the side facing the gate.
+    const lb = (dx: number, h: number) => W(ts + dx, tt + 1.65 - (0.45 * h) / 4.3, h, tg);
+    for (const dx of [-0.3, 0.3]) p.beam(lb(dx, -0.1), lb(dx, 4.4), 0.06, woodLight);
+    for (let h = 0.3; h < 4.3; h += 0.34) p.beam(lb(-0.3, h), lb(0.3, h), 0.04, woodLight);
+    // The searchlight on the platform corner nearest the cage, trained on it.
+    const light = W(ts - 0.9, tt + 0.9, 5.15, tg);
+    const aim = W(0, 0, 0.6).sub(light).normalize();
+    put(new THREE.CylinderGeometry(0.05, 0.05, 0.8, 6), post, ts - 0.9, tt + 0.9, 4.75, 0, 0, 0, tg);
+    along(new THREE.CylinderGeometry(0.24, 0.2, 0.5, 14), steel, light, aim);
+    along(new THREE.CylinderGeometry(0.21, 0.21, 0.03, 14), glow, light.clone().addScaledVector(aim, 0.26), aim);
+
+    // ---- the guard hut, beside the gate ----
+    const hs = -H - 3.6, ht = H - 0.6, hg = G(hs, ht);
+    put(new THREE.BoxGeometry(2.6, 2.3, 2.2), woodDark, hs, ht, 1.1, 0, 0, 0, hg);
+    for (let y = 0.15, k = 0; y < 2.25; y += 0.27, k++) {
+      const m = k % 2 ? wood : woodLight;
+      put(new THREE.BoxGeometry(2.66, 0.23, 0.04), m, hs, ht + 1.12, y, 0, 0, 0, hg);
+      put(new THREE.BoxGeometry(2.66, 0.23, 0.04), m, hs, ht - 1.12, y, 0, 0, 0, hg);
+      put(new THREE.BoxGeometry(0.04, 0.23, 2.26), m, hs - 1.32, ht, y, 0, 0, 0, hg);
+      put(new THREE.BoxGeometry(0.04, 0.23, 2.26), m, hs + 1.32, ht, y, 0, 0, 0, hg);
+    }
+    put(new THREE.BoxGeometry(0.85, 1.95, 0.07), plastic(0x3e4a2e), hs + 0.55, ht + 1.16, 0.98, 0, 0, 0, hg);
+    put(new THREE.SphereGeometry(0.05, 6, 4), plastic(0xb08d2a), hs + 0.85, ht + 1.21, 1.0, 0, 0, 0, hg);
+    put(new THREE.BoxGeometry(0.06, 0.62, 0.86), plastic(0x2a3a48), hs + 1.36, ht - 0.2, 1.45, 0, 0, 0, hg);
+    for (const [dy, dt, hgt, wid] of [[0.34, 0, 0.06, 1.0], [-0.34, 0, 0.06, 1.0], [0, 0.46, 0.74, 0.06], [0, -0.46, 0.74, 0.06], [0, 0, 0.74, 0.04]]) {
+      put(new THREE.BoxGeometry(0.08, hgt, wid), woodLight, hs + 1.38, ht - 0.2 + dt, 1.45 + dy, 0, 0, 0, hg);
+    }
+    put(new THREE.BoxGeometry(3.1, 0.06, 2.8), tin, hs, ht, 2.48, 0, 0.12, 0, hg);
+    put(new THREE.CylinderGeometry(0.08, 0.08, 1.3, 8), post, hs - 0.8, ht - 0.6, 2.95, 0, 0, 0, hg);
+    put(new THREE.ConeGeometry(0.16, 0.18, 8), post, hs - 0.8, ht - 0.6, 3.68, 0, 0, 0, hg);
+    {
+      const c = P(hs, ht);
+      this.world.createCollider(RAPIER.ColliderDesc.cuboid(1.32, 1.2, 1.12).setTranslation(c.x, hg + 1.15, c.z).setRotation(rot(yaw)), this.body);
+    }
+
+    // ---- the guards' corner: sandbags, a brazier, a table and stools, a lamp, a sign, the flag ----
+    const bag = sandbagGeometry();
+    const bagMat = plastic(0xb5a47a), bagDark = plastic(0xa39368);
+    for (let j = 0; j < 6; j++) {
+      const s = 2.0 + j * 0.85, t = H + 2.4 + (j - 2.5) * (j - 2.5) * 0.07;
+      for (let row = 0; row < 3; row++) put(bag, row % 2 ? bagDark : bagMat, s, t, 0.2 + row * 0.38, (j - 2.5) * -0.08 + (row % 2) * 0.05);
+    }
+    put(new THREE.CylinderGeometry(0.29, 0.29, 0.88, 12), plastic(0x6a3a2a), -2.6, H + 2.2, 0.44);
+    for (let j = 0; j < 4; j++) put(new THREE.ConeGeometry(0.1 + (j % 2) * 0.05, 0.4 + j * 0.08, 6), glow, -2.6 + Math.cos(j * 1.7) * 0.1, H + 2.2 + Math.sin(j * 1.7) * 0.1, 1.05, j);
+    put(new THREE.BoxGeometry(1.2, 0.06, 0.8), woodLight, -4.3, H + 2.8, 0.76);
+    for (const [ds, dt] of [[-0.52, -0.32], [0.52, -0.32], [-0.52, 0.32], [0.52, 0.32]]) put(new THREE.BoxGeometry(0.06, 0.74, 0.06), woodDark, -4.3 + ds, H + 2.8 + dt, 0.37);
+    for (const ds of [-0.95, 0.95]) put(new THREE.CylinderGeometry(0.2, 0.18, 0.45, 10), wood, -4.3 + ds, H + 2.8, 0.22);
+    for (let j = 0; j < 5; j++) put(new THREE.BoxGeometry(0.09, 0.005, 0.13), plastic(0xf4f2ea), -4.45 + j * 0.08, H + 2.75 + (j % 2) * 0.05, 0.8, j * 0.4);
+    for (const [ds, dt] of [[0.35, 0.2], [-0.4, -0.18]]) put(new THREE.CylinderGeometry(0.05, 0.045, 0.11, 8), plastic(0xd8dcd8), -4.3 + ds, H + 2.8 + dt, 0.84);
+    // The lamp over the gate.
+    put(new THREE.CylinderGeometry(0.05, 0.07, 3.4, 8), post, GATE + 0.7, H + 0.7, 1.7);
+    p.beam(W(GATE + 0.7, H + 0.7, 3.3), W(0.5, H + 0.7, 3.3), 0.05, post);
+    put(new THREE.ConeGeometry(0.22, 0.18, 10, 1, true), plastic(0x3c4a32), 0.5, H + 0.7, 3.2);
+    put(new THREE.SphereGeometry(0.08, 8, 6), glow, 0.5, H + 0.7, 3.12);
+    // The sign by the gate.
+    put(new THREE.BoxGeometry(0.08, 1.7, 0.08), wood, -GATE - 1.3, H + 0.5, 0.85);
+    put(new THREE.BoxGeometry(0.08, 1.7, 0.08), wood, -GATE - 2.5, H + 0.5, 0.85);
+    const fq = P(H + 0.8, -H);
+    p.add(new THREE.CylinderGeometry(0.06, 0.06, 4.5, 8), plastic(0x6b4a2e), fq.x, G(H + 0.8, -H) + 2.25, fq.z);
+    p.buildInto(this.group);
+    const sign = new THREE.Mesh(new THREE.PlaneGeometry(1.4, 0.6), new THREE.MeshStandardMaterial({ map: penSign(), roughness: 0.8 }));
+    sign.position.copy(W(-GATE - 1.9, H + 0.55, 1.35));
+    sign.rotation.y = yaw + Math.PI;
+    this.group.add(sign);
+    const flag = new THREE.Mesh(new THREE.PlaneGeometry(1.4, 0.9).translate(0.72, 0, 0), new THREE.MeshStandardMaterial({ color, side: THREE.DoubleSide }));
+    flag.position.set(fq.x, G(H + 0.8, -H) + 4, fq.z);
+    flag.rotation.y = yaw;
+    this.group.add(flag);
+
     let opened = false;
     const guards: Pt[] = [];
-    for (const [s, t] of [[3.2, H + 3.4], [-1.8, H + 3.2], [H + 2.4, 0.5], [-H - 2.4, -1.5]]) {
+    for (const [s, t] of [[3.2, H + 3.6], [-1.6, H + 3.4], [H + 2.4, 0.5], [-H - 2.4, -1.5]]) {
       const q = P(s, t);
       guards.push(this.clear(q, 0.5) ? q : P(0, H + 3));
     }
     return {
       at,
       gate: P(0, H + 1.1),
-      inside: [P(-1.2, -0.6), P(1.2, 0.3)],
+      inside: [P(-1.2, -0.4), P(1.2, 0.5)],
       guards,
       open: () => {
         if (opened) return;
@@ -802,11 +1009,11 @@ export class Buildings {
     }
     const n = spots.length;
     this.count.trees = n;
-    const trunk = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.18, 0.28, 1, 6, 1, true).translate(0, 0.5, 0), plastic(0x6b4a2e), n);
+    const trunk = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.18, 0.28, 1, 6, 1, true).translate(0, 0.5, 0), withDetail(new THREE.MeshStandardMaterial({ color: 0x6b4a2e, roughness: 0.95 }), 'bark'), n);
     const leafy = spots.filter((s) => !s.conifer);
     const pines = spots.filter((s) => s.conifer);
-    const crown = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 0), new THREE.MeshStandardMaterial({ roughness: 0.9, flatShading: true }), leafy.length);
-    const cone = new THREE.InstancedMesh(new THREE.ConeGeometry(1, 1, 8).translate(0, 0.5, 0), new THREE.MeshStandardMaterial({ roughness: 0.9, flatShading: true }), pines.length);
+    const crown = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 0), withDetail(new THREE.MeshStandardMaterial({ roughness: 0.9, flatShading: true }), 'leaves'), leafy.length);
+    const cone = new THREE.InstancedMesh(new THREE.ConeGeometry(1, 1, 8).translate(0, 0.5, 0), withDetail(new THREE.MeshStandardMaterial({ roughness: 0.9, flatShading: true }), 'leaves'), pines.length);
     const m = new THREE.Matrix4();
     const q = new THREE.Quaternion();
     const col = new THREE.Color();
@@ -957,7 +1164,7 @@ export class Buildings {
         }
       }
       if (!pieces.length) continue;
-      const im = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0), kind === 'hedge' ? new THREE.MeshStandardMaterial({ color: k.color, roughness: 1 }) : plastic(k.color), pieces.length);
+      const im = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0), withDetail(new THREE.MeshStandardMaterial({ color: k.color, roughness: kind === 'hedge' ? 1 : 0.9 }), kind === 'hedge' ? 'leaves' : kind === 'fence' || kind === 'garden' ? 'planks' : 'stone'), pieces.length);
       const m = new THREE.Matrix4();
       pieces.forEach((p, i) => {
         const mid = { x: (p.a.x + p.b.x) / 2, z: (p.a.z + p.b.z) / 2 };
