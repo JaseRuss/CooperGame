@@ -51,6 +51,8 @@ export class PlayerSoldier {
   health = MAX_HEALTH;
   /** Seconds left lying down after being knocked over (0 while on his feet). */
   downFor = 0;
+  /** Seconds between shots (the gun he's carrying sets it). */
+  fireInterval = FIRE_INTERVAL;
   private readonly body: RAPIER.RigidBody;
   private readonly controller: RAPIER.KinematicCharacterController;
   private readonly figure: THREE.Mesh;
@@ -238,7 +240,7 @@ export class PlayerSoldier {
     this.fireCooldown = Math.max(0, this.fireCooldown - dt);
     // The rifle doesn't fire while he's spraying jam.
     if (input.firing && !input.jamFiring && this.fireCooldown === 0) {
-      this.fireCooldown = FIRE_INTERVAL;
+      this.fireCooldown = this.fireInterval;
       return true;
     }
     return false;
@@ -288,6 +290,24 @@ export class PlayerSoldier {
     this.figure.rotation.set(0, this.yaw, 0);
     // Knocked down: flat on his back until he gets up.
     if (this.isDown) this.figure.rotation.set(Math.PI / 2, this.yaw, 0, 'YXZ');
+  }
+
+  /** Puts a flak vest on him (once): olive, with pouches across the front. */
+  wearArmour(): void {
+    if (this.figure.getObjectByName('armour')) return;
+    const vest = new THREE.Group();
+    vest.name = 'armour';
+    const olive = new THREE.MeshStandardMaterial({ color: 0x3f4a26, roughness: 0.7 });
+    const body = new THREE.Mesh(new THREE.BoxGeometry(0.58, 0.52, 0.46), olive);
+    body.position.set(0, 1.3, 0);
+    vest.add(body);
+    for (const x of [-0.14, 0, 0.14]) {
+      const pouch = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.13, 0.06), olive);
+      pouch.position.set(x, 1.16, -0.25);
+      vest.add(pouch);
+    }
+    vest.traverse((o) => (o.castShadow = true));
+    this.figure.add(vest);
   }
 
   dispose(): void {
