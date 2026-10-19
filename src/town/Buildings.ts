@@ -9,7 +9,7 @@ import { withDetail } from './Surfaces';
 import { CAR_TYPES, parkedCars, type CarPlacement } from './Cars';
 import { OpeningWriter, WINDOWS, SCHOOL_WINDOW, DOUBLE_DOOR, DOOR_CELLS, GARAGE_DOORS, type Cell } from './Openings';
 
-/** White and pale grey render on most of the new houses (as in a drone shot of Sycamore Drive), some buff, a few rows of red brick. */
+/** White and pale grey render on most of the new houses (as in a drone shot of the estate), some buff, a few rows of red brick. */
 const WALLS = [0xf4f3ef, 0xefeee9, 0xe9e8e3, 0xf6f4ee, 0xe3e2dd, 0xdcdbd6, 0xece6d8, 0xd9c7a8, 0xf1f0ec, 0xa9654e, 0xb5765c];
 /** Blue-grey slate (or slate-look tiles), and now and then a brown one. */
 const ROOFS = [0x4e5664, 0x56606e, 0x48505c, 0x5d6672, 0x434a55, 0x515a68, 0x6a5246];
@@ -1039,7 +1039,7 @@ export class Buildings {
         }
       }
     }
-    // Rows of young trees planted either side of the path along the old railway line by Sycamore Drive.
+    // Rows of young trees planted either side of the path along the old railway line near the start.
     const gardens = this.gardenGrid;
     for (const g of this.gardenLines) gardens.add(g.pts);
     const rail = this.railwayPath();
@@ -1132,7 +1132,7 @@ export class Buildings {
     this.count.gardens = this.gardenLines.length;
   }
 
-  /** The tarmac path along the old railway line past Sycamore Drive: the long path nearest the start. */
+  /** The tarmac path along the old railway line near the start: the long path nearest the start. */
   private railwayPath(): Pt[] | null {
     let best: Pt[] | null = null, bestD = 80;
     for (const r of this.town.roads) {
