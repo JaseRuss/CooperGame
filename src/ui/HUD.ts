@@ -67,6 +67,8 @@ export interface PrisonHUD {
   status?: string[];
   /** A grenade launcher: rounds left, the magazine, and the reload (seconds left, and how long it takes). Shown in the weapon card. */
   launcher?: { shots: number; max: number; reloadLeft: number; reloadTime: number; name?: string };
+  /** The gun's name in the weapon card (RIFLE when unset). */
+  gun?: string;
   /** Plantable bombs, shown in the weapon card. */
   bombs?: { count: number; max: number };
   /** Driving a vehicle (the Moon epilogue's buggy): the card's labels and the key hints, in place of the on-foot ones. */
@@ -1297,7 +1299,7 @@ export class HUD {
     if (prison) {
       this.jamName.textContent = 'JAM RIOT CANNON';
       this.jamHint.textContent = 'Sticks guards fast, then they slip over';
-      this.gunName.textContent = prison.onRaft ? 'PADDLES' : 'RIFLE';
+      this.gunName.textContent = prison.onRaft ? 'PADDLES' : prison.gun ?? 'RIFLE';
       this.hullName.textContent = prison.onRaft ? 'RAFT' : 'HEALTH';
       this.reloadText.textContent = prison.downFor > 0 ? 'KNOCKED DOWN' : prison.onRaft ? 'PADDLING' : 'READY';
       this.reloadText.style.color = prison.downFor > 0 ? '#ff8a7a' : '#ffd24a';
