@@ -152,15 +152,9 @@ for i, b in enumerate(buildings):
     driveways.append([round(c[0], 1), round(c[1], 1), round(end[0], 1), round(end[1], 1), i % 5 < 3 and 1 or 0])
 
 # --- start, school and the road route between them ---
-# The start house: start in front of it, most of the way from the house to its street.
-home = xz(55.8456461, -3.2200633)
-def seg_near(p, a, b):
-    dx, dz = b[0] - a[0], b[1] - a[1]
-    t = max(0, min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dz) / (dx * dx + dz * dz or 1)))
-    return (a[0] + dx * t, a[1] + dz * t)
-kerb = min((seg_near(home, a, b) for r in roads if r['n'] == 'Sycamore Drive' for a, b in zip(list(zip(r['p'][0::2], r['p'][1::2])), list(zip(r['p'][0::2], r['p'][1::2]))[1:])), key=lambda q: math.dist(q, home))
-start = (home[0] + (kerb[0] - home[0]) * 0.72, home[1] + (kerb[1] - home[1]) * 0.72)
-print('home', [round(v) for v in home], 'kerb', round(math.dist(home, kerb), 1), 'm away')
+# Start on the old railway path where the estate's footpath meets it, at the top of the hill
+# (snapped to the nearest road point below).
+start = xz(55.846429, -3.218861)
 sx0 = xz(55.8411, -3.2146)
 school_area = min((a for a in areas if a['k'] == 'school'), key=lambda a: math.dist((a['p'][0], a['p'][1]), sx0))
 gp = list(zip(school_area['p'][0::2], school_area['p'][1::2]))
@@ -186,6 +180,7 @@ for r in roads:
         adj.setdefault(kb, []).append((ka, w))
 def nearest(q): return min(adj, key=lambda k: math.dist(k, q))
 s, g = nearest(start), nearest(school)
+start = s
 dist = {s: 0}; prev = {}; pq = [(0, s)]
 while pq:
     dd, u = heapq.heappop(pq)
@@ -207,7 +202,7 @@ json.dump({
     'source': 'OpenStreetMap contributors (ODbL); elevation from AWS Terrain Tiles (Mapzen terrarium)',
     'origin': [LAT0, LON0], 'half': HALF, 'step': STEP, 'n': N, 'base': round(lo, 1),
     'heights': base64.b64encode(hdata).decode(),
-    'start': [round(v, 1) for v in start], 'home': [round(v, 1) for v in home], 'school': [round(v, 1) for v in school], 'schoolGrounds': school_area['p'],
+    'start': [round(v, 1) for v in start], 'school': [round(v, 1) for v in school], 'schoolGrounds': school_area['p'],
     'route': flat(route), 'junctions': flat(junctions),
     'roads': roads, 'buildings': buildings, 'areas': [a for a in areas if a is not school_area] + [school_area], 'barriers': barriers,
     'trees': extras['trees'], 'driveways': driveways,

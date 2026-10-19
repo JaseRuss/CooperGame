@@ -58,7 +58,7 @@ const JAM_RADIUS = 1.8;
 const GRENADES = 4;
 const GRENADE_RELOAD = 18;
 /** Roadblocks on the way down: the first is this far along the route, then at least this far apart, none too near the school. */
-const FIRST_BLOCK = 130;
+const FIRST_BLOCK = 80;
 const BLOCK_GAP = 150;
 const BLOCK_SCHOOL_CLEAR = 130;
 const BLOCK_MEN = 6;
