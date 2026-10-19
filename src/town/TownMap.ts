@@ -18,6 +18,8 @@ export interface TownMapData {
   pens: { x: number; z: number; freed: boolean }[];
   /** The supply depot with the upgrades; `stocked` while something there is still to pick up. */
   depot: { x: number; z: number; stocked: boolean } | null;
+  /** Streets with patrols on them: tinted red while held, green once every patrol on them is down. */
+  streets: { lines: Pt[][]; cleared: boolean }[];
 }
 
 /**
@@ -26,7 +28,7 @@ export interface TownMapData {
  * town is known from the start; enemies show when one of ours is near enough to see them.
  */
 export class TownMap {
-  readonly data: TownMapData = { players: [], squad: [], enemies: [], roadblocks: [], school: { x: 0, z: 0, taken: false }, pens: [], depot: null };
+  readonly data: TownMapData = { players: [], squad: [], enemies: [], roadblocks: [], school: { x: 0, z: 0, taken: false }, pens: [], depot: null, streets: [] };
   private readonly plan: HTMLCanvasElement;
   private readonly half: number;
 
@@ -147,6 +149,17 @@ export class TownMap {
       ctx.strokeStyle = stroke;
       ctx.stroke();
     };
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = big ? 4 : 5;
+    for (const st of d.streets) {
+      ctx.strokeStyle = st.cleared ? 'rgba(95,210,74,0.85)' : 'rgba(255,90,74,0.45)';
+      for (const line of st.lines) {
+        ctx.beginPath();
+        line.forEach((p, i) => (i ? ctx.lineTo(sx(p.x), sy(p.z)) : ctx.moveTo(sx(p.x), sy(p.z))));
+        ctx.stroke();
+      }
+    }
     for (const o of d.roadblocks) {
       const half = r * 1.4;
       ctx.fillStyle = o.taken ? '#5fbf4a' : o.army === 'tan' ? '#c4a468' : '#3d6fc4';

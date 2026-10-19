@@ -138,6 +138,8 @@ export interface HUDState {
   cinematicLabel: string;
   /** The way to the launch pad, in the zombie mission's last minute. */
   waypoint: Waypoint | null;
+  /** A second, green marker for an optional side trip (Penicuik's supply depot). */
+  sideWaypoint?: Waypoint | null;
   enemyBasesLeft: number;
   enemyBasesTotal: number;
   /** When close to an enemy base: what still needs destroying there. */
@@ -349,6 +351,9 @@ const STYLE = `
 .hud .waypoint span { position:absolute; left:50%; top:-58px; transform:translateX(-50%); white-space:nowrap; font-size:15px; color:#ffd24a; letter-spacing:1px; }
 .hud .waypoint.off .arrow { left:-11px; top:-13px; border-left:22px solid #ff6a5a; border-top:13px solid transparent; border-bottom:13px solid transparent; border-right:0; transform-origin:11px 13px; }
 .hud .waypoint.off span { top:18px; }
+.hud .waypoint.side .arrow { border-top-color:#7be24a; }
+.hud .waypoint.side.off .arrow { border-left-color:#7be24a; }
+.hud .waypoint.side span { color:#b8f08a; font-size:13px; }
 .hud .zwall { width:260px; margin:5px auto 0; }
 .hud .zwall .bar { height:10px; }
 .hud .zstats { display:flex; gap:14px; justify-content:center; margin-top:5px; font-size:11.5px; font-weight:800; letter-spacing:0.5px; }
@@ -455,7 +460,7 @@ export class HUD {
   private readonly victoryText: HTMLDivElement;
   private readonly victoryFooter: HTMLDivElement;
   private readonly waypoint: HTMLDivElement;
-  private readonly waypointLabel: HTMLSpanElement;
+  private readonly sideWaypoint: HTMLDivElement;
   private readonly fade: HTMLDivElement;
   private onMissionStart: ((m: Mission) => void) | null = null;
   /** Plays a menu click (see setSoundHook). */
@@ -672,7 +677,11 @@ export class HUD {
     this.waypoint = el('div', 'waypoint');
     root.insertBefore(this.waypoint, this.overlay);
     el('div', 'arrow', this.waypoint);
-    this.waypointLabel = el('span', 'stencil shadow', this.waypoint);
+    el('span', 'stencil shadow', this.waypoint);
+    this.sideWaypoint = el('div', 'waypoint side');
+    root.insertBefore(this.sideWaypoint, this.waypoint);
+    el('div', 'arrow', this.sideWaypoint);
+    el('span', 'stencil shadow', this.sideWaypoint);
 
     // --- a full-screen fade, for cutting between cutscene shots ---
     this.fade = el('div', 'fade', root);
@@ -1437,13 +1446,20 @@ export class HUD {
     this.cinematicLabel.textContent = state.cinematicLabel;
     for (const bit of this.hudBits) bit.style.visibility = state.cinematic ? 'hidden' : 'visible';
 
-    const way = state.cinematic || this.pausedOpen ? null : state.waypoint;
-    this.waypoint.style.display = way ? 'block' : 'none';
-    if (way) {
-      this.waypoint.classList.toggle('off', !way.onScreen);
-      this.waypoint.style.transform = `translate(${way.x}px, ${way.y}px)`;
-      (this.waypoint.firstChild as HTMLDivElement).style.transform = way.onScreen ? '' : `rotate(${way.angle}rad)`;
-      this.waypointLabel.textContent = way.label;
+    const hideWays = state.cinematic || this.pausedOpen;
+    for (const [box, way] of [[this.waypoint, hideWays ? null : state.waypoint], [this.sideWaypoint, hideWays ? null : state.sideWaypoint ?? null]] as const) {
+      box.style.display = way ? 'block' : 'none';
+      if (!way) continue;
+      box.classList.toggle('off', !way.onScreen);
+      box.style.transform = `translate(${way.x}px, ${way.y}px)`;
+      (box.firstChild as HTMLDivElement).style.transform = way.onScreen ? '' : `rotate(${way.angle}rad)`;
+      const label = box.lastChild as HTMLSpanElement;
+      label.textContent = way.label;
+      // Pinned to the edge, the label hangs inward so it stays on this player's own screen.
+      const edge = way.onScreen ? '' : way.x < this.viewportWidth * 0.3 ? 'left' : way.x > this.viewportWidth * 0.7 ? 'right' : '';
+      label.style.left = edge === 'left' ? '-11px' : edge === 'right' ? 'auto' : '';
+      label.style.right = edge === 'right' ? '-11px' : '';
+      label.style.transform = edge ? 'none' : '';
     }
 
     if (state.cinematic || this.pausedOpen) {
