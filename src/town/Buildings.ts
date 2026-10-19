@@ -1132,7 +1132,7 @@ export class Buildings {
     this.count.gardens = this.gardenLines.length;
   }
 
-  /** The tarmac path along the old railway line near the start: the long path nearest the start. */
+  /** The tarmac path along the old railway line near the start: the long path nearest the route. */
   private railwayPath(): Pt[] | null {
     let best: Pt[] | null = null, bestD = 80;
     for (const r of this.town.roads) {
@@ -1140,7 +1140,7 @@ export class Buildings {
       let len = 0;
       for (let i = 1; i < r.pts.length; i++) len += Math.hypot(r.pts[i].x - r.pts[i - 1].x, r.pts[i].z - r.pts[i - 1].z);
       if (len < 600) continue;
-      const d = Math.min(...r.pts.map((p) => Math.hypot(p.x - this.town.start.x, p.z - this.town.start.z)));
+      const d = Math.min(...r.pts.flatMap((p) => this.town.route.map((q) => Math.hypot(p.x - q.x, p.z - q.z))));
       if (d < bestD) {
         bestD = d;
         best = r.pts;
