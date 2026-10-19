@@ -10,7 +10,7 @@ SRC_DIR holds:
   t_X_Y.png        AWS Terrain Tiles (terrarium) at zoom 15 covering it, x 16090-16091, y 10228-10230:
                    https://s3.amazonaws.com/elevation-tiles-prod/terrarium/15/X/Y.png
 
-The level starts at the top of the hill and ends at Mauricewood Primary School's grounds
+The level starts on Bracken Wynd by the pond and ends at Mauricewood Primary School's grounds
 (its buildings aren't mapped, so they and the playground are traced from aerial photos in
 extras.json). No third-party Python packages needed.
 """
@@ -152,9 +152,9 @@ for i, b in enumerate(buildings):
     driveways.append([round(c[0], 1), round(c[1], 1), round(end[0], 1), round(end[1], 1), i % 5 < 3 and 1 or 0])
 
 # --- start, school and the road route between them ---
-# Start on the old railway path where the estate's footpath meets it, at the top of the hill
+# Start on Bracken Wynd, at its nearest point to the pond
 # (snapped to the nearest road point below).
-start = xz(55.846429, -3.218861)
+start = xz(55.846512, -3.222186)
 sx0 = xz(55.8411, -3.2146)
 school_area = min((a for a in areas if a['k'] == 'school'), key=lambda a: math.dist((a['p'][0], a['p'][1]), sx0))
 gp = list(zip(school_area['p'][0::2], school_area['p'][1::2]))
