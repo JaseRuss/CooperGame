@@ -407,7 +407,7 @@ export class TownGame {
         if (this.blocks.some((b) => Math.hypot(b.rb.at.x - p.x, b.rb.at.z - p.z) < 40)) continue;
         const road = this.buildings.nearestRoad(p);
         if (!road || Math.hypot(road.x - p.x, road.z - p.z) < 9) continue;
-        if (!this.buildings.openSpot(p, 7)) continue;
+        if (!this.buildings.openSpot(p, 9)) continue;
         spots.push({ p, road, d: r.d, at: r.at });
       }
     }
