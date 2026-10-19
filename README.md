@@ -699,13 +699,17 @@ some south-facing slopes, and garages have low pitched roofs. Street lamps line 
 the path along the old railway line, which has rows of young trees either side. Cars are
 parked along the kerbs, and hedges, garden walls and trees make cover. The drainage basins that are
 dry most of the time are grass, with a fine texture of grass blades worked into every green part of
-the ground. The streets are laid as their own surfaces over the ground:
+the ground. Walls, roofs, fences, hedges and trees carry detail textures too (pebble-dash render or
+brick, rows of slates, timber boards, coursed stone, leaves and bark). The streets are laid as their own surfaces over the ground:
 speckled asphalt with dashed white lines on the main roads, paving-slab pavements with kerbstones,
 tarmac footpaths and gravel tracks.
 
 You start outside **64 Sycamore Drive** on your own: your squad has been captured and is held in
-four enemy **prisoner pens** (barred cages with guards, marked on the map), each a short detour of
-about 80 m off the way down, one beside each stretch of it. Stand at a pen's gate for a moment to let the two inside out, and they join your squad.
+four enemy **prisoner pens** (marked on the map), each a short detour of about 80 m off the way
+down, one beside each stretch of it. Each is a barred cage on a concrete footing with spiked bars,
+X-braces and barbed wire on angled arms along the top, a padlocked gate, and a tin shelter over a
+bunk inside; outside there's a watchtower with a ladder and a searchlight trained on the cage, a
+plank guard hut, a table and stools by a brazier, sandbags, a lamp and a sign. Stand at a pen's gate for a moment to let the two inside out, and they join your squad.
 Freeing them is optional, but the golden marker takes turns: the nearest pen, then the next
 roadblock, then a pen again, and so on, then the school. You fight down the
 hill to **Mauricewood Primary School**, about 1.1 km away by road and 30 m lower. The way is dotted in gold
