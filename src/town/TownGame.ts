@@ -150,7 +150,7 @@ interface Kit {
 /**
  * The bonus level in a real town: Penicuik, in Midlothian, from OpenStreetMap and real elevation
  * data. Every house and garage, every street and path, the gardens and the woods are where they
- * really are, on the real hill. Start outside 64 Sycamore Drive with a squad of four and fight down the
+ * really are, on the real hill. Start at the top of the hill with a squad of four and fight down the
  * hill through the enemy's roadblocks on the streets to Mauricewood Primary School: clear its
  * defenders and raise our flag on its flagpole to win. Two players can play, each with their own
  * view; either can raise the flag, and either can help the other up.
@@ -274,7 +274,7 @@ export class TownGame {
     this.kit2 = this.makeKit();
     this.map = new TownMap(this.town);
 
-    // Start outside 64 Sycamore Drive, facing the way the route goes.
+    // Start at the top of the hill, facing the way the route goes.
     const s = this.town.start;
     const ahead = this.alongRoute(25);
     const yaw = Math.atan2(-(ahead.x - s.x), -(ahead.z - s.z));
@@ -1039,7 +1039,7 @@ export class TownGame {
     else if (this.prisons.some((pr) => !pr.freed && Math.hypot(pr.pen.gate.x - p.x, pr.pen.gate.z - p.z) < 10)) {
       const pr = this.prisons.find((x) => !x.freed && Math.hypot(x.pen.gate.x - p.x, x.pen.gate.z - p.z) < 10) as Prison;
       prompt = pr.opening > 0 ? `Opening the gate… ${Math.round((pr.opening / GATE_TIME) * 100)}%` : `${pr.captives.map((c) => c.name).join(' and ')} are locked in here! Stand at the gate to let them out`;
-    } else if (this.time < 16) prompt = 'Outside 64 Sycamore Drive, on your own. Follow the golden marker: it takes turns between freeing your buddies from a pen and taking a roadblock, on the way down to the school';
+    } else if (this.time < 16) prompt = 'At the top of the hill, on your own. Follow the golden marker: it takes turns between freeing your buddies from a pen and taking a roadblock, on the way down to the school';
     const height = Math.round(this.town.base + this.ground(p.x, p.z));
     const street = this.streetName(p);
     const status = [`Squad ${this.squad.standing} / ${this.squad.list.length}${this.squad.holding ? ' (HOLDING)' : ''}  ·  ${height} m above sea level`];
