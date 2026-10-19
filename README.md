@@ -712,7 +712,7 @@ bunk inside; outside there's a watchtower with a ladder and a searchlight traine
 plank guard hut, a table and stools by a brazier, sandbags, a lamp and a sign. Stand at a pen's gate for a moment to let the two inside out, and they join your squad.
 Freeing them is optional, but the golden marker takes turns: the nearest pen, then the next
 roadblock, then a pen again, and so on, then the school. You fight down the
-hill to **Mauricewood Primary School**, about 1.1 km away by road and 30 m lower. The way is dotted in gold
+hill to **Mauricewood Primary School**, about 900 m away by road. The way is dotted in gold
 on the map. The enemy has five **roadblocks** at junctions on the way down (taking one makes it your
 checkpoint). Each is built in layers across the street: a triple coil of barbed wire on pickets
 (you can see and shoot through it, not walk through it) with a gap at one side, a staggered row of
