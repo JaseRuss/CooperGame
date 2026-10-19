@@ -31,6 +31,10 @@ interface Brain {
   wait: number;
   /** Seconds left of being startled: he stands and stares, and doesn't shoot or move. */
   startle: number;
+  /** On patrol: the beat he walks up and down at ease (instead of wandering about his post), and the point he's heading for. */
+  beat: THREE.Vector2[] | null;
+  leg: number;
+  way: 1 | -1;
 }
 
 /**
@@ -41,6 +45,13 @@ interface Brain {
  */
 export class Enemies {
   readonly list: Brain[] = [];
+
+  /** A soldier on patrol: he walks `beat` there and back at ease, and goes back to it once he's lost you. */
+  patrol(t: Trooper, beat: THREE.Vector2[]): void {
+    this.add(t, 0);
+    const b = this.list[this.list.length - 1];
+    b.beat = beat;
+  }
 
   add(t: Trooper, roam: number): void {
     this.list.push({
@@ -56,6 +67,9 @@ export class Enemies {
       wander: null,
       wait: Math.random() * 3,
       startle: 0,
+      beat: null,
+      leg: 1,
+      way: 1,
     });
   }
 
@@ -119,6 +133,15 @@ export class Enemies {
         if (Math.hypot(b.last.x - t.pos.x, b.last.z - t.pos.z) > 2) t.stepToward(b.last.x, b.last.z, RUN, dt);
         else b.alert = Math.min(b.alert, 2.5); // got there: a look round, then back to his post
       }
+      return;
+    }
+    // On patrol: walk the beat, turning round at each end.
+    if (b.beat) {
+      const to = b.beat[b.leg];
+      if (Math.hypot(to.x - t.pos.x, to.y - t.pos.z) < 1.2) {
+        if (b.leg + b.way < 0 || b.leg + b.way >= b.beat.length) b.way = b.way === 1 ? -1 : 1;
+        b.leg += b.way;
+      } else t.stepToward(to.x, to.y, WALK, dt);
       return;
     }
     // At ease: wander about the post.

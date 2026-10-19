@@ -12,7 +12,7 @@ import { MISSION, levelNumber, nextMission, startMission } from '../core/config'
 import { PlayerSoldier, MAX_HEALTH } from '../prison/PlayerSoldier';
 import { ShoulderCam } from '../prison/ShoulderCam';
 import { FRIEND_SHOTS, ENEMY_SHOTS, WALLS_ONLY } from '../prison/groups';
-import { ARMY_GREEN, ARMY_TAN, ARMY_BLUE } from '../utils/plastic';
+import { ARMY_GREEN, ARMY_TAN, ARMY_BLUE, shade } from '../utils/plastic';
 import { mulberry32 } from '../utils/rng';
 import { Trooper } from '../jungle/Trooper';
 import { Enemies } from '../jungle/Enemies';
@@ -24,6 +24,7 @@ import { TownTerrain } from './TownTerrain';
 import { TownRoads } from './Roads';
 import { Buildings, type Roadblock, type Pen } from './Buildings';
 import { TownMap } from './TownMap';
+import { buildDepot, buildNest, UPGRADE_NAME, type Depot, type Upgrade } from './Depot';
 
 const TITLE = 'DOWN THE HILL';
 /** The squad starts captured: two of them in each of the enemy's pens, away from the route. */
@@ -68,9 +69,27 @@ const MG_EVERY = 0.09;
 const MG_REST = 2.8;
 /** A roadblock (or the school) counts as cleared with this many of its men left standing. */
 const CLEARED = 0;
-const SCHOOL_MEN = 10;
-/** Pairs on patrol in the streets between the roadblocks. */
-const PATROLS = 6;
+/** The school is dug in: this many defenders, the first few of them heavies who take twice the hits, and two machine-gun nests. */
+const SCHOOL_MEN = 24;
+const SCHOOL_HEAVIES = 8;
+/** Patrols walking the streets, this many men each. There are only these: none come back once they're down. */
+const PATROLS = 8;
+const PATROL_MEN = 3;
+/** A patrol's beat: at most this long, and it starts this far from where you start, and well clear of the school. */
+const BEAT_MAX = 170;
+const PATROL_START_CLEAR = 150;
+/** Guns. You start with a pistol; the depot's assault rifle fires far faster and straighter. */
+const PISTOL_EVERY = 0.42;
+const PISTOL_SPREAD = 0.03;
+const RIFLE_EVERY = 0.11;
+const RIFLE_SPREAD = 0.006;
+/** Body armour: the share of each hit that still gets through. */
+const ARMOUR = 0.45;
+/** The supply depot is out toward the south-west corner (this far toward it, from the middle), with a few guards. */
+const DEPOT_TOWARD = 0.68;
+const DEPOT_GUARDS = 4;
+/** Walk this close to an upgrade's table to take it. */
+const PICKUP_REACH = 2.4;
 /** Standing at the flagpole this long raises our flag. */
 const FLAG_TIME = 4;
 const FLAG_REACH = 3.5;
@@ -78,13 +97,15 @@ const FLAG_REACH = 3.5;
 const REVIVE_REACH = 2.4;
 const REVIVE_TIME = 1.5;
 const REVEAL = 50;
-const VICTORY_DELAY = 12;
+const VICTORY_DELAY = 25;
+/** After winning, the replay button works after this long (so a shot held at the end doesn't trigger it). */
+const REPLAY_AFTER = 1.5;
 
 const CONTROLS =
   '<span><b>Move</b> left stick · W A S D</span><span><b>Aim</b> right stick · mouse</span>' +
   '<span><b>Creep</b> (they see you from less far) RB · Left Shift</span><span><b>Rifle</b> RT · click</span>' +
   '<span><b>Jam gun</b> (sticks soldiers) hold LT · hold E</span>' +
-  '<span><b>Grenade launcher</b> (4 shots, then a reload) LB · F · right click</span>' +
+  '<span><b>Grenade launcher</b> (from the supply depot: 4 shots, then a reload) LB · F · right click</span>' +
   '<span><b>Squad: hold here / follow me</b> X</span><span><b>Camera</b> Y · C</span><span><b>Back to checkpoint</b> Back · R</span>';
 const CONTROLS_P2 =
   '<span><b>Move</b> arrow keys · <b>Aim</b> mouse in your view or numpad 4/6 and 8/2</span>' +
@@ -93,7 +114,7 @@ const CONTROLS_P2 =
   '<span><b>Camera</b> numpad 9 · <b>Pause / map</b> numpad enter · <b>Checkpoint</b> numpad decimal</span>';
 const LEGEND =
   '<span><i style="background:#4b7a2e"></i>You and your squad</span><span><i style="background:#c4a468"></i>Tan army</span><span><i style="background:#3f6fb0"></i>Blue army</span>' +
-  '<span><i style="background:#ffd24a"></i>The way down the hill, and Mauricewood Primary School</span><span>Squares: enemy roadblocks</span><span><i style="background:#ffd24a"></i>Barred squares: pens holding your squad</span>';
+  '<span><i style="background:#ffd24a"></i>The way down the hill, and Mauricewood Primary School</span><span>Squares: enemy roadblocks</span><span><i style="background:#7a8a3a"></i>Supply depot: upgrades (south-west)</span><span><i style="background:#ffd24a"></i>Barred squares: pens holding your squad</span>';
 
 const NO_MAP: MapView = {
   playerX: 0,
@@ -117,9 +138,6 @@ interface Block {
   rb: Roadblock;
   army: 'tan' | 'blue';
   men: Trooper[];
-  /** The machine gunner in the nest (also one of `men`), and his gun's burst: rounds left, and the timers. */
-  gunner: Trooper;
-  mg: { left: number; next: number; rest: number };
   taken: boolean;
   /** How far along the route it is. */
   along: number;
@@ -145,6 +163,19 @@ interface Kit {
   reload: number;
   downTime: number;
   revive: number;
+  /** What he's picked up at the depot: the assault rifle (else a pistol), body armour, the grenade launcher. */
+  gun: 'pistol' | 'rifle';
+  armour: boolean;
+  launcher: boolean;
+}
+
+/** A machine gun in a sandbagged nest (a roadblock's, or one of the school's): its gunner, the gun, and its burst. */
+interface Mg {
+  gunner: Trooper;
+  gun: THREE.Group;
+  mg: { left: number; next: number; rest: number };
+  /** Whether it's out of the fight anyway (its roadblock taken). */
+  silent: () => boolean;
 }
 
 /**
@@ -189,6 +220,10 @@ export class TownGame {
   private battle!: Battle;
   private blocks: Block[] = [];
   private schoolMen: Trooper[] = [];
+  private patrolMen: Trooper[] = [];
+  private guns: Mg[] = [];
+  private depot!: Depot;
+  private leaving = false;
   private prisons: Prison[] = [];
   private schoolCleared = false;
   private flag = 0;
@@ -310,13 +345,13 @@ export class TownGame {
     this.ready = true;
     this.sound.music.start();
     this.clock.start();
-    this.hud.showBanner(`LEVEL ${levelNumber(MISSION)}: ${TITLE}`, "Penicuik! You're on your own: your squad's been captured and locked in four enemy pens, marked on your map. Free them if you can, and fight down the hill through the roadblocks to Mauricewood Primary School");
+    this.hud.showBanner(`LEVEL ${levelNumber(MISSION)}: ${TITLE}`, "Penicuik! You're on your own with just a pistol: your squad's locked in four enemy pens, and the school at the bottom of the hill is dug in. The enemy's supply depot in the south-west corner has better kit");
     if (import.meta.env.DEV) (window as unknown as { town: TownGame }).town = this;
     requestAnimationFrame(this.animate);
   }
 
   private makeKit(): Kit {
-    return { jam: new JamCannon(this.scene, (x, z) => this.ground(x, z), FRIEND_SHOTS), jamTank: 1, jamCooldown: 0, grenades: GRENADES, reload: 0, downTime: 0, revive: 0 };
+    return { jam: new JamCannon(this.scene, (x, z) => this.ground(x, z), FRIEND_SHOTS), jamTank: 1, jamCooldown: 0, grenades: GRENADES, reload: 0, downTime: 0, revive: 0, gun: 'pistol', armour: false, launcher: false };
   }
 
   /** How far along the route each point is, in metres. */
@@ -359,19 +394,169 @@ export class TownGame {
       const gunner = this.addEnemy(rb.gunner.x, rb.gunner.z, color, 0);
       men.push(gunner);
       const street = this.town.roads.find((r) => r.name && r.pts.some((q) => Math.hypot(q.x - p.x, q.z - p.z) < 12))?.name;
-      this.blocks.push({ rb, army, men, gunner, mg: { left: 0, next: 0, rest: 1 + rng() * 2 }, taken: false, along: d, name: street ? `${street} roadblock` : `Roadblock ${this.blocks.length + 1}` });
+      const block: Block = { rb, army, men, taken: false, along: d, name: street ? `${street} roadblock` : `Roadblock ${this.blocks.length + 1}` };
+      this.blocks.push(block);
+      this.guns.push({ gunner, gun: rb.gun, mg: { left: 0, next: 0, rest: 1 + rng() * 2 }, silent: () => block.taken });
     });
-    // Pairs wandering the side streets near the route.
-    for (let i = 0; i < PATROLS; i++) {
-      const d = FIRST_BLOCK * 0.6 + ((i + 0.5) / PATROLS) * (total - FIRST_BLOCK);
-      const p = this.alongRoute(d, dist);
-      const a = rng() * Math.PI * 2;
-      const q = { x: p.x + Math.cos(a) * 30, z: p.z + Math.sin(a) * 30 };
-      const at = this.buildings.nearestRoad(q) ?? p;
-      for (let k = 0; k < 2; k++) this.addEnemy(at.x + k * 1.6, at.z + k * 1.2, k ? ARMY_BLUE : ARMY_TAN, 16);
-    }
+    this.placeDepot();
+    this.placePatrols(rng);
+    this.fortifySchool(rng, dist);
+  }
+
+  /**
+   * The school, dug in: two dozen defenders round the buildings and the playground (the first few
+   * of them heavies in darker kit who take twice the hits), and two sandbagged machine-gun nests
+   * covering the way in from the last roadblock. A pistol alone won't do it.
+   */
+  private fortifySchool(rng: () => number, dist: number[]): void {
     const school = this.buildings.school;
-    this.schoolMen = school.posts.slice(0, SCHOOL_MEN).map((q, i) => this.addEnemy(q.x, q.z, i % 2 ? ARMY_BLUE : ARMY_TAN, 5));
+    const c = school.centre;
+    this.schoolMen = school.posts.slice(0, SCHOOL_MEN).map((q, i) => {
+      const color = i % 2 ? ARMY_BLUE : ARMY_TAN;
+      const heavy = i < SCHOOL_HEAVIES;
+      const t = new Trooper(this.world, q.x, q.z, 'enemy', heavy ? shade(color, 0.62) : color, heavy ? ENEMY_HP * 2 : ENEMY_HP);
+      this.scene.add(t.root);
+      this.byHandle.set(t.collider.handle, t);
+      this.enemies.add(t, 5);
+      return t;
+    });
+    // The way the attack comes from: back up the route.
+    const total = dist[dist.length - 1];
+    const from = this.alongRoute(Math.max(0, total - 70), dist);
+    const base = Math.atan2(from.z - c.z, from.x - c.x);
+    for (const turn of [-0.55, 0.55]) {
+      // The nearest clear ground that way, swinging further round if the first line is all buildings and road.
+      let q: Pt | null = null, a = base;
+      for (const swing of [0, 0.25, -0.25, 0.5, -0.5, 0.75]) {
+        a = base + turn + swing * Math.sign(turn) + (rng() - 0.5) * 0.1;
+        for (let r = 18; r < 50 && !q; r += 2) {
+          const at = { x: c.x + Math.cos(a) * r, z: c.z + Math.sin(a) * r };
+          if (this.buildings.clear(at, 2.5)) q = at;
+        }
+        if (q) break;
+      }
+      if (q) {
+        const nest = buildNest(this.buildings.group, this.world, (x, z) => this.ground(x, z), q, { x: q.x + Math.cos(a), z: q.z + Math.sin(a) });
+        const color = turn < 0 ? ARMY_TAN : ARMY_BLUE;
+        const gunner = new Trooper(this.world, nest.gunner.x, nest.gunner.z, 'enemy', shade(color, 0.62), ENEMY_HP * 2);
+        this.scene.add(gunner.root);
+        this.byHandle.set(gunner.collider.handle, gunner);
+        this.enemies.add(gunner, 0);
+        this.schoolMen.push(gunner);
+        this.guns.push({ gunner, gun: nest.gun, mg: { left: 0, next: 0, rest: 1 + rng() * 2 }, silent: () => false });
+      }
+    }
+  }
+
+  /**
+   * Patrols walking the streets all over town, three men to a patrol: each walks its own stretch of
+   * one street there and back, spread apart, clear of where you start, the school and the
+   * roadblocks. Only these: once they're down, the streets stay clear.
+   */
+  private placePatrols(rng: () => number): void {
+    const s = this.town.start, sc = this.buildings.school.centre;
+    const kinds = new Set(['residential', 'unclassified', 'tertiary', 'secondary', 'living_street', 'service']);
+    const roads = this.town.roads.filter((r) => kinds.has(r.kind) && r.pts.length >= 2);
+    // A seeded shuffle, so the patrols are the same every game.
+    for (let i = roads.length - 1; i > 0; i--) {
+      const j = Math.floor(rng() * (i + 1));
+      [roads[i], roads[j]] = [roads[j], roads[i]];
+    }
+    const mids: Pt[] = [];
+    for (const r of roads) {
+      if (mids.length >= PATROLS) break;
+      // Its first stretch up to BEAT_MAX long.
+      const beat: Pt[] = [r.pts[0]];
+      let len = 0;
+      for (let i = 1; i < r.pts.length && len < BEAT_MAX; i++) {
+        len += Math.hypot(r.pts[i].x - r.pts[i - 1].x, r.pts[i].z - r.pts[i - 1].z);
+        beat.push(r.pts[i]);
+      }
+      if (len < 50) continue;
+      const mid = beat[Math.floor(beat.length / 2)];
+      const far = (p: Pt, d: number) => Math.hypot(p.x - mid.x, p.z - mid.z) > d;
+      if (!far(s, PATROL_START_CLEAR) || !far(sc, 90) || !far(this.depot.at, 60)) continue;
+      if (!this.blocks.every((b) => far(b.rb.at, 60)) || !mids.every((m) => far(m, 130))) continue;
+      if (beat.some((p) => Math.abs(p.x) > this.town.half - 30 || Math.abs(p.z) > this.town.half - 30)) continue;
+      mids.push(mid);
+      const color = mids.length % 2 ? ARMY_TAN : ARMY_BLUE;
+      for (let k = 0; k < PATROL_MEN; k++) {
+        // Side by side across the street.
+        const off = (k - (PATROL_MEN - 1) / 2) * 1.4;
+        const path = beat.map((p, i) => {
+          const a = beat[Math.max(0, i - 1)], b = beat[Math.min(beat.length - 1, i + 1)];
+          const l = Math.hypot(b.x - a.x, b.z - a.z) || 1;
+          return new THREE.Vector2(p.x - ((b.z - a.z) / l) * off, p.z + ((b.x - a.x) / l) * off);
+        });
+        const t = new Trooper(this.world, path[0].x, path[0].y, 'enemy', color, ENEMY_HP);
+        this.scene.add(t.root);
+        this.byHandle.set(t.collider.handle, t);
+        this.enemies.patrol(t, path);
+        this.patrolMen.push(t);
+      }
+    }
+  }
+
+  /**
+   * The enemy's supply depot, out toward the south-west corner: open ground by a road, as near the
+   * corner as there is. It holds an assault rifle, body armour and a grenade launcher, each one for
+   * each player, and a handful of guards. It's off the way down the hill: a detour, but the school
+   * is hard going with just a pistol.
+   */
+  private placeDepot(): void {
+    const h = this.town.half;
+    const corner = { x: -h * DEPOT_TOWARD, z: h * DEPOT_TOWARD };
+    let best: { p: Pt; road: Pt } | null = null, bestD = Infinity;
+    for (const need of [11, 9]) {
+      for (let x = corner.x - 220; x <= corner.x + 220; x += 8) {
+        for (let z = corner.z - 220; z <= corner.z + 220; z += 8) {
+          const p = { x, z };
+          const d = Math.hypot(x - corner.x, z - corner.z);
+          if (d >= bestD) continue;
+          const road = this.buildings.nearestRoad(p);
+          if (!road || Math.hypot(road.x - p.x, road.z - p.z) < need + 2) continue;
+          if (!this.buildings.openSpot(p, need)) continue;
+          best = { p, road };
+          bestD = d;
+        }
+      }
+      if (best) break;
+    }
+    const found = best as { p: Pt; road: Pt } | null;
+    const at = found?.p ?? corner, road = found?.road ?? { x: corner.x + 10, z: corner.z };
+    this.depot = buildDepot(this.buildings.group, this.world, (x, z) => this.ground(x, z), at, road, ARMY_TAN);
+    for (const q of this.depot.posts.slice(0, DEPOT_GUARDS)) this.addEnemy(q.x, q.z, ARMY_TAN, 4);
+  }
+
+  /** Upgrades: walk up to a table at the depot and it's yours (each player has their own). A model goes once everyone has taken it. */
+  private updatePickups(): void {
+    const players: [PlayerSoldier, Kit, 1 | 2][] = [[this.playerOne, this.kitOne, 1]];
+    if (this.player2) players.push([this.player2, this.kit2, 2]);
+    const has = (k: Kit, u: Upgrade) => (u === 'rifle' ? k.gun === 'rifle' : u === 'armour' ? k.armour : k.launcher);
+    for (const tb of this.depot.tables) {
+      for (const [p, k, n] of players) {
+        if (p.isDown || has(k, tb.kind) || Math.hypot(p.position.x - tb.at.x, p.position.z - tb.at.z) > PICKUP_REACH) continue;
+        if (tb.kind === 'rifle') {
+          k.gun = 'rifle';
+        } else if (tb.kind === 'armour') {
+          k.armour = true;
+          p.wearArmour();
+        } else {
+          k.launcher = true;
+          k.grenades = GRENADES;
+          k.reload = 0;
+        }
+        const what = tb.kind === 'rifle' ? 'Fast and straight: it cuts through a crowd' : tb.kind === 'armour' ? 'Hits hurt you less than half as much' : `${GRENADES} shots, then a reload: LB · F · right click`;
+        this.hud.showBanner(`${this.player2 ? `PLAYER ${n}: ` : ''}${UPGRADE_NAME[tb.kind]}!`, what);
+        this.sound.play('uiConfirm', { volume: 0.6 });
+      }
+      tb.item.visible = players.some(([, k]) => !has(k, tb.kind));
+    }
+  }
+
+  /** How many upgrades a kit has (out of 3). */
+  private upgrades(k: Kit): number {
+    return (k.gun === 'rifle' ? 1 : 0) + (k.armour ? 1 : 0) + (k.launcher ? 1 : 0);
   }
 
   /**
@@ -610,7 +795,7 @@ export class TownGame {
   private hurtPlayer(target: PlayerSoldier, amount: number, shake: number): void {
     const second = target === this.player2;
     const wasUp = !target.isDown;
-    target.takeDamage(amount);
+    target.takeDamage((second ? this.kit2 : this.kitOne).armour ? amount * ARMOUR : amount);
     (second ? this.cam2 : this.camOne).addShake(shake);
     if (wasUp && target.isDown) (second ? this.kit2 : this.kitOne).downTime = 0;
   }
@@ -662,9 +847,16 @@ export class TownGame {
   private firePlayerRifle(): void {
     const muzzle = this.player.muzzle();
     const dir = this.aimPoint().sub(muzzle).normalize();
-    this.impacts.muzzleFlash(muzzle, dir, 0.3);
-    this.sound.play('crack', { volume: 0.28, rate: 2.3, minGap: 0.05 });
-    this.cam.addShake(0.07);
+    // The pistol wanders more, so at range it misses.
+    const pistol = this.kit.gun === 'pistol';
+    const spread = pistol ? PISTOL_SPREAD : RIFLE_SPREAD;
+    dir.x += (Math.random() - 0.5) * spread * 2;
+    dir.y += (Math.random() - 0.5) * spread;
+    dir.z += (Math.random() - 0.5) * spread * 2;
+    dir.normalize();
+    this.impacts.muzzleFlash(muzzle, dir, pistol ? 0.2 : 0.3);
+    this.sound.play('crack', { volume: pistol ? 0.22 : 0.28, rate: pistol ? 2.7 : 2.3, minGap: 0.05 });
+    this.cam.addShake(pistol ? 0.05 : 0.07);
     this.enemies.hear(muzzle, SHOT_NOISE);
     this.resolveRound(muzzle, dir, 'friend');
   }
@@ -735,6 +927,10 @@ export class TownGame {
 
   private fireGrenade(): void {
     const k = this.kit;
+    if (!k.launcher) {
+      this.hud.showCallout('NO GRENADE LAUNCHER: THERE\'S ONE AT THE SUPPLY DEPOT', '#ffd24a');
+      return;
+    }
     if (k.grenades <= 0 || this.player.isDown) {
       if (k.grenades <= 0) this.hud.showCallout(`GRENADE LAUNCHER RELOADING: ${Math.ceil(k.reload)}s`, '#ffd24a');
       return;
@@ -781,11 +977,11 @@ export class TownGame {
    * with the roadblock taken, it's silent.
    */
   private updateMachineGuns(dt: number): void {
-    for (const b of this.blocks) {
+    for (const b of this.guns) {
       const g = b.gunner;
       const mg = b.mg;
       mg.rest = Math.max(0, mg.rest - dt);
-      if (b.taken || !g.active) {
+      if (b.silent() || !g.active) {
         mg.left = 0;
         continue;
       }
@@ -805,7 +1001,7 @@ export class TownGame {
       const aim = target as THREE.Vector3 | null;
       if (aim) {
         g.faceToward(aim.x, aim.z, dt, 12);
-        b.rb.gun.rotation.y = Math.atan2(-(aim.x - b.rb.gun.position.x), -(aim.z - b.rb.gun.position.z));
+        b.gun.rotation.y = Math.atan2(-(aim.x - b.gun.position.x), -(aim.z - b.gun.position.z));
       }
       if (mg.left > 0) {
         mg.next -= dt;
@@ -851,9 +1047,28 @@ export class TownGame {
       this.buildings.school.raise(this.flag);
       if (this.flag >= 1) {
         this.victoryAt = this.time;
-        this.hud.showVictory('Mauricewood Primary is ours! Our flag flies over Penicuik.', nextMission() ? 'Starting the next mission shortly…' : 'Pick another level from the pause menu');
+        this.hud.showVictory('Mauricewood Primary is ours! Our flag flies over Penicuik.', '');
+        if (document.pointerLockElement) document.exitPointerLock();
         this.sound.music.fanfare();
       }
+    }
+  }
+
+  /** The victory screen: play the level again, or (if there is one) on to the next mission after a while. */
+  private afterVictory(input: InputState, input2: InputState | null): void {
+    const since = this.time - (this.victoryAt as number);
+    const next = nextMission();
+    const key = input.usingGamepad ? 'A' : 'Enter';
+    const wait = Math.max(0, Math.ceil(VICTORY_DELAY - since));
+    this.hud.setVictoryFooter(`Press ${key} to play Penicuik again${next ? `  ·  next mission in ${wait}s` : '  ·  or pick another level from the pause menu'}`);
+    if (since > REPLAY_AFTER && (input.menu.confirm || input2?.menu.confirm)) {
+      this.leaving = true;
+      window.location.reload();
+      return;
+    }
+    if (next && since > VICTORY_DELAY) {
+      this.leaving = true;
+      startMission(next);
     }
   }
 
@@ -895,6 +1110,7 @@ export class TownGame {
       }
     }
     const wasDown = this.player.isDown;
+    this.player.fireInterval = k.gun === 'rifle' ? RIFLE_EVERY : PISTOL_EVERY;
     if (this.player.step(input, dt)) this.firePlayerRifle();
     if (input.resetPressed || (wasDown && !this.player.isDown && this.player.health === 0)) this.toCheckpoint();
     // Fell off the world somehow (through a gap at the edge): back to the checkpoint.
@@ -914,11 +1130,7 @@ export class TownGame {
   private step(input: InputState, dt: number, input2: InputState | null = null): void {
     if (input.mapTogglePressed || input2?.mapTogglePressed) this.hud.toggleBigMap();
     this.time += dt;
-    if (this.victoryAt !== null && this.time - this.victoryAt > VICTORY_DELAY) {
-      const next = nextMission();
-      if (next) startMission(next);
-      this.victoryAt = Infinity;
-    }
+    if (this.victoryAt !== null && !this.leaving) this.afterVictory(input, input2);
     this.playerTurn(input, dt);
     if (this.player2 && input2) this.withPlayer2(() => this.playerTurn(input2, dt));
     this.recordTrail();
@@ -928,6 +1140,8 @@ export class TownGame {
     for (const [handle, t] of this.byHandle) if (t.gone) this.byHandle.delete(handle);
     this.explosives.update(dt, (b) => this.onBlast(b), (pt) => this.impacts.trailPuff(pt));
     this.updatePrisons(dt);
+    this.updatePickups();
+    this.depot.update(this.time);
     this.updateObjectives(dt);
     this.world.step();
 
@@ -962,6 +1176,7 @@ export class TownGame {
     const sc = this.buildings.school.centre;
     d.school = { x: sc.x, z: sc.z, taken: this.victoryAt !== null };
     d.pens = this.prisons.map((pr) => ({ x: pr.pen.at.x, z: pr.pen.at.z, freed: pr.freed }));
+    d.depot = { x: this.depot.at.x, z: this.depot.at.z, stocked: this.depot.tables.some((tb) => tb.item.visible) };
     const p = one.position;
     this.mapView = { ...NO_MAP, playerX: p.x, playerZ: p.z, playerYaw: one.yaw };
   }
@@ -1023,7 +1238,8 @@ export class TownGame {
     return [
       { label: `Break through the roadblocks on the way down (${taken} / ${this.blocks.length})`, done: taken === this.blocks.length },
       { label: `Free your squad from the enemy's pens (${this.prisons.filter((pr) => pr.freed).length} / ${this.prisons.length}) (optional)`, done: this.prisons.every((pr) => pr.freed) },
-      { label: `Clear Mauricewood Primary School (${SCHOOL_MEN - left} / ${SCHOOL_MEN} defenders)`, done: this.schoolCleared },
+      { label: `Grab the upgrades at the supply depot, south-west (${this.upgrades(this.kit)} / 3) (optional)`, done: this.upgrades(this.kit) === 3 },
+      { label: `Clear Mauricewood Primary School (${this.schoolMen.length - left} / ${this.schoolMen.length} defenders)`, done: this.schoolCleared },
       { label: 'Raise our flag on the school flagpole', done: this.victoryAt !== null },
     ];
   }
@@ -1039,10 +1255,16 @@ export class TownGame {
     else if (this.prisons.some((pr) => !pr.freed && Math.hypot(pr.pen.gate.x - p.x, pr.pen.gate.z - p.z) < 10)) {
       const pr = this.prisons.find((x) => !x.freed && Math.hypot(x.pen.gate.x - p.x, x.pen.gate.z - p.z) < 10) as Prison;
       prompt = pr.opening > 0 ? `Opening the gate… ${Math.round((pr.opening / GATE_TIME) * 100)}%` : `${pr.captives.map((c) => c.name).join(' and ')} are locked in here! Stand at the gate to let them out`;
-    } else if (this.time < 16) prompt = 'At the top of the hill, on your own. Follow the golden marker: it takes turns between freeing your buddies from a pen and taking a roadblock, on the way down to the school';
+    } else if (this.depot.tables.some((tb) => tb.item.visible && Math.hypot(tb.at.x - p.x, tb.at.z - p.z) < 9)) {
+      const missing = this.depot.tables.filter((tb) => Math.hypot(tb.at.x - p.x, tb.at.z - p.z) < 9 && this.upgrades(k) < 3).map((tb) => tb.kind).filter((u) => (u === 'rifle' ? k.gun !== 'rifle' : u === 'armour' ? !k.armour : !k.launcher));
+      if (missing.length) prompt = `Walk up to a table to take the ${missing.map((u) => UPGRADE_NAME[u].toLowerCase()).join(', the ')}`;
+    } else if (this.time < 16) prompt = 'At the top of the hill, on your own with just a pistol. Follow the golden marker down the hill. Off the route, the supply depot in the south-west corner (on your map) has an assault rifle, body armour and a grenade launcher';
+    else if (!this.schoolCleared && this.upgrades(k) < 3 && Math.hypot(this.buildings.school.centre.x - p.x, this.buildings.school.centre.z - p.z) < 150) prompt = `Mauricewood Primary is dug in: two machine guns and ${this.schoolMen.length} men. You'll want the upgrades from the supply depot in the south-west corner first`;
     const height = Math.round(this.town.base + this.ground(p.x, p.z));
     const street = this.streetName(p);
     const status = [`Squad ${this.squad.standing} / ${this.squad.list.length}${this.squad.holding ? ' (HOLDING)' : ''}  ·  ${height} m above sea level`];
+    const patrols = this.standing(this.patrolMen);
+    status.push(`${k.gun === 'rifle' ? 'Assault rifle' : 'Pistol'}${k.armour ? ' · body armour' : ''}  ·  ${patrols ? `${patrols} patrolling the streets` : 'Streets clear of patrols'}`);
     if (street) status.push(street);
     const alerted = this.enemies.alerted;
     return {
@@ -1058,7 +1280,8 @@ export class TownGame {
           ? { level: Math.min(1, 0.3 + alerted / 8), label: `${alerted} ENEMY ON THE ALERT`, color: '#ff6a4a' }
           : { level: 0, label: this.player.sneaking ? 'UNSEEN · CREEPING' : 'UNSEEN', color: '#9be27a' },
       status,
-      launcher: { shots: k.grenades, max: GRENADES, reloadLeft: k.reload, reloadTime: GRENADE_RELOAD },
+      launcher: k.launcher ? { shots: k.grenades, max: GRENADES, reloadLeft: k.reload, reloadTime: GRENADE_RELOAD } : undefined,
+      gun: k.gun === 'rifle' ? 'ASSAULT RIFLE' : 'PISTOL',
     };
   }
 
@@ -1179,6 +1402,8 @@ export class TownGame {
     const input2 = this.player2 ? this.input.update(dt, p2Index, 2, this.settings.splitOrientation, false, pads, this.player2 && p2Index === -1 ? 2 : 1) : null;
     const kbMenu = this.input.keyboardMenu();
     input.mapTogglePressed ||= kbMenu.mapTogglePressed;
+    // On the victory screen the keyboard can always choose to play again.
+    if (this.victoryAt !== null) input.menu.confirm ||= kbMenu.menu.confirm;
     if (this.hud.paused) {
       this.sound.updateEngine(0, 'chopper', false);
       this.hud.handleMenu({

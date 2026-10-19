@@ -16,6 +16,8 @@ export interface TownMapData {
   school: { x: number; z: number; taken: boolean };
   /** The enemy's pens holding our squad. */
   pens: { x: number; z: number; freed: boolean }[];
+  /** The supply depot with the upgrades; `stocked` while something there is still to pick up. */
+  depot: { x: number; z: number; stocked: boolean } | null;
 }
 
 /**
@@ -24,7 +26,7 @@ export interface TownMapData {
  * town is known from the start; enemies show when one of ours is near enough to see them.
  */
 export class TownMap {
-  readonly data: TownMapData = { players: [], squad: [], enemies: [], roadblocks: [], school: { x: 0, z: 0, taken: false }, pens: [] };
+  readonly data: TownMapData = { players: [], squad: [], enemies: [], roadblocks: [], school: { x: 0, z: 0, taken: false }, pens: [], depot: null };
   private readonly plan: HTMLCanvasElement;
   private readonly half: number;
 
@@ -181,6 +183,28 @@ export class TownMap {
         ctx.strokeText('SQUAD HELD HERE', sx(pn.x), y0 - 6);
         ctx.fillStyle = '#ffd24a';
         ctx.fillText('SQUAD HELD HERE', sx(pn.x), y0 - 6);
+      }
+    }
+    // The supply depot: an ammo crate, olive while there's something left in it.
+    if (d.depot) {
+      const half = r * 1.6;
+      const x0 = sx(d.depot.x) - half, y0 = sy(d.depot.z) - half * 0.7;
+      ctx.fillStyle = d.depot.stocked ? '#7a8a3a' : '#4a5040';
+      ctx.fillRect(x0, y0, half * 2, half * 1.4);
+      ctx.strokeStyle = '#000';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(x0, y0, half * 2, half * 1.4);
+      ctx.fillStyle = d.depot.stocked ? '#ffd24a' : '#999';
+      ctx.font = `900 ${half * 1.3}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('+', sx(d.depot.x), sy(d.depot.z) + 1);
+      if (big && opts.labels && d.depot.stocked) {
+        ctx.font = '900 13px sans-serif';
+        ctx.lineWidth = 3;
+        ctx.strokeText('SUPPLY DEPOT: UPGRADES', sx(d.depot.x), y0 - 8);
+        ctx.fillStyle = '#ffd24a';
+        ctx.fillText('SUPPLY DEPOT: UPGRADES', sx(d.depot.x), y0 - 8);
       }
     }
     // The school: a star.
