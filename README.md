@@ -704,8 +704,8 @@ speckled asphalt with dashed white lines on the main roads, paving-slab pavement
 tarmac footpaths and gravel tracks.
 
 You start outside **64 Sycamore Drive** on your own: your squad has been captured and is held in
-four enemy **prisoner pens** (barred cages with guards, marked on the map, well away from the way
-down). Stand at a pen's gate for a moment to let the two inside out, and they join your squad.
+four enemy **prisoner pens** (barred cages with guards, marked on the map), each a short detour of
+about 80 m off the way down, one beside each stretch of it. Stand at a pen's gate for a moment to let the two inside out, and they join your squad.
 Freeing them is optional, but the golden marker takes turns: the nearest pen, then the next
 roadblock, then a pen again, and so on, then the school. You fight down the
 hill to **Mauricewood Primary School**, about 1.1 km away by road and 30 m lower. The way is dotted in gold
