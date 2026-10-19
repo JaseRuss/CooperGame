@@ -10,7 +10,7 @@ SRC_DIR holds:
   t_X_Y.png        AWS Terrain Tiles (terrarium) at zoom 15 covering it, x 16090-16091, y 10228-10230:
                    https://s3.amazonaws.com/elevation-tiles-prod/terrarium/15/X/Y.png
 
-The level starts outside 64 Sycamore Drive and ends at Mauricewood Primary School's grounds
+The level starts at the top of the hill and ends at Mauricewood Primary School's grounds
 (its buildings aren't mapped, so they and the playground are traced from aerial photos in
 extras.json). No third-party Python packages needed.
 """
@@ -152,7 +152,7 @@ for i, b in enumerate(buildings):
     driveways.append([round(c[0], 1), round(c[1], 1), round(end[0], 1), round(end[1], 1), i % 5 < 3 and 1 or 0])
 
 # --- start, school and the road route between them ---
-# 64 Sycamore Drive: start in front of it, most of the way from the house to its street.
+# The start house: start in front of it, most of the way from the house to its street.
 home = xz(55.8456461, -3.2200633)
 def seg_near(p, a, b):
     dx, dz = b[0] - a[0], b[1] - a[1]
