@@ -8,7 +8,8 @@ import * as THREE from 'three';
  * without shifting the colour):
  *
  * - building: pebble-dash render on the walls, brick on reddish and buff ones, rows of slates on
- *   pitched roofs (the rows follow the eaves); dark surfaces (glass, doors) are left plain.
+ *   pitched roofs (the rows follow the eaves); dark surfaces are left plain. (Windows and doors
+ *   have their own texture: see Openings.)
  * - planks: vertical timber boards. stone: coursed stone. leaves: clumps of leaves. bark: bark.
  */
 export type Detail = 'building' | 'planks' | 'stone' | 'leaves' | 'bark';
