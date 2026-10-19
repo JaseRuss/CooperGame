@@ -698,12 +698,21 @@ render (with some buff and a few rows of red brick), roofs are blue-grey slate w
 some south-facing slopes, and garages have low pitched roofs. Street lamps line the pavements and
 the path along the old railway line, which has rows of young trees either side. Cars are
 parked along the kerbs, and hedges, garden walls and trees make cover. The drainage basins that are
-dry most of the time are grass.
+dry most of the time are grass. The streets are laid as their own surfaces over the ground:
+speckled asphalt with dashed white lines on the main roads, paving-slab pavements with kerbstones,
+tarmac footpaths and gravel tracks.
 
-You start at the top of the hill with a squad of four and fight down the hill to
-**Mauricewood Primary School**, about 1.1 km away by road and 30 m lower. The way is dotted in gold
-on the map. The enemy has five sandbagged **roadblocks** at junctions on the way down, each with a gap in
-the middle to get through (taking one makes it your checkpoint), pairs on patrol in the side streets, and ten defenders round the school.
+You start at the top of the hill on your own: your squad has been captured and is held in
+four enemy **prisoner pens** (barred cages with guards, marked on the map, well away from the way
+down). Stand at a pen's gate for a moment to let the two inside out, and they join your squad;
+when you pass close to one, the marker points to it. Freeing them is optional. You fight down the
+hill to **Mauricewood Primary School**, about 1.1 km away by road and 30 m lower. The way is dotted in gold
+on the map. The enemy has five **roadblocks** at junctions on the way down (taking one makes it your
+checkpoint). Each is built in layers across the street: a triple coil of barbed wire on pickets
+(you can see and shoot through it, not walk through it) with a gap at one side, a staggered row of
+concrete barriers with their gap at the other side, a line of sandbags with a gap near the middle,
+a sandbagged machine-gun nest whose gunner fires bursts, and behind it all a sentry box with a
+raised barrier pole, a floodlight, oil drums, ammo crates and (on wider streets) an army truck, pairs on patrol in the side streets, and ten defenders round the school.
 Clear the school, then stand at the flagpole on its playground to raise our flag and win. The school's
 buildings aren't on OpenStreetMap (only its grounds are), so they're traced from aerial photos: the
 single-storey flat-roofed blocks with their rooflights, the taller hall with its hipped roof, the
@@ -716,7 +725,7 @@ to a knocked-down partner helps them back up (otherwise it's back to the checkpo
 
 - Code is in `src/town/` (`TownGame` is the level, `TownData` loads the map, `TownTerrain` the
   ground and its painted map, `Buildings` the houses, school, trees, hedges, cars and roadblocks,
-  `TownMap` the minimap and pause map).
+  `TownMap` the minimap and pause map, `Roads` the road surfaces).
 - The map is `public/maps/penicuik.json`, made by `tools/town-map/convert.py` from an Overpass
   API download of OpenStreetMap, AWS Terrain Tiles (zoom 15) and the hand-traced
   `tools/town-map/extras.json`; the script's header has the area and the start and school

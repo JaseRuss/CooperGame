@@ -4,8 +4,8 @@ import { mulberry32 } from '../utils/rng';
 import { plastic } from '../utils/plastic';
 import { PartBuilder, sandbagGeometry } from '../utils/modelKit';
 import { inPolygon, centroid, type TownData, type Pt, type Footprint, type Line } from './TownData';
+import { WATER_GROUPS } from '../prison/groups';
 
-/** Harled and painted walls, as on the estates round Penicuik, and slate grey or red-brown roofs. */
 /** White and pale grey render on most of the new houses (as in a drone shot of Sycamore Drive), some buff, a few rows of red brick. */
 const WALLS = [0xf4f3ef, 0xefeee9, 0xe9e8e3, 0xf6f4ee, 0xe3e2dd, 0xdcdbd6, 0xece6d8, 0xd9c7a8, 0xf1f0ec, 0xa9654e, 0xb5765c];
 /** Blue-grey slate (or slate-look tiles), and now and then a brown one. */
@@ -150,13 +150,13 @@ class SegmentGrid {
     }
   }
   /** The nearest segment within about 20 m: how far its edge is, and the nearest point on its middle line. */
-  nearest(p: Pt): { d: number; at: Pt } | null {
+  nearest(p: Pt): { d: number; at: Pt; w: number } | null {
     const list = this.cells.get(this.key(Math.floor(p.x / SegmentGrid.CELL), Math.floor(p.z / SegmentGrid.CELL)));
-    let best: { d: number; at: Pt } | null = null;
+    let best: { d: number; at: Pt; w: number } | null = null;
     for (const s of list ?? []) {
       const r = segDist(p, s.a, s.b);
       const d = r.d - s.w / 2;
-      if (!best || d < best.d) best = { d, at: r.at };
+      if (!best || d < best.d) best = { d, at: r.at, w: s.w };
     }
     return best;
   }
@@ -190,6 +190,19 @@ class PolyGrid {
 }
 
 /** The school's own building, flagpole and flag (it isn't on the map, so it's built here). */
+/** An enemy pen holding two of our squad, away from the route down the hill. */
+export interface Pen {
+  at: Pt;
+  /** Just outside the gate: stand here to let them out. */
+  gate: Pt;
+  /** Where the two prisoners stand inside. */
+  inside: Pt[];
+  /** Its guards' posts. */
+  guards: Pt[];
+  /** Swings the gate open (once). */
+  open(): void;
+}
+
 export interface School {
   centre: Pt;
   /** The flagpole in front of it, where our flag goes up. */
@@ -208,6 +221,11 @@ export interface Roadblock {
   facing: Pt;
   flagMaterial: THREE.MeshPhysicalMaterial;
   posts: Pt[];
+  /** The machine-gun nest: where its gunner stands, and the gun (it turns to follow his aim). */
+  gunner: Pt;
+  gun: THREE.Group;
+  /** The way through, from the attack side: the wire's gap, the barriers' gap, the gap in the bags, and the clear lane behind. */
+  through: Pt[];
 }
 
 /**
@@ -228,6 +246,7 @@ export class Buildings {
   /** Each house and the street it faces, for its back garden; and the fences round those gardens. */
   private readonly plots: { r: Rect; street: Pt }[] = [];
   private readonly gardenLines: Line[] = [];
+  private readonly gardenGrid = new PolyGrid();
 
   constructor(private readonly world: RAPIER.World, scene: THREE.Scene, private readonly town: TownData) {
     this.body = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
@@ -592,6 +611,123 @@ export class Buildings {
     return new THREE.Mesh(new THREE.PlaneGeometry(12, 1.5), new THREE.MeshBasicMaterial({ map: tex }));
   }
 
+  /** Whether there's open ground `r` metres round a spot: no buildings, roads, back gardens or trees' worth of crowding (for a prisoner pen). */
+  openSpot(p: Pt, r: number): boolean {
+    for (const [dx, dz] of [[0, 0], [r, 0], [-r, 0], [0, r], [0, -r], [r * 0.7, r * 0.7], [-r * 0.7, r * 0.7], [r * 0.7, -r * 0.7], [-r * 0.7, -r * 0.7]]) {
+      const q = { x: p.x + dx, z: p.z + dz };
+      if (Math.abs(q.x) > this.town.half - 20 || Math.abs(q.z) > this.town.half - 20) return false;
+      if (!this.clear(q, 2) || this.gardenGrid.hit(q, 1)) return false;
+    }
+    return true;
+  }
+
+  /**
+   * An enemy prisoner pen at `at`, its gate toward `toward` (the nearest road): a cage of bars on a
+   * square of trodden dirt, with a gate that swings open, a few sandbags and an oil-drum brazier by
+   * the gate for the guards, and the army's flag. The bars stop you walking but not seeing or
+   * shooting through them.
+   */
+  pen(at: Pt, toward: Pt, color: number): Pen {
+    const p = new PartBuilder();
+    let fx = toward.x - at.x, fz = toward.z - at.z;
+    const fl = Math.hypot(fx, fz) || 1;
+    fx /= fl;
+    fz /= fl;
+    const yaw = Math.atan2(-fx, -fz);
+    const P = (s: number, t: number): Pt => ({ x: at.x - fz * s + fx * t, z: at.z + fx * s + fz * t });
+    const G = (s: number, t: number) => this.ground(P(s, t));
+    const rot = (a: number) => ({ x: 0, y: Math.sin(a / 2), z: 0, w: Math.cos(a / 2) });
+    const H = 3.5, GATE = 0.85, BAR_H = 2.5;
+    const bar = new THREE.CylinderGeometry(0.035, 0.035, BAR_H, 5);
+    const steel = plastic(0x50555a), post = plastic(0x3a3d40);
+    // Bars all the way round except the gate, posts at the corners, a rail along the top.
+    const side = (s0: number, t0: number, s1: number, t1: number) => {
+      const len = Math.hypot(s1 - s0, t1 - t0);
+      const n = Math.round(len / 0.32);
+      for (let j = 0; j <= n; j++) {
+        const s = s0 + ((s1 - s0) * j) / n, t = t0 + ((t1 - t0) * j) / n;
+        const q = P(s, t);
+        p.add(bar, steel, q.x, G(s, t) + BAR_H / 2 - 0.05, q.z);
+      }
+      const a = P(s0, t0), b = P(s1, t1);
+      for (const h of [BAR_H - 0.1, 0.25]) p.beam(new THREE.Vector3(a.x, G(s0, t0) + h, a.z), new THREE.Vector3(b.x, G(s1, t1) + h, b.z), 0.08, post);
+      const mid = P((s0 + s1) / 2, (t0 + t1) / 2);
+      this.world.createCollider(
+        RAPIER.ColliderDesc.cuboid(len / 2, 1.3, 0.12).setTranslation(mid.x, G((s0 + s1) / 2, (t0 + t1) / 2) + 1.25, mid.z).setRotation(rot(yaw + Math.atan2(t1 - t0, s1 - s0))).setCollisionGroups(WATER_GROUPS),
+        this.body,
+      );
+    };
+    side(-H, -H, H, -H);
+    side(H, -H, H, H);
+    side(-H, H, -H, -H);
+    side(H, H, GATE, H);
+    side(-GATE, H, -H, H);
+    for (const [s, t] of [[-H, -H], [H, -H], [H, H], [-H, H], [GATE, H], [-GATE, H]]) {
+      const q = P(s, t);
+      p.add(new THREE.BoxGeometry(0.16, BAR_H + 0.2, 0.16), post, q.x, G(s, t) + BAR_H / 2, q.z, 0, yaw);
+    }
+    // The ground inside: trodden dirt, and a straw pallet.
+    const dirt = new THREE.Mesh(new THREE.CircleGeometry(H * 1.25, 20).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0x7d6a4e, roughness: 1, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4 }));
+    dirt.position.set(at.x, this.ground(at) + 0.06, at.z);
+    dirt.receiveShadow = true;
+    this.group.add(dirt);
+    const straw = P(-1.8, -2.4);
+    p.add(new THREE.BoxGeometry(1.8, 0.18, 1.0), plastic(0xc9b26a), straw.x, G(-1.8, -2.4) + 0.12, straw.z, 0, yaw);
+    // The guards' post by the gate: sandbags, a brazier in an oil drum, the flag.
+    const bag = sandbagGeometry();
+    const bagMat = plastic(0xb5a47a);
+    for (let j = 0; j < 4; j++) {
+      const s = 2.6 + j * 0.9, t = H + 2.4;
+      const q = P(s, t);
+      for (let row = 0; row < 2; row++) p.add(bag, bagMat, q.x, G(s, t) + 0.2 + row * 0.38, q.z, 0, yaw);
+    }
+    const bq = P(-2.6, H + 2.2);
+    p.add(new THREE.CylinderGeometry(0.29, 0.29, 0.88, 12), plastic(0x6a3a2a), bq.x, G(-2.6, H + 2.2) + 0.44, bq.z);
+    const fq = P(H + 0.8, -H);
+    p.add(new THREE.CylinderGeometry(0.06, 0.06, 4.5, 8), plastic(0x6b4a2e), fq.x, G(H + 0.8, -H) + 2.25, fq.z);
+    p.buildInto(this.group);
+    const flag = new THREE.Mesh(new THREE.PlaneGeometry(1.4, 0.9).translate(0.72, 0, 0), new THREE.MeshStandardMaterial({ color, side: THREE.DoubleSide }));
+    flag.position.set(fq.x, G(H + 0.8, -H) + 4, fq.z);
+    flag.rotation.y = yaw;
+    this.group.add(flag);
+    // The gate: its own bars, hinged at the -s post, and its own collider until it opens.
+    const door = new THREE.Group();
+    const dp = new PartBuilder();
+    const dn = 6;
+    for (let j = 0; j <= dn; j++) dp.add(bar, steel, (j / dn) * GATE * 2, BAR_H / 2 - 0.05, 0);
+    dp.beam(new THREE.Vector3(0, BAR_H - 0.1, 0), new THREE.Vector3(GATE * 2, BAR_H - 0.1, 0), 0.08, post);
+    dp.beam(new THREE.Vector3(0, 0.25, 0), new THREE.Vector3(GATE * 2, 0.25, 0), 0.08, post);
+    dp.buildInto(door);
+    const hinge = P(-GATE, H);
+    door.position.set(hinge.x, G(-GATE, H), hinge.z);
+    door.rotation.y = yaw;
+    this.group.add(door);
+    const gq = P(0, H);
+    const gate = this.world.createCollider(
+      RAPIER.ColliderDesc.cuboid(GATE, 1.3, 0.12).setTranslation(gq.x, G(0, H) + 1.25, gq.z).setRotation(rot(yaw)).setCollisionGroups(WATER_GROUPS),
+      this.body,
+    );
+    let opened = false;
+    const guards: Pt[] = [];
+    for (const [s, t] of [[3.2, H + 3.4], [-1.8, H + 3.2], [H + 2.4, 0.5], [-H - 2.4, -1.5]]) {
+      const q = P(s, t);
+      guards.push(this.clear(q, 0.5) ? q : P(0, H + 3));
+    }
+    return {
+      at,
+      gate: P(0, H + 1.1),
+      inside: [P(-1.2, -0.6), P(1.2, 0.3)],
+      guards,
+      open: () => {
+        if (opened) return;
+        opened = true;
+        // Swung right back against the bars.
+        door.rotation.y = yaw + 1.9;
+        this.world.removeCollider(gate, false);
+      },
+    };
+  }
+
   /** Whether a spot is clear of buildings and roads (for a tree or a soldier's post). */
   clear(p: Pt, margin = 1): boolean {
     const road = this.roads.nearest(p);
@@ -646,7 +782,7 @@ export class Buildings {
       }
     }
     // Rows of young trees planted either side of the path along the old railway line by Sycamore Drive.
-    const gardens = new PolyGrid();
+    const gardens = this.gardenGrid;
     for (const g of this.gardenLines) gardens.add(g.pts);
     const rail = this.railwayPath();
     if (rail) {
@@ -908,48 +1044,223 @@ export class Buildings {
     }
   }
 
-  /** A roadblock: sandbags in a curve across the street at `at`, facing back up the route, and a flag. */
+  /**
+   * A roadblock across the street at `at`, facing back up the route (`facing`), built in layers
+   * from the attack side in: a coil of barbed wire on pickets (it stops you walking but not seeing
+   * or shooting, with a gap at one side), a staggered row of concrete barriers with hazard stripes
+   * (their gap at the other side, so the way through zig-zags), the curve of sandbags with a gap in
+   * the middle, a sandbagged machine-gun nest on one flank, and behind the line a sentry box with a
+   * raised barrier pole, a floodlight, oil drums, stacked ammo crates, an army truck parked across
+   * half the road and the flag. It all fits the width of the street and its pavements.
+   */
   roadblock(at: Pt, facing: Pt, color: number): Roadblock {
     const p = new PartBuilder();
-    const bag = sandbagGeometry();
-    const bagMat = plastic(0xb5a47a);
     const fl = Math.hypot(facing.x, facing.z) || 1;
     const fx = facing.x / fl, fz = facing.z / fl;
     const yawFacing = Math.atan2(-fx, -fz);
-    for (let i = -5; i <= 5; i++) {
-      // A gap in the middle to get through: with the back gardens fenced, there's no way round.
-      if (i === 0 || i === 1) continue;
-      const a = i * 0.16;
-      const r = 7;
-      // The curve bows toward the attack.
-      const cx = at.x + fx * (Math.cos(a) * r - r + 3) + -fz * Math.sin(a) * r;
-      const cz = at.z + fz * (Math.cos(a) * r - r + 3) + fx * Math.sin(a) * r;
-      const g = this.ground({ x: cx, z: cz });
-      for (let row = 0; row < 3; row++) p.add(bag, bagMat, cx, g + 0.2 + row * 0.38, cz, 0, yawFacing + a + (row % 2) * 0.05);
-      this.world.createCollider(
-        RAPIER.ColliderDesc.cuboid(0.62, 0.6, 0.35).setTranslation(cx, g + 0.6, cz).setRotation({ x: 0, y: Math.sin((yawFacing + a) / 2), z: 0, w: Math.cos((yawFacing + a) / 2) }),
-        this.body,
-      );
+    // s across the street (toward -fz, fx), t toward the attack.
+    const P = (s: number, t: number): Pt => ({ x: at.x - fz * s + fx * t, z: at.z + fx * s + fz * t });
+    const G = (s: number, t: number) => this.ground(P(s, t));
+    const rot = (yaw: number) => ({ x: 0, y: Math.sin(yaw / 2), z: 0, w: Math.cos(yaw / 2) });
+    const box = (s: number, t: number, y: number, hx: number, hy: number, hz: number, yaw = yawFacing, groups?: number) => {
+      const q = P(s, t);
+      const d = RAPIER.ColliderDesc.cuboid(hx, hy, hz).setTranslation(q.x, y, q.z).setRotation(rot(yaw));
+      if (groups !== undefined) d.setCollisionGroups(groups);
+      this.world.createCollider(d, this.body);
+    };
+    const road = this.roads.nearest(at);
+    const hw = Math.max(3.2, Math.min(6.5, (road?.w ?? 9) / 2));
+    const add = (geo: THREE.BufferGeometry, mat: THREE.Material, s: number, t: number, y: number, ry = yawFacing, rx = 0, rz = 0) => {
+      const q = P(s, t);
+      p.add(geo, mat, q.x, y, q.z, rx, ry, rz);
+    };
+
+    // 1. Barbed wire, twelve metres out, with a gap at the +s side: a triple concertina (two coils
+    // side by side on the ground and one on top), barbs along the wire, on angle-iron pickets with
+    // straight strands strung between them.
+    const wire = plastic(0x5b5f63);
+    const w0 = -hw, w1 = hw - 1.9;
+    const len = w1 - w0;
+    const coil = (tc: number, yc: number, r: number, phase: number) => {
+      const turns = Math.max(4, Math.round(len / 0.32));
+      const helix = (u: number) => {
+        const s = w0 + len * u;
+        const th = Math.PI * 2 * turns * u + phase;
+        // Each loop a little rounder or flatter than the last, as a real coil sags.
+        const rr = r * (1 + 0.08 * Math.sin(th * 0.37 + phase));
+        const q = P(s, tc + Math.cos(th) * rr);
+        return new THREE.Vector3(q.x, G(s, tc) + yc + Math.sin(th) * rr, q.z);
+      };
+      const steps = turns * 14;
+      const curve = new THREE.CatmullRomCurve3(Array.from({ length: steps + 1 }, (_, j) => helix(j / steps)));
+      p.add(new THREE.TubeGeometry(curve, steps, 0.016, 3, false), wire);
+      // Barbs: little crossed spikes every half metre or so of wire.
+      const barb = new THREE.BoxGeometry(0.13, 0.012, 0.012);
+      const n = Math.round((turns * Math.PI * 2 * r) / 0.45);
+      for (let j = 0; j < n; j++) {
+        const at = helix((j + 0.5) / n);
+        p.add(barb, wire, at.x, at.y, at.z, j * 1.3, j * 0.7, 0.8);
+        p.add(barb, wire, at.x, at.y, at.z, j * 1.3 + 1.2, j * 0.7 + 1.5, -0.8);
+      }
+    };
+    coil(12.42, 0.42, 0.42, 0);
+    coil(11.58, 0.42, 0.42, 1.7);
+    coil(12, 1.12, 0.38, 3.1);
+    const picket = new THREE.BoxGeometry(0.05, 1.5, 0.05);
+    const picketMat = plastic(0x4a4436);
+    const pickets: Pt[] = [];
+    for (let s = w0; s <= w1 + 0.01; s += len / Math.max(1, Math.round(len / 2.2))) {
+      const g = G(s, 12);
+      add(picket, picketMat, s, 12, g + 0.7);
+      pickets.push({ x: s, z: g });
     }
-    // A flag on a short pole behind the bags.
-    const px = at.x - fx * 3, pz = at.z - fz * 3;
-    const g = this.ground({ x: px, z: pz });
-    p.add(new THREE.CylinderGeometry(0.06, 0.06, 4.5, 8), plastic(0x6b4a2e), px, g + 2.25, pz);
+    for (let j = 1; j < pickets.length; j++) {
+      const a = pickets[j - 1], b = pickets[j];
+      for (const h of [0.3, 0.75, 1.2]) {
+        const qa = P(a.x, 12), qb = P(b.x, 12);
+        p.beam(new THREE.Vector3(qa.x, a.z + h, qa.z), new THREE.Vector3(qb.x, b.z + h + 0.02, qb.z), 0.014, wire, true);
+      }
+    }
+    box((w0 + w1) / 2, 12, G((w0 + w1) / 2, 12) + 0.7, len / 2, 0.75, 0.9, yawFacing, WATER_GROUPS);
+
+    // 2. Concrete barriers, seven metres out, staggered; the gap is at the -s side.
+    const concrete = plastic(0xb9b7b0);
+    const yellow = plastic(0xe0b020);
+    const black = plastic(0x232323);
+    const base = new THREE.BoxGeometry(1.9, 0.45, 0.72);
+    const top = new THREE.BoxGeometry(1.9, 0.55, 0.34);
+    const stripe = new THREE.BoxGeometry(0.24, 0.22, 0.36);
+    let k = 0;
+    for (let s = -hw + 2.9; s <= hw - 0.9; s += 2.0, k++) {
+      const t = 7 + (k % 2 ? 0.35 : -0.25);
+      const yaw = yawFacing + (k % 3 - 1) * 0.06;
+      const g = G(s, t);
+      add(base, concrete, s, t, g + 0.22, yaw);
+      add(top, concrete, s, t, g + 0.72, yaw);
+      for (let j = 0; j < 7; j++) {
+        const ds = -0.78 + j * 0.26;
+        const q = P(s + ds * Math.cos(yaw - yawFacing), t);
+        p.add(stripe, j % 2 ? black : yellow, q.x, g + 0.9, q.z, 0, yaw);
+      }
+      box(s, t, g + 0.5, 0.95, 0.5, 0.36, yaw);
+    }
+
+    // 3. The sandbag line, bowing toward the attack, with a gap just left of the middle (s about -1.1 to 0).
+    const bag = sandbagGeometry();
+    const bagMat = plastic(0xb5a47a);
+    const bagDark = plastic(0xa39368);
+    for (let i = -6; i <= 6; i++) {
+      if (i === -1 || i === 0) continue;
+      const a = i * 0.16, r = 7;
+      const s = Math.sin(a) * r, t = Math.cos(a) * r - r + 3;
+      if (Math.abs(s) > hw) continue;
+      const g = G(s, t);
+      for (let row = 0; row < 3; row++) add(bag, row % 2 ? bagDark : bagMat, s, t, g + 0.2 + row * 0.38, yawFacing - a + (row % 2) * 0.05);
+      box(s, t, g + 0.6, 0.62, 0.6, 0.35, yawFacing - a);
+    }
+
+    // 4. The machine-gun nest on the +s flank: a ring of sandbags open at the back, and the gun.
+    // Clear of the lane behind the gap in the bags (s -1.3 to 0.2) however narrow the street.
+    const ns = Math.max(hw - 1.7, 1.9), nt = 1.2;
+    for (let j = 0; j < 9; j++) {
+      const a = -Math.PI * 0.85 + (j / 8) * Math.PI * 1.7; // round the front, open behind
+      const s = ns + Math.sin(a) * 1.55, t = nt + Math.cos(a) * 1.55;
+      const g = G(s, t);
+      for (let row = 0; row < 2; row++) add(bag, row ? bagDark : bagMat, s, t, g + 0.2 + row * 0.38, yawFacing - a);
+      box(s, t, g + 0.45, 0.5, 0.45, 0.32, yawFacing - a);
+    }
+    const gun = new THREE.Group();
+    const gp = new PartBuilder();
+    const steel = plastic(0x3a3d40);
+    const olive = plastic(0x4f5a32);
+    gp.add(new THREE.BoxGeometry(0.22, 0.24, 0.7), steel, 0, 0.05, 0);
+    gp.add(new THREE.CylinderGeometry(0.05, 0.05, 1.1, 8).rotateX(Math.PI / 2), steel, 0, 0.08, -0.85);
+    gp.add(new THREE.CylinderGeometry(0.08, 0.08, 0.5, 8).rotateX(Math.PI / 2), steel, 0, 0.08, -0.5);
+    gp.add(new THREE.BoxGeometry(0.3, 0.2, 0.25), olive, 0.24, -0.02, 0.05);
+    for (const a of [0, (Math.PI * 2) / 3, (Math.PI * 4) / 3]) gp.add(new THREE.CylinderGeometry(0.025, 0.025, 1.0, 5), steel, Math.sin(a) * 0.3, -0.4, Math.cos(a) * 0.3, Math.cos(a) * 0.35, 0, -Math.sin(a) * 0.35);
+    gp.buildInto(gun);
+    const gq = P(ns, nt + 0.6);
+    gun.position.set(gq.x, G(ns, nt + 0.6) + 0.95, gq.z);
+    gun.rotation.y = yawFacing;
+    this.group.add(gun);
+
+    // 5. Behind the line: the sentry box and its barrier pole, a floodlight, drums, crates and a truck.
+    const army = plastic(color);
+    const hut = plastic(0x5d6640);
+    const ss = -hw + 1.0, st = -2.6, sg = G(ss, st);
+    add(new THREE.BoxGeometry(1.3, 2.3, 1.3), hut, ss, st, sg + 1.15);
+    add(new THREE.BoxGeometry(1.6, 0.14, 1.6), plastic(0x3e4430), ss, st, sg + 2.38);
+    add(new THREE.BoxGeometry(0.8, 0.5, 0.04), plastic(0x24303a), ss, st + 0.67, sg + 1.55);
+    box(ss, st, sg + 1.15, 0.65, 1.15, 0.65);
+    // The barrier pole, raised: red and white bands from a post by the sentry box.
+    const red = plastic(0xc0392b), white = plastic(0xf2f2ee);
+    const post = P(ss + 1.0, st + 0.9);
+    p.add(new THREE.BoxGeometry(0.3, 1.1, 0.3), plastic(0x6f747a), post.x, sg + 0.55, post.z, 0, yawFacing);
+    const lift = 1.05; // radians up from flat
+    for (let j = 0; j < 8; j++) {
+      const r0 = 0.25 + j * 0.5 + 0.25;
+      const q = P(ss + 1.0 + Math.cos(lift) * r0, st + 0.9);
+      p.add(new THREE.BoxGeometry(0.5, 0.1, 0.1), j % 2 ? red : white, q.x, sg + 1.1 + Math.sin(lift) * r0, q.z, 0, yawFacing, lift);
+    }
+    // Floodlight on a pole at the -s end of the bags.
+    const fs = -hw + 0.4, ft = 2.2, fg = G(fs, ft);
+    add(new THREE.CylinderGeometry(0.06, 0.08, 5, 6), steel, fs, ft, fg + 2.5);
+    add(new THREE.BoxGeometry(0.6, 0.45, 0.3), steel, fs, ft + 0.15, fg + 5.0, yawFacing, -0.5);
+    add(new THREE.BoxGeometry(0.5, 0.36, 0.05), plastic(0xfff4c0), fs, ft + 0.33, fg + 4.92, yawFacing, -0.5);
+    // Oil drums.
+    const drum = new THREE.CylinderGeometry(0.29, 0.29, 0.88, 12);
+    const drums = [plastic(0x2f5f8a), plastic(0x8a3a2a), plastic(0x3d5a3a)];
+    [[hw - 0.7, -2.4], [hw - 1.35, -2.6], [hw - 0.95, -3.15], [hw - 0.5, -3.3]].forEach(([s, t], j) => {
+      add(drum, drums[j % 3], s, t, G(s, t) + 0.44);
+      const q = P(s, t);
+      this.world.createCollider(RAPIER.ColliderDesc.cylinder(0.44, 0.29).setTranslation(q.x, G(s, t) + 0.44, q.z), this.body);
+    });
+    // Ammo crates, stacked.
+    const crate = new THREE.BoxGeometry(0.9, 0.55, 0.6);
+    const crateMat = plastic(0x5b6b3a), crateLid = plastic(0x6d7d48);
+    // Ammo crates, stacked on the +s side of the lane.
+    for (const [s, t, lvl] of [[0.9, -4.4, 0], [1.9, -4.4, 0], [1.4, -4.4, 1], [1.3, -5.2, 0]]) {
+      const g = G(s, t);
+      add(crate, lvl ? crateLid : crateMat, s, t, g + 0.28 + lvl * 0.56);
+    }
+    box(1.4, -4.7, G(1.4, -4.7) + 0.55, 1.0, 0.55, 0.7);
+    // An army truck parked along the +s side of the road behind it all, where the street is wide enough.
+    if (hw >= 4.2) {
+      const ts = hw - 1.3, tt = -9.5, tg = G(ts, tt);
+      // Its length along the road: in the facing frame local z runs back down the road (-t).
+      const truck = (dt: number, y: number, geo: THREE.BufferGeometry, mat: THREE.Material) => add(geo, mat, ts, tt - dt, tg + y);
+      truck(-2.1, 1.25, new THREE.BoxGeometry(1.9, 1.9, 2.3), army);
+      truck(-2.1, 1.55, new THREE.BoxGeometry(0.9, 0.6, 2.32).translate(0, 0, -0.01), plastic(0x2a3440));
+      truck(0.8, 1.05, new THREE.BoxGeometry(2.3, 0.35, 3.9), army);
+      truck(0.8, 2.0, new THREE.BoxGeometry(2.25, 1.6, 3.8), plastic(0x8a8060));
+      const wheel = new THREE.CylinderGeometry(0.48, 0.48, 0.32, 12).rotateZ(Math.PI / 2);
+      for (const dt of [-2.3, 0.0, 1.9]) for (const side of [-1, 1]) {
+        const q = P(ts + side * 1.15, tt - dt);
+        p.add(wheel, plastic(0x1e1e1e), q.x, tg + 0.48, q.z, 0, yawFacing);
+      }
+      box(ts, tt - 0.4, tg + 1.4, 1.2, 1.4, 3.3, yawFacing);
+    }
+
+    // The flag on a pole behind the bags.
+    const px = P(-1.5, -2.5), fgy = G(-1.5, -2.5);
+    p.add(new THREE.CylinderGeometry(0.06, 0.06, 4.5, 8), plastic(0x6b4a2e), px.x, fgy + 2.25, px.z);
     p.buildInto(this.group);
     // Its own copy of the army's plastic: it turns green when the roadblock is taken, and the shared
     // one is the soldiers' own colour (recolouring that turned every soldier of that army green).
     const flagMaterial = plastic(color).clone();
     flagMaterial.side = THREE.DoubleSide;
     const flag = new THREE.Mesh(new THREE.PlaneGeometry(1.4, 0.9).translate(0.72, 0, 0), flagMaterial);
-    flag.position.set(px, g + 4, pz);
+    flag.position.set(px.x, fgy + 4, px.z);
     flag.rotation.y = yawFacing;
     this.group.add(flag);
+
+    // Where its men stand: behind the bags either side of the gap, by the sentry box, the crates and the truck.
     const posts: Pt[] = [];
-    for (const [s, t] of [[-4, 1.2], [-1.5, 1.6], [1.5, 1.6], [4, 1.2], [0, -4], [-6, -2], [6, -2]]) {
-      // s across the street, t toward the attack (just behind the bags is about t = 1.5).
-      const q = { x: at.x + -fz * s + fx * t, z: at.z + fx * s + fz * t };
+    for (const [s, t] of [[-3.4, 1.7], [-2.0, 1.9], [0.9, 1.9], [ss + 0.4, st + 1.3], [0.9, -3.5], [-2.2, -6.5]]) {
+      const q = P(Math.max(-hw + 0.5, Math.min(hw - 0.5, s)), t);
       posts.push(this.footprints.hit(q, 0.6) ? at : q);
     }
-    return { at, facing: { x: fx, z: fz }, flagMaterial, posts };
+    const through = [P(hw - 0.95, 15), P(hw - 0.95, 10.5), P(-hw + 0.95, 9), P(-hw + 0.95, 5), P(-0.55, 4.6), P(-0.55, -12)];
+    return { at, facing: { x: fx, z: fz }, flagMaterial, posts, gunner: P(ns, nt - 0.3), gun, through };
   }
 }
