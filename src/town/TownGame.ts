@@ -36,8 +36,6 @@ const PEN_GAP = 170;
 /** Standing at a pen's gate this long lets them out. */
 const GATE_TIME = 1.5;
 const GATE_REACH = 2.2;
-/** A pen this close is where the marker points, rather than the next roadblock. */
-const PEN_NEAR = 75;
 const SQUAD_HP = 40;
 const ENEMY_HP = 3;
 const SHADOW_HALF = 45;
@@ -973,17 +971,23 @@ export class TownGame {
     return { x: ((x + 1) / 2) * window.innerWidth, y: ((1 - y) / 2) * window.innerHeight, onScreen, angle: Math.atan2(-y, x), label };
   }
 
-  /** The way to go next: the next roadblock down the hill, then the school (and its flagpole). */
+  /**
+   * The way to go next. It takes turns: free a pen of buddies, then take a roadblock, then the next
+   * pen, and so on (whichever is due: a pen while no more pens have been freed than roadblocks
+   * taken). The pen is the nearest one still holding our men; the roadblock is the next one down
+   * the hill. When one kind runs out it's the other, and then the school (and its flagpole).
+   */
   private waypoint(): HUDState['waypoint'] {
     if (this.hud.paused || this.victoryAt !== null) return null;
     const p = this.player.position;
-    // A pen close by (and still holding our men) takes the marker, so it's found on the way past.
-    const pen = this.nearestPen(p);
-    if (pen && pen.d < PEN_NEAR) {
-      const g = pen.pr.pen.gate;
-      return this.waypointTo(new THREE.Vector3(g.x, this.ground(g.x, g.z) + 4, g.z), `PRISONER PEN ${Math.round(pen.d)} m`);
-    }
     const next = this.blocks.find((b) => !b.taken);
+    const pen = this.nearestPen(p);
+    const freed = this.prisons.filter((pr) => pr.freed).length;
+    const taken = this.blocks.filter((b) => b.taken).length;
+    if (pen && (!next || freed <= taken)) {
+      const g = pen.pr.pen.gate;
+      return this.waypointTo(new THREE.Vector3(g.x, this.ground(g.x, g.z) + 4, g.z), `FREE ${pen.pr.captives.map((c) => c.name.toUpperCase()).join(' & ')} ${Math.round(pen.d)} m`);
+    }
     if (next) {
       const a = next.rb.at;
       return this.waypointTo(new THREE.Vector3(a.x, this.ground(a.x, a.z) + 6, a.z), `${next.name.toUpperCase()} ${Math.round(Math.hypot(a.x - p.x, a.z - p.z))} m`);
@@ -1017,7 +1021,7 @@ export class TownGame {
     else if (this.prisons.some((pr) => !pr.freed && Math.hypot(pr.pen.gate.x - p.x, pr.pen.gate.z - p.z) < 10)) {
       const pr = this.prisons.find((x) => !x.freed && Math.hypot(x.pen.gate.x - p.x, x.pen.gate.z - p.z) < 10) as Prison;
       prompt = pr.opening > 0 ? `Opening the gate… ${Math.round((pr.opening / GATE_TIME) * 100)}%` : `${pr.captives.map((c) => c.name).join(' and ')} are locked in here! Stand at the gate to let them out`;
-    } else if (this.time < 16) prompt = 'Outside 64 Sycamore Drive, on your own. Free your squad from the pens on your map, and follow the golden marker down the hill to the school';
+    } else if (this.time < 16) prompt = 'Outside 64 Sycamore Drive, on your own. Follow the golden marker: it takes turns between freeing your buddies from a pen and taking a roadblock, on the way down to the school';
     const height = Math.round(this.town.base + this.ground(p.x, p.z));
     const street = this.streetName(p);
     const status = [`Squad ${this.squad.standing} / ${this.squad.list.length}${this.squad.holding ? ' (HOLDING)' : ''}  ·  ${height} m above sea level`];
