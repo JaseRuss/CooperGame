@@ -14,6 +14,8 @@ export interface TownMapData {
   enemies: { x: number; z: number }[];
   roadblocks: { x: number; z: number; army: 'tan' | 'blue'; taken: boolean }[];
   school: { x: number; z: number; taken: boolean };
+  /** The enemy's pens holding our squad. */
+  pens: { x: number; z: number; freed: boolean }[];
 }
 
 /**
@@ -22,7 +24,7 @@ export interface TownMapData {
  * town is known from the start; enemies show when one of ours is near enough to see them.
  */
 export class TownMap {
-  readonly data: TownMapData = { players: [], squad: [], enemies: [], roadblocks: [], school: { x: 0, z: 0, taken: false } };
+  readonly data: TownMapData = { players: [], squad: [], enemies: [], roadblocks: [], school: { x: 0, z: 0, taken: false }, pens: [] };
   private readonly plan: HTMLCanvasElement;
   private readonly half: number;
 
@@ -155,6 +157,31 @@ export class TownMap {
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(o.taken ? '✓' : '✕', sx(o.x), sy(o.z) + 1);
+    }
+    // The pens: a cage, yellow while our men are in it, green once they're free.
+    for (const pn of d.pens) {
+      const half = r * 1.5;
+      const x0 = sx(pn.x) - half, y0 = sy(pn.z) - half;
+      ctx.fillStyle = pn.freed ? 'rgba(95,191,74,0.85)' : 'rgba(255,210,74,0.9)';
+      ctx.fillRect(x0, y0, half * 2, half * 2);
+      ctx.strokeStyle = '#000';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(x0, y0, half * 2, half * 2);
+      ctx.lineWidth = 1.5;
+      for (let k = 1; k < 4; k++) {
+        ctx.beginPath();
+        ctx.moveTo(x0 + (half * 2 * k) / 4, y0);
+        ctx.lineTo(x0 + (half * 2 * k) / 4, y0 + half * 2);
+        ctx.stroke();
+      }
+      if (big && opts.labels && !pn.freed) {
+        ctx.font = '900 13px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.lineWidth = 3;
+        ctx.strokeText('SQUAD HELD HERE', sx(pn.x), y0 - 6);
+        ctx.fillStyle = '#ffd24a';
+        ctx.fillText('SQUAD HELD HERE', sx(pn.x), y0 - 6);
+      }
     }
     // The school: a star.
     const sc = d.school;
