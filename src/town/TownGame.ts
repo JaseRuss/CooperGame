@@ -21,11 +21,23 @@ import type { Battle } from '../jungle/Battle';
 import { Explosives, type Blast } from '../jungle/Explosives';
 import { TownData, type Pt } from './TownData';
 import { TownTerrain } from './TownTerrain';
-import { Buildings, type Roadblock } from './Buildings';
+import { TownRoads } from './Roads';
+import { Buildings, type Roadblock, type Pen } from './Buildings';
 import { TownMap } from './TownMap';
 
 const TITLE = 'DOWN THE HILL';
-const SQUAD_SIZE = 4;
+/** The squad starts captured: two of them in each of the enemy's pens, away from the route. */
+const PENS = 4;
+const PEN_MEN = 2;
+/** Pens stand this far from the way down the hill (metres), and at least this far from each other. */
+const PEN_MIN = 110;
+const PEN_MAX = 340;
+const PEN_GAP = 170;
+/** Standing at a pen's gate this long lets them out. */
+const GATE_TIME = 1.5;
+const GATE_REACH = 2.2;
+/** A pen this close is where the marker points, rather than the next roadblock. */
+const PEN_NEAR = 75;
 const SQUAD_HP = 40;
 const ENEMY_HP = 3;
 const SHADOW_HALF = 45;
@@ -47,6 +59,11 @@ const FIRST_BLOCK = 130;
 const BLOCK_GAP = 150;
 const BLOCK_SCHOOL_CLEAR = 130;
 const BLOCK_MEN = 6;
+/** The machine gun in each roadblock's nest: how far it reaches, rounds in a burst, seconds between rounds and between bursts. */
+const MG_RANGE = 55;
+const MG_BURST = 7;
+const MG_EVERY = 0.09;
+const MG_REST = 2.8;
 /** A roadblock (or the school) counts as cleared with this many of its men left standing. */
 const CLEARED = 0;
 const SCHOOL_MEN = 10;
@@ -74,7 +91,7 @@ const CONTROLS_P2 =
   '<span><b>Camera</b> numpad 9 · <b>Pause / map</b> numpad enter · <b>Checkpoint</b> numpad decimal</span>';
 const LEGEND =
   '<span><i style="background:#4b7a2e"></i>You and your squad</span><span><i style="background:#c4a468"></i>Tan army</span><span><i style="background:#3f6fb0"></i>Blue army</span>' +
-  '<span><i style="background:#ffd24a"></i>The way down the hill, and Mauricewood Primary School</span><span>Squares: enemy roadblocks</span>';
+  '<span><i style="background:#ffd24a"></i>The way down the hill, and Mauricewood Primary School</span><span>Squares: enemy roadblocks</span><span><i style="background:#ffd24a"></i>Barred squares: pens holding your squad</span>';
 
 const NO_MAP: MapView = {
   playerX: 0,
@@ -98,10 +115,23 @@ interface Block {
   rb: Roadblock;
   army: 'tan' | 'blue';
   men: Trooper[];
+  /** The machine gunner in the nest (also one of `men`), and his gun's burst: rounds left, and the timers. */
+  gunner: Trooper;
+  mg: { left: number; next: number; rest: number };
   taken: boolean;
   /** How far along the route it is. */
   along: number;
   name: string;
+}
+
+interface Prison {
+  pen: Pen;
+  /** Our men locked in it (not in the squad until they're let out). */
+  captives: Trooper[];
+  guards: Trooper[];
+  freed: boolean;
+  /** Seconds someone of ours has stood at the gate. */
+  opening: number;
 }
 
 /** One player's own state: the jam gun, the launcher, being helped up. */
@@ -157,6 +187,7 @@ export class TownGame {
   private battle!: Battle;
   private blocks: Block[] = [];
   private schoolMen: Trooper[] = [];
+  private prisons: Prison[] = [];
   private schoolCleared = false;
   private flag = 0;
   private readonly byHandle = new Map<number, Trooper>();
@@ -234,6 +265,7 @@ export class TownGame {
     Trooper.ground = ground;
     const quality = this.settings.graphicsQuality;
     this.terrain = new TownTerrain(this.world, this.scene, this.town, quality === 'low' ? 2048 : 4096);
+    new TownRoads(this.town, this.scene);
     this.buildings = new Buildings(this.world, this.scene, this.town);
     this.explosives = new Explosives(this.scene, this.world, ground);
     this.kit = this.kitOne = this.makeKit();
@@ -252,16 +284,9 @@ export class TownGame {
     this.playerOne = this.player;
     this.cam = this.camOne = new ShoulderCam(this.camera, this.world);
     if (this.settings.player2Controller !== -2) this.addPlayer2();
-    const names = this.settings.buddyNames;
-    // The squad in pairs either side of him, clear of the camera behind his shoulder.
-    const back = { x: Math.sin(yaw), z: Math.cos(yaw) };
-    const side = { x: -back.z, z: back.x };
-    for (let i = 0; i < SQUAD_SIZE; i++) {
-      const k = (i % 2 ? 1 : -1) * (2.2 + Math.floor(i / 2) * 1.6);
-      this.addSquadMate(s.x + side.x * k - back.x * 0.6, s.z + side.z * k - back.z * 0.6, names[i] ?? `Buddy ${i + 1}`);
-    }
-
+    // On your own: the squad's been captured (see placePrisons).
     this.placeEnemies();
+    this.placePrisons();
     this.battle = this.makeBattle();
     this.hud.setWorldMap(this.map.asWorldMap());
     this.hud.setOnFoot(CONTROLS, { legend: LEGEND }, CONTROLS_P2);
@@ -283,7 +308,7 @@ export class TownGame {
     this.ready = true;
     this.sound.music.start();
     this.clock.start();
-    this.hud.showBanner(`LEVEL ${levelNumber(MISSION)}: ${TITLE}`, "Penicuik! From the top of the hill, fight down the hill through the enemy's roadblocks to Mauricewood Primary School, and raise our flag there");
+    this.hud.showBanner(`LEVEL ${levelNumber(MISSION)}: ${TITLE}`, "Penicuik! You're on your own: your squad's been captured and locked in four enemy pens, marked on your map. Free them if you can, and fight down the hill through the roadblocks to Mauricewood Primary School");
     if (import.meta.env.DEV) (window as unknown as { town: TownGame }).town = this;
     requestAnimationFrame(this.animate);
   }
@@ -329,8 +354,10 @@ export class TownGame {
       const color = army === 'tan' ? ARMY_TAN : ARMY_BLUE;
       const rb = this.buildings.roadblock(p, { x: uphill.x - p.x, z: uphill.z - p.z }, color);
       const men = rb.posts.slice(0, BLOCK_MEN).map((q) => this.addEnemy(q.x, q.z, color, 3));
+      const gunner = this.addEnemy(rb.gunner.x, rb.gunner.z, color, 0);
+      men.push(gunner);
       const street = this.town.roads.find((r) => r.name && r.pts.some((q) => Math.hypot(q.x - p.x, q.z - p.z) < 12))?.name;
-      this.blocks.push({ rb, army, men, taken: false, along: d, name: street ? `${street} roadblock` : `Roadblock ${this.blocks.length + 1}` });
+      this.blocks.push({ rb, army, men, gunner, mg: { left: 0, next: 0, rest: 1 + rng() * 2 }, taken: false, along: d, name: street ? `${street} roadblock` : `Roadblock ${this.blocks.length + 1}` });
     });
     // Pairs wandering the side streets near the route.
     for (let i = 0; i < PATROLS; i++) {
@@ -343,6 +370,95 @@ export class TownGame {
     }
     const school = this.buildings.school;
     this.schoolMen = school.posts.slice(0, SCHOOL_MEN).map((q, i) => this.addEnemy(q.x, q.z, i % 2 ? ARMY_BLUE : ARMY_TAN, 5));
+  }
+
+  /**
+   * The enemy's prisoner pens: open ground well off the way down the hill (but near a road, so
+   * they can be reached), spread out from each other. Each holds two of our squad, by name, with
+   * four guards.
+   */
+  private placePrisons(): void {
+    const route = this.town.route;
+    const s = this.town.start, sc = this.buildings.school.centre;
+    const fromRoute = (p: Pt) => Math.min(...route.map((q) => Math.hypot(q.x - p.x, q.z - p.z)));
+    const spots: { p: Pt; road: Pt }[] = [];
+    const half = this.town.half - 40;
+    for (let x = -half; x <= half; x += 12) {
+      for (let z = -half; z <= half; z += 12) {
+        const p = { x, z };
+        const d = fromRoute(p);
+        if (d < PEN_MIN || d > PEN_MAX || Math.hypot(p.x - s.x, p.z - s.z) < 120 || Math.hypot(p.x - sc.x, p.z - sc.z) < 140) continue;
+        const road = this.buildings.nearestRoad(p);
+        if (!road || Math.hypot(road.x - p.x, road.z - p.z) < 9) continue;
+        if (!this.buildings.openSpot(p, 7)) continue;
+        spots.push({ p, road });
+      }
+    }
+    // Spread them out: each next one as far as it can be from the ones already chosen, starting with the one nearest the start.
+    const chosen: { p: Pt; road: Pt }[] = [];
+    spots.sort((a, b) => Math.hypot(a.p.x - s.x, a.p.z - s.z) - Math.hypot(b.p.x - s.x, b.p.z - s.z));
+    if (spots.length) chosen.push(spots[0]);
+    while (chosen.length < PENS) {
+      let best: { p: Pt; road: Pt } | null = null, bestD = PEN_GAP;
+      for (const c of spots) {
+        const d = Math.min(...chosen.map((q) => Math.hypot(q.p.x - c.p.x, q.p.z - c.p.z)));
+        if (d > bestD) {
+          bestD = d;
+          best = c;
+        }
+      }
+      if (!best) break;
+      chosen.push(best);
+    }
+    const names = this.settings.buddyNames;
+    chosen.forEach((c, i) => {
+      const army = i % 2 ? ARMY_BLUE : ARMY_TAN;
+      const pen = this.buildings.pen(c.p, c.road, army);
+      const captives = pen.inside.slice(0, PEN_MEN).map((q, k) => {
+        const n = i * PEN_MEN + k;
+        const t = new Trooper(this.world, q.x, q.z, 'friend', ARMY_GREEN, SQUAD_HP, names[n] ?? `Buddy ${n + 1}`);
+        t.yaw = Math.atan2(-(pen.gate.x - q.x), -(pen.gate.z - q.z));
+        this.scene.add(t.root);
+        this.byHandle.set(t.collider.handle, t);
+        return t;
+      });
+      const guards = pen.guards.map((q) => this.addEnemy(q.x, q.z, army, 4));
+      this.prisons.push({ pen, captives, guards, freed: false, opening: 0 });
+    });
+  }
+
+  /** Pens: the prisoners stand about until someone of ours stands at the gate long enough, then they join the squad. */
+  private updatePrisons(dt: number): void {
+    for (const pr of this.prisons) {
+      if (pr.freed) continue;
+      for (const c of pr.captives) c.update(dt);
+      const g = pr.pen.gate;
+      const at = [this.playerOne, this.player2].some((p) => p && !p.isDown && Math.hypot(p.position.x - g.x, p.position.z - g.z) < GATE_REACH);
+      pr.opening = at ? pr.opening + dt : Math.max(0, pr.opening - dt);
+      if (pr.opening < GATE_TIME) continue;
+      pr.freed = true;
+      pr.pen.open();
+      for (const c of pr.captives) {
+        if (c.down) c.revive(SQUAD_HP);
+        this.squad.add(c);
+      }
+      if (this.squad.holding) this.squad.toggleHold();
+      const left = this.prisons.filter((x) => !x.freed).length;
+      this.hud.showBanner(`${pr.captives.map((c) => c.name.toUpperCase()).join(' AND ')} FREED!`, left ? `They're with you now. ${left} more pen${left === 1 ? '' : 's'} on your map` : 'The whole squad is back together!');
+      this.sound.music.stinger();
+      this.enemies.hear(new THREE.Vector3(g.x, this.ground(g.x, g.z), g.z), 30);
+    }
+  }
+
+  /** The nearest pen still holding our men, and how far it is. */
+  private nearestPen(p: THREE.Vector3): { pr: Prison; d: number } | null {
+    let best: { pr: Prison; d: number } | null = null;
+    for (const pr of this.prisons) {
+      if (pr.freed) continue;
+      const d = Math.hypot(pr.pen.at.x - p.x, pr.pen.at.z - p.z);
+      if (!best || d < best.d) best = { pr, d };
+    }
+    return best;
   }
 
   private addPlayer2(): void {
@@ -413,14 +529,6 @@ export class TownGame {
   }
 
   // ---------- people ----------
-
-  private addSquadMate(x: number, z: number, name: string): Trooper {
-    const t = new Trooper(this.world, x, z, 'friend', ARMY_GREEN, SQUAD_HP, name);
-    this.scene.add(t.root);
-    this.byHandle.set(t.collider.handle, t);
-    this.squad.add(t);
-    return t;
-  }
 
   private addEnemy(x: number, z: number, color: number, roam: number): Trooper {
     const t = new Trooper(this.world, x, z, 'enemy', color, ENEMY_HP);
@@ -651,6 +759,54 @@ export class TownGame {
     }
   }
 
+  /**
+   * The roadblocks' machine guns: when its gunner can see one of ours in range he fires a burst of
+   * rounds, rests, and fires again; the gun swings round with him. Stuck in jam, knocked down or
+   * with the roadblock taken, it's silent.
+   */
+  private updateMachineGuns(dt: number): void {
+    for (const b of this.blocks) {
+      const g = b.gunner;
+      const mg = b.mg;
+      mg.rest = Math.max(0, mg.rest - dt);
+      if (b.taken || !g.active) {
+        mg.left = 0;
+        continue;
+      }
+      const eye = g.eye();
+      let target: THREE.Vector3 | null = null;
+      let best = MG_RANGE;
+      const consider = (pos: THREE.Vector3) => {
+        const d = Math.hypot(pos.x - g.pos.x, pos.z - g.pos.z);
+        const chest = pos.clone().setY(pos.y + 1.15);
+        if (d < best && this.sees(eye, chest)) {
+          best = d;
+          target = chest;
+        }
+      };
+      for (const p of [this.playerOne, this.player2]) if (p && !p.isDown) consider(p.position);
+      for (const s of this.squad.list) if (s.t.active) consider(s.t.pos);
+      const aim = target as THREE.Vector3 | null;
+      if (aim) {
+        g.faceToward(aim.x, aim.z, dt, 12);
+        b.rb.gun.rotation.y = Math.atan2(-(aim.x - b.rb.gun.position.x), -(aim.z - b.rb.gun.position.z));
+      }
+      if (mg.left > 0) {
+        mg.next -= dt;
+        if (mg.next <= 0) {
+          mg.next = MG_EVERY;
+          mg.left--;
+          if (aim) this.troopFire(g, aim);
+          if (mg.left === 0) mg.rest = MG_REST * (0.8 + Math.random() * 0.4);
+        }
+      } else if (aim && mg.rest === 0) {
+        mg.left = MG_BURST;
+        mg.next = 0;
+        this.enemies.hear(g.pos, 40);
+      }
+    }
+  }
+
   // ---------- objectives ----------
 
   private standing(men: Trooper[]): number {
@@ -752,8 +908,10 @@ export class TownGame {
     this.recordTrail();
     this.squad.update(dt, this.battle, this.trail);
     this.enemies.update(dt, this.battle);
+    this.updateMachineGuns(dt);
     for (const [handle, t] of this.byHandle) if (t.gone) this.byHandle.delete(handle);
     this.explosives.update(dt, (b) => this.onBlast(b), (pt) => this.impacts.trailPuff(pt));
+    this.updatePrisons(dt);
     this.updateObjectives(dt);
     this.world.step();
 
@@ -787,6 +945,7 @@ export class TownGame {
     d.roadblocks = this.blocks.map((b) => ({ x: b.rb.at.x, z: b.rb.at.z, army: b.army, taken: b.taken }));
     const sc = this.buildings.school.centre;
     d.school = { x: sc.x, z: sc.z, taken: this.victoryAt !== null };
+    d.pens = this.prisons.map((pr) => ({ x: pr.pen.at.x, z: pr.pen.at.z, freed: pr.freed }));
     const p = one.position;
     this.mapView = { ...NO_MAP, playerX: p.x, playerZ: p.z, playerYaw: one.yaw };
   }
@@ -818,6 +977,12 @@ export class TownGame {
   private waypoint(): HUDState['waypoint'] {
     if (this.hud.paused || this.victoryAt !== null) return null;
     const p = this.player.position;
+    // A pen close by (and still holding our men) takes the marker, so it's found on the way past.
+    const pen = this.nearestPen(p);
+    if (pen && pen.d < PEN_NEAR) {
+      const g = pen.pr.pen.gate;
+      return this.waypointTo(new THREE.Vector3(g.x, this.ground(g.x, g.z) + 4, g.z), `PRISONER PEN ${Math.round(pen.d)} m`);
+    }
     const next = this.blocks.find((b) => !b.taken);
     if (next) {
       const a = next.rb.at;
@@ -835,6 +1000,7 @@ export class TownGame {
     const left = this.standing(this.schoolMen);
     return [
       { label: `Break through the roadblocks on the way down (${taken} / ${this.blocks.length})`, done: taken === this.blocks.length },
+      { label: `Free your squad from the enemy's pens (${this.prisons.filter((pr) => pr.freed).length} / ${this.prisons.length}) (optional)`, done: this.prisons.every((pr) => pr.freed) },
       { label: `Clear Mauricewood Primary School (${SCHOOL_MEN - left} / ${SCHOOL_MEN} defenders)`, done: this.schoolCleared },
       { label: 'Raise our flag on the school flagpole', done: this.victoryAt !== null },
     ];
@@ -848,7 +1014,10 @@ export class TownGame {
     if (this.player.downFor > 0) prompt = mate && !mate.isDown ? `Knocked down! Your partner can help you up, or you're back at the checkpoint in ${Math.ceil(this.player.downFor)}…` : `Knocked down! Back at the checkpoint in ${Math.ceil(this.player.downFor)}…`;
     else if (mate?.isDown && Math.hypot(mate.position.x - p.x, mate.position.z - p.z) < 12) prompt = 'Your partner is down! Stand next to them to help them up';
     else if (this.schoolCleared && this.victoryAt === null) prompt = Math.hypot(this.buildings.school.pole.x - p.x, this.buildings.school.pole.z - p.z) < FLAG_REACH ? `Raising the flag… ${Math.round(this.flag * 100)}%` : 'Stand at the flagpole to raise our flag';
-    else if (this.time < 14) prompt = 'At the top of the hill, Penicuik. Follow the golden marker down the hill to the school';
+    else if (this.prisons.some((pr) => !pr.freed && Math.hypot(pr.pen.gate.x - p.x, pr.pen.gate.z - p.z) < 10)) {
+      const pr = this.prisons.find((x) => !x.freed && Math.hypot(x.pen.gate.x - p.x, x.pen.gate.z - p.z) < 10) as Prison;
+      prompt = pr.opening > 0 ? `Opening the gate… ${Math.round((pr.opening / GATE_TIME) * 100)}%` : `${pr.captives.map((c) => c.name).join(' and ')} are locked in here! Stand at the gate to let them out`;
+    } else if (this.time < 16) prompt = 'At the top of the hill, on your own. Free your squad from the pens on your map, and follow the golden marker down the hill to the school';
     const height = Math.round(this.town.base + this.ground(p.x, p.z));
     const street = this.streetName(p);
     const status = [`Squad ${this.squad.standing} / ${this.squad.list.length}${this.squad.holding ? ' (HOLDING)' : ''}  ·  ${height} m above sea level`];
