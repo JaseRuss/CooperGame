@@ -6,6 +6,8 @@ import { PartBuilder, sandbagGeometry } from '../utils/modelKit';
 import { inPolygon, centroid, type TownData, type Pt, type Footprint, type Line } from './TownData';
 import { WATER_GROUPS } from '../prison/groups';
 import { withDetail } from './Surfaces';
+import { CAR_TYPES, parkedCars, type CarPlacement } from './Cars';
+import { OpeningWriter, WINDOWS, SCHOOL_WINDOW, DOUBLE_DOOR, DOOR_CELLS, GARAGE_DOORS, type Cell } from './Openings';
 
 /** White and pale grey render on most of the new houses (as in a drone shot of Sycamore Drive), some buff, a few rows of red brick. */
 const WALLS = [0xf4f3ef, 0xefeee9, 0xe9e8e3, 0xf6f4ee, 0xe3e2dd, 0xdcdbd6, 0xece6d8, 0xd9c7a8, 0xf1f0ec, 0xa9654e, 0xb5765c];
@@ -14,7 +16,13 @@ const ROOFS = [0x4e5664, 0x56606e, 0x48505c, 0x5d6672, 0x434a55, 0x515a68, 0x6a5
 const SOLAR = 0x1e2a46;
 const DOORS = [0x7a2a2a, 0x2a4a7a, 0x2f5a35, 0xe8e8e0, 0x3a3a3a, 0x8a6a2a];
 const CARS = [0xc0392b, 0x2e5fa8, 0xe8e8e8, 0x2c2c2c, 0x8e9499, 0x3c7a4a, 0xd4a017, 0x6d3b8a];
-const GLASS = 0x2d3d4a;
+/** A steady 0..1 from a spot, for choices that mustn't use up the layout's random numbers. */
+function hash(x: number, z: number): number {
+  const v = Math.sin(x * 12.9898 + z * 78.233) * 43758.5453;
+  return v - Math.floor(v);
+}
+/** What goes with a window or door: a sill under it, or a step (and maybe a canopy) at a front door. */
+type Trim = 'sill' | 'door' | 'porch' | null;
 const FOOT = new Set(['footway', 'path', 'cycleway', 'steps', 'pedestrian', 'track']);
 
 let penSignTexture: THREE.CanvasTexture | null = null;
@@ -255,7 +263,8 @@ export interface Roadblock {
 
 /**
  * Everything standing in the town: every house, garage and block of flats from the map (with a
- * pitched roof where the footprint is a plain rectangle, windows, a door facing the street), the
+ * pitched roof where the footprint is a plain rectangle, textured windows with sills, a front door
+ * facing the street with a step and sometimes a canopy), the
  * school (built where its grounds are), trees in the woods and gardens, hedges, walls and fences,
  * and cars parked along the kerbs. Each kind is merged or instanced into a few meshes, and the
  * solid parts become colliders: buildings, trunks, cars, walls and hedges.
@@ -272,6 +281,7 @@ export class Buildings {
   private readonly plots: { r: Rect; street: Pt }[] = [];
   private readonly gardenLines: Line[] = [];
   private readonly gardenGrid = new PolyGrid();
+  private readonly openings = new OpeningWriter();
 
   constructor(private readonly world: RAPIER.World, scene: THREE.Scene, private readonly town: TownData) {
     this.body = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
@@ -284,8 +294,9 @@ export class Buildings {
     this.school = this.buildSchool();
     const mesh = walls.build(withDetail(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85 }), 'building'));
     this.group.add(mesh);
+    this.group.add(this.openings.build());
     this.count.buildings = town.buildings.length;
-    this.count.triangles = walls.pos.length / 9;
+    this.count.triangles = walls.pos.length / 9 + this.openings.triangles;
     // All the buildings are one trimesh to walk into and shoot at.
     const verts = new Float32Array(this.colliderTris);
     const idx = new Uint32Array(verts.length / 3).map((_, i) => i);
@@ -352,14 +363,17 @@ export class Buildings {
       else this.solid(w, A, C, B, roofColor);
     }
     if (school?.rooflights) this.rooflights(w, pts, y1);
-    if (school) this.windowsAround(w, pts, lo, 1, storey);
+    const look = hash(rect.c.x, rect.c.z);
+    if (school) this.windowsAround(w, pts, lo, 1, storey, SCHOOL_WINDOW);
     else if (garage) {
-      // A pale up-and-over door on the side nearest the street.
+      // An up-and-over door on the side nearest the street.
       const s = street?.at;
-      if (s) this.doorOnNearestEdge(w, pts, s, lo, 2.3, 2.0, 0xe6e6e0);
+      if (s) this.doorOnNearestEdge(w, pts, s, lo, 2.3, 2.0, GARAGE_DOORS[look < 0.75 ? 0 : 1], null);
     } else {
-      this.windowsAround(w, pts, lo, levels, storey);
-      if (street) this.doorOnNearestEdge(w, pts, street.at, lo, 0.95, 2.05, DOORS[Math.floor(rng() * DOORS.length)]);
+      this.windowsAround(w, pts, lo, levels, storey, WINDOWS[Math.floor(look * WINDOWS.length)]);
+      const door = DOOR_CELLS[Math.floor(rng() * DOORS.length)];
+      // The flats get a glazed double door; a house its own front door.
+      if (street) this.doorOnNearestEdge(w, pts, street.at, lo, flats ? 0.95 : 0.5, 2.05, flats ? DOUBLE_DOOR : door, flats ? 'porch' : 'door');
     }
   }
 
@@ -440,16 +454,21 @@ export class Buildings {
     const endOn = Math.abs(ds) / L > Math.abs(dt) / W;
     const front = endOn ? 0 : Math.sign(dt) || 1;
     const doorAt = n > 1 ? Math.floor(n / 2) : -1;
+    const look = hash(r.c.x, r.c.z);
+    // The way each long side faces (+t), and each end (+s).
+    const sideN = (side: number) => [-r.uz * side, r.ux * side] as const;
+    const endN = (side: number) => [r.ux * side, r.uz * side] as const;
     if (garage) {
-      // A pale up-and-over door on the side facing the road, and nothing else.
+      // An up-and-over door on the side facing the road, and nothing else.
+      const cell = GARAGE_DOORS[look < 0.75 ? 0 : 1];
       if (endOn) {
         const side = Math.sign(ds) || 1;
-        const s = side * (L + 0.03);
-        const hw = Math.min(1.15, W - 0.2);
-        w.quad(at(s, side * hw, floor + 0.02), at(s, -side * hw, floor + 0.02), at(s, -side * hw, floor + 2.0), at(s, side * hw, floor + 2.0), 0xe6e6e0);
-      } else this.pane(w, at, 0, front * (W + 0.03), front, floor + 0.02, Math.min(1.15, L - 0.2), 2.0, 0xe6e6e0);
+        this.opening(w, at(side * (L + 0.03), 0, floor + 0.02), ...endN(side), Math.min(1.15, W - 0.2), 2.0, cell, null);
+      } else this.opening(w, at(0, front * (W + 0.03), floor + 0.02), ...sideN(front), Math.min(1.15, L - 0.2), 2.0, cell, null);
       return;
     }
+    const win = WINDOWS[Math.floor(look * WINDOWS.length)];
+    const porch = look * 7 % 1 < 0.45 ? 'porch' : 'door';
     for (const side of [-1, 1]) {
       const t = side * (W + 0.03);
       for (let lv = 0; lv < levels; lv++) {
@@ -457,30 +476,64 @@ export class Buildings {
           const s = -L + ((k + 0.5) * 2 * L) / n;
           const yb = floor + 0.95 + lv * storey;
           if (lv === 0 && side === front && k === doorAt) {
-            this.pane(w, at, s, t, side, floor + 0.02, 0.5, 2.05, DOORS[Math.floor(rng() * DOORS.length)]);
+            this.opening(w, at(s, t, floor + 0.02), ...sideN(side), 0.5, 2.05, DOOR_CELLS[Math.floor(rng() * DOORS.length)], porch);
             continue;
           }
-          this.pane(w, at, s, t, side, yb, 0.6, 1.2, GLASS);
+          this.opening(w, at(s, t, yb), ...sideN(side), 0.6, 1.2, win, 'sill');
         }
       }
-      if (side === front && doorAt < 0) this.pane(w, at, 0, t, side, floor + 0.02, 0.5, 2.05, DOORS[Math.floor(rng() * DOORS.length)]);
+      if (side === front && doorAt < 0) this.opening(w, at(0, t, floor + 0.02), ...sideN(side), 0.5, 2.05, DOOR_CELLS[Math.floor(rng() * DOORS.length)], porch);
     }
     if (endOn) {
       // The front door in the end wall facing the road, a window beside it if there's room, and one above on each storey.
       const side = Math.sign(ds) || 1;
       const s = side * (L + 0.03);
-      const end = (t: number, yb: number, hw: number, h: number, color: number) =>
-        w.quad(at(s, t + side * hw, yb), at(s, t - side * hw, yb), at(s, t - side * hw, yb + h), at(s, t + side * hw, yb + h), color);
+      const end = (t: number, yb: number, hw: number, h: number, cell: Cell, trim: Trim) => this.opening(w, at(s, t, yb), ...endN(side), hw, h, cell, trim);
       const wide = W > 2.6;
-      end(wide ? -W * 0.4 : 0, floor + 0.02, 0.5, 2.05, DOORS[Math.floor(rng() * DOORS.length)]);
-      if (wide) end(W * 0.4, floor + 0.95, 0.6, 1.2, GLASS);
-      for (let lv = 1; lv < levels; lv++) end(0, floor + 0.95 + lv * storey, 0.6, 1.2, GLASS);
+      end(wide ? -W * 0.4 : 0, floor + 0.02, 0.5, 2.05, DOOR_CELLS[Math.floor(rng() * DOORS.length)], porch);
+      if (wide) end(W * 0.4, floor + 0.95, 0.6, 1.2, win, 'sill');
+      for (let lv = 1; lv < levels; lv++) end(0, floor + 0.95 + lv * storey, 0.6, 1.2, win, 'sill');
     }
   }
 
-  /** A window (or door) on a long wall of a box house: centred at `s` along it, `hw` half wide (`side` flips it to face out). */
-  private pane(w: Writer, at: (s: number, t: number, y: number) => THREE.Vector3, s: number, t: number, side: number, yb: number, hw: number, h: number, color: number): void {
-    w.quad(at(s - hw * side, t, yb), at(s + hw * side, t, yb), at(s + hw * side, t, yb + h), at(s - hw * side, t, yb + h), color);
+  /**
+   * A window or door on a wall that faces (nx, nz): `base` is the middle of its foot, just out from
+   * the wall, and it's `hw` half wide and `h` tall. A window gets a sill under it; a front door a
+   * step, and with 'porch' a little canopy over it on brackets.
+   */
+  private opening(w: Writer, base: THREE.Vector3, nx: number, nz: number, hw: number, h: number, cell: Cell, trim: Trim): void {
+    // Along the wall, left to right seen from outside.
+    const ux = nz, uz = -nx;
+    const p = (s: number, y: number) => new THREE.Vector3(base.x + ux * s, base.y + y, base.z + uz * s);
+    this.openings.quad(p(-hw, 0), p(hw, 0), p(hw, h), p(-hw, h), cell);
+    if (!trim) return;
+    // Boxes standing out from the wall's face (0.03 behind the window).
+    const box = (hl: number, out: number, y0: number, y1: number, color: number, under = false, ends = true) => {
+      const q = (s: number, o: number, y: number) => new THREE.Vector3(base.x + ux * s + nx * (o - 0.03), base.y + y, base.z + uz * s + nz * (o - 0.03));
+      w.quad(q(-hl, out, y0), q(hl, out, y0), q(hl, out, y1), q(-hl, out, y1), color);
+      w.quad(q(-hl, out, y1), q(hl, out, y1), q(hl, 0, y1), q(-hl, 0, y1), color);
+      if (ends) {
+        w.quad(q(-hl, 0, y0), q(-hl, out, y0), q(-hl, out, y1), q(-hl, 0, y1), color);
+        w.quad(q(hl, out, y0), q(hl, 0, y0), q(hl, 0, y1), q(hl, out, y1), color);
+      }
+      if (under) w.quad(q(-hl, 0, y0), q(hl, 0, y0), q(hl, out, y0), q(-hl, out, y0), color);
+    };
+    if (trim === 'sill') {
+      box(hw + 0.07, 0.11, -0.07, 0, 0xe4e2dc, false, false);
+      return;
+    }
+    // A concrete step at the door.
+    box(hw + 0.2, 0.42, -0.3, 0, 0xb0aea6);
+    if (trim === 'porch') {
+      // A canopy: a sloping slate top on a white fascia, held up by two brackets.
+      box(hw + 0.35, 0.75, h + 0.12, h + 0.24, 0xeeeeea, true);
+      const q = (s: number, o: number, y: number) => new THREE.Vector3(base.x + ux * s + nx * (o - 0.03), base.y + y, base.z + uz * s + nz * (o - 0.03));
+      w.quad(q(-hw - 0.4, 0.8, h + 0.24), q(hw + 0.4, 0.8, h + 0.24), q(hw + 0.4, 0, h + 0.55), q(-hw - 0.4, 0, h + 0.55), 0x4e5664);
+      for (const s of [-hw - 0.25, hw + 0.25]) {
+        w.tri(q(s - 0.04, 0, h - 0.35), q(s - 0.04, 0.6, h + 0.12), q(s - 0.04, 0, h + 0.12), 0xeeeeea);
+        w.tri(q(s + 0.04, 0, h - 0.35), q(s + 0.04, 0, h + 0.12), q(s + 0.04, 0.6, h + 0.12), 0xeeeeea);
+      }
+    }
   }
 
   /** A wall quad, and (unless it's a chimney) the same two triangles in the collider. */
@@ -508,29 +561,27 @@ export class Buildings {
   }
 
   /** Windows along each wall long enough for them, on every storey. */
-  private windowsAround(w: Writer, pts: Pt[], floor: number, levels: number, storey: number): void {
+  private windowsAround(w: Writer, pts: Pt[], floor: number, levels: number, storey: number, cell: Cell): void {
     for (let i = 0; i < pts.length; i++) {
       const a = pts[i], b = pts[(i + 1) % pts.length];
       const len = Math.hypot(b.x - a.x, b.z - a.z);
       if (len < 2.6) continue;
       const ux = (b.x - a.x) / len, uz = (b.z - a.z) / len;
       // Just out from the wall: the way it faces is (-uz, ux).
-      const nx = -uz * 0.03, nz = ux * 0.03;
+      const nx = -uz, nz = ux;
       const n = Math.max(1, Math.floor(len / 3.1));
       for (let lv = 0; lv < levels; lv++) {
         for (let k = 0; k < n; k++) {
           const m = ((k + 0.5) * len) / n;
           const yb = floor + 0.95 + lv * storey;
-          const p0 = { x: a.x + ux * (m - 0.6) + nx, z: a.z + uz * (m - 0.6) + nz };
-          const p1 = { x: a.x + ux * (m + 0.6) + nx, z: a.z + uz * (m + 0.6) + nz };
-          w.quad(new THREE.Vector3(p0.x, yb, p0.z), new THREE.Vector3(p1.x, yb, p1.z), new THREE.Vector3(p1.x, yb + 1.2, p1.z), new THREE.Vector3(p0.x, yb + 1.2, p0.z), GLASS);
+          this.opening(w, new THREE.Vector3(a.x + ux * m + nx * 0.03, yb, a.z + uz * m + nz * 0.03), nx, nz, 0.6, 1.2, cell, 'sill');
         }
       }
     }
   }
 
   /** A door in the middle of the wall nearest `street`. */
-  private doorOnNearestEdge(w: Writer, pts: Pt[], street: Pt, floor: number, half: number, h: number, color: number): void {
+  private doorOnNearestEdge(w: Writer, pts: Pt[], street: Pt, floor: number, half: number, h: number, cell: Cell, trim: Trim): void {
     let best = -1, bestD = Infinity;
     for (let i = 0; i < pts.length; i++) {
       const a = pts[i], b = pts[(i + 1) % pts.length];
@@ -545,11 +596,8 @@ export class Buildings {
     const a = pts[best], b = pts[(best + 1) % pts.length];
     const len = Math.hypot(b.x - a.x, b.z - a.z);
     const ux = (b.x - a.x) / len, uz = (b.z - a.z) / len;
-    const nx = -uz * 0.04, nz = ux * 0.04;
     const m = len / 2;
-    const p0 = new THREE.Vector3(a.x + ux * (m - half) + nx, floor + 0.02, a.z + uz * (m - half) + nz);
-    const p1 = new THREE.Vector3(a.x + ux * (m + half) + nx, floor + 0.02, a.z + uz * (m + half) + nz);
-    w.quad(p0, p1, p1.clone().setY(floor + h), p0.clone().setY(floor + h), color);
+    this.opening(w, new THREE.Vector3(a.x + ux * m - uz * 0.04, floor + 0.02, a.z + uz * m + ux * 0.04), -uz, ux, half, h, cell, trim);
   }
 
   /**
@@ -1211,44 +1259,26 @@ export class Buildings {
       }
     }
     this.count.cars = spots.length;
-    const n = spots.length;
-    const bodyGeo = new THREE.BoxGeometry(1.8, 0.75, 4.1).translate(0, 0.6, 0);
-    const cabinGeo = new THREE.BoxGeometry(1.6, 0.6, 2.1).translate(0, 1.27, -0.15);
-    const wheelGeo = new THREE.CylinderGeometry(0.34, 0.34, 0.25, 10).rotateZ(Math.PI / 2);
-    const paint = new THREE.InstancedMesh(bodyGeo, new THREE.MeshPhysicalMaterial({ roughness: 0.35, clearcoat: 0.8 }), n);
-    const cabin = new THREE.InstancedMesh(cabinGeo, new THREE.MeshStandardMaterial({ color: 0x33414d, roughness: 0.2, metalness: 0.1 }), n);
-    const wheels = new THREE.InstancedMesh(wheelGeo, plastic(0x1e1e1e), n * 4);
-    const m = new THREE.Matrix4();
-    const col = new THREE.Color();
-    spots.forEach((s, i) => {
+    const placed: CarPlacement[] = [];
+    for (const s of spots) {
+      // Mostly hatchbacks and estates, a few SUVs.
+      const k = hash(s.p.x * 3.1, s.p.z * 1.7);
+      const type = k < 0.45 ? 0 : k < 0.8 ? 1 : 2;
+      const t = CAR_TYPES[type];
       // Tilted to the slope of the street.
       const fx = -Math.sin(s.yaw), fz = -Math.cos(s.yaw);
       const hf = this.ground({ x: s.p.x + fx * 1.8, z: s.p.z + fz * 1.8 });
       const hb = this.ground({ x: s.p.x - fx * 1.8, z: s.p.z - fz * 1.8 });
       const y = (hf + hb) / 2;
       const pitch = Math.atan2(hf - hb, 3.6);
-      const e = new THREE.Euler(pitch, s.yaw, 0, 'YXZ');
-      const q = new THREE.Quaternion().setFromEuler(e);
-      m.compose(new THREE.Vector3(s.p.x, y, s.p.z), q, new THREE.Vector3(1, 1, 1));
-      paint.setMatrixAt(i, m);
-      paint.setColorAt(i, col.setHex(s.color));
-      cabin.setMatrixAt(i, m);
-      let k = 0;
-      for (const [wx, wz] of [[-0.85, -1.35], [0.85, -1.35], [-0.85, 1.35], [0.85, 1.35]]) {
-        const local = new THREE.Matrix4().makeTranslation(wx, 0.34, wz);
-        wheels.setMatrixAt(i * 4 + k++, m.clone().multiply(local));
-      }
+      const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(pitch, s.yaw, 0, 'YXZ'));
+      placed.push({ type, color: s.color, matrix: new THREE.Matrix4().compose(new THREE.Vector3(s.p.x, y, s.p.z), q, new THREE.Vector3(1, 1, 1)) });
       this.world.createCollider(
-        RAPIER.ColliderDesc.cuboid(0.9, 0.8, 2.05).setTranslation(s.p.x, y + 0.8, s.p.z).setRotation(q),
+        RAPIER.ColliderDesc.cuboid(t.W / 2, t.roof / 2, t.L / 2).setTranslation(s.p.x, y + t.roof / 2, s.p.z).setRotation(q),
         this.body,
       );
-    });
-    for (const im of [paint, cabin, wheels]) {
-      im.castShadow = true;
-      im.receiveShadow = true;
-      im.computeBoundingSphere();
-      this.group.add(im);
     }
+    parkedCars(this.group, placed);
   }
 
   /**
