@@ -693,7 +693,7 @@ and long semis, as in aerial photos of the estate), windows on each storey, and 
 road (the door goes in the gable end when the road runs past that end) with a driveway to it. Behind
 each house is a back garden with a tall wooden fence round it, running back to the next building or
 road (they're solid, so the way down is along the streets and paths). The rest are built to their own
-outline with a flat roof. As in a drone shot of Sycamore Drive, most walls are white or pale grey
+outline with a flat roof. As in a drone shot of the estate, most walls are white or pale grey
 render (with some buff and a few rows of red brick), roofs are blue-grey slate with solar panels on
 some south-facing slopes, and garages have low pitched roofs. Street lamps line the pavements and
 the path along the old railway line, which has rows of young trees either side. Cars are
@@ -704,7 +704,7 @@ brick, rows of slates, timber boards, coursed stone, leaves and bark). The stree
 speckled asphalt with dashed white lines on the main roads, paving-slab pavements with kerbstones,
 tarmac footpaths and gravel tracks.
 
-You start outside **64 Sycamore Drive** on your own: your squad has been captured and is held in
+You start at the top of the hill on your own: your squad has been captured and is held in
 four enemy **prisoner pens** (marked on the map), each a short detour of about 80 m off the way
 down, one beside each stretch of it. Each is a barred cage on a concrete footing with spiked bars,
 X-braces and barbed wire on angled arms along the top, a padlocked gate, and a tin shelter over a
