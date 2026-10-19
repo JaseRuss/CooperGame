@@ -718,7 +718,13 @@ checkpoint). Each is built in layers across the street: a triple coil of barbed 
 (you can see and shoot through it, not walk through it) with a gap at one side, a staggered row of
 concrete barriers with their gap at the other side, a line of sandbags with a gap near the middle,
 a sandbagged machine-gun nest whose gunner fires bursts, and behind it all a sentry box with a
-raised barrier pole, a floodlight, oil drums, ammo crates and (on wider streets) an army truck, pairs on patrol in the side streets, and ten defenders round the school.
+raised barrier pole, a floodlight, oil drums, ammo crates and (on wider streets) an army truck.
+Patrols of three walk the streets all over town (about two dozen of them, up to three on a long
+street), and the map tints each street red while it has a patrol on it. Short streets are clumped
+with a street they meet, so a few closes count as one. Down every patrol on a street and it's
+clear: a banner names it, fireworks go off along it, our green flag runs up a pole beside it and it
+turns green on the map. A green marker points each player to the supply depot until they've taken
+all three of its upgrades.
 Clear the school, then stand at the flagpole on its playground to raise our flag and win. The school's
 buildings aren't on OpenStreetMap (only its grounds are), so they're traced from aerial photos: the
 single-storey flat-roofed blocks with their rooflights, the taller hall with its hipped roof, the

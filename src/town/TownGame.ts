@@ -12,7 +12,7 @@ import { MISSION, levelNumber, nextMission, startMission } from '../core/config'
 import { PlayerSoldier, MAX_HEALTH } from '../prison/PlayerSoldier';
 import { ShoulderCam } from '../prison/ShoulderCam';
 import { FRIEND_SHOTS, ENEMY_SHOTS, WALLS_ONLY } from '../prison/groups';
-import { ARMY_GREEN, ARMY_TAN, ARMY_BLUE, shade } from '../utils/plastic';
+import { ARMY_GREEN, ARMY_TAN, ARMY_BLUE, plastic, shade } from '../utils/plastic';
 import { mulberry32 } from '../utils/rng';
 import { Trooper } from '../jungle/Trooper';
 import { Enemies } from '../jungle/Enemies';
@@ -72,12 +72,24 @@ const CLEARED = 0;
 /** The school is dug in: this many defenders, the first few of them heavies who take twice the hits, and two machine-gun nests. */
 const SCHOOL_MEN = 24;
 const SCHOOL_HEAVIES = 8;
-/** Patrols walking the streets, this many men each. There are only these: none come back once they're down. */
-const PATROLS = 8;
+/** Patrols walking the streets, this many men each, at most this many patrols in all. There are only these: none come back once they're down. */
+const PATROLS = 24;
 const PATROL_MEN = 3;
-/** A patrol's beat: at most this long, and it starts this far from where you start, and well clear of the school. */
-const BEAT_MAX = 170;
+/** A street gets a patrol for every this many metres of it, up to this many. */
+const PATROL_EVERY = 220;
+const STREET_PATROLS = 3;
+/** Streets shorter than this are clumped with a street they meet (an end this close to it), up to this many names to a clump. */
+const SHORT_STREET = 150;
+const CLUMP_REACH = 40;
+const CLUMP_MAX = 3;
+/** A patrol's beat: between these lengths, at least this far from any other patrol's, this far from where you start, and well clear of the school. */
+const BEAT_MIN = 40;
+const BEAT_MAX = 140;
+const PATROL_GAP = 70;
 const PATROL_START_CLEAR = 150;
+/** A cleared street's flag goes up this fast (seconds), and this many fireworks go off along it. */
+const STREET_FLAG_RISE = 1.6;
+const STREET_FIREWORKS = 4;
 /** Guns. You start with a pistol; the depot's assault rifle fires far faster and straighter. */
 const PISTOL_EVERY = 0.42;
 const PISTOL_SPREAD = 0.03;
@@ -114,7 +126,32 @@ const CONTROLS_P2 =
   '<span><b>Camera</b> numpad 9 · <b>Pause / map</b> numpad enter · <b>Checkpoint</b> numpad decimal</span>';
 const LEGEND =
   '<span><i style="background:#4b7a2e"></i>You and your squad</span><span><i style="background:#c4a468"></i>Tan army</span><span><i style="background:#3f6fb0"></i>Blue army</span>' +
-  '<span><i style="background:#ffd24a"></i>The way down the hill, and Mauricewood Primary School</span><span>Squares: enemy roadblocks</span><span><i style="background:#7a8a3a"></i>Supply depot: upgrades (south-west)</span><span><i style="background:#ffd24a"></i>Barred squares: pens holding your squad</span>';
+  '<span><i style="background:#ffd24a"></i>The way down the hill, and Mauricewood Primary School</span><span>Squares: enemy roadblocks</span><span><i style="background:#7a8a3a"></i>Supply depot: upgrades (south-west, green marker)</span><span><i style="background:#ff5a4a"></i>Red streets: patrols · green: cleared</span><span><i style="background:#ffd24a"></i>Barred squares: pens holding your squad</span>';
+
+/** A street (or a clump of short ones) with patrols on it. */
+interface Street {
+  name: string;
+  lines: Pt[][];
+  beats: Pt[][];
+  men: Trooper[];
+  cleared: boolean;
+  /** Where our flag goes up once it's clear, and the flag while it's still rising. */
+  flagAt: Pt | null;
+  flag?: { mesh: THREE.Mesh; from: number; to: number; start: number };
+}
+
+const STREET_POLE_GEO = new THREE.CylinderGeometry(0.08, 0.08, 6.5, 8);
+const STREET_FLAG_GEO = new THREE.PlaneGeometry(2.4, 1.5).translate(1.22, 0, 0);
+let streetFlag: THREE.Material | null = null;
+/** Our green, both sides of the flag: one copy shared by every street's flag (not the soldiers' own material). */
+function streetFlagMaterial(): THREE.Material {
+  if (!streetFlag) {
+    const m = plastic(ARMY_GREEN).clone();
+    m.side = THREE.DoubleSide;
+    streetFlag = m;
+  }
+  return streetFlag;
+}
 
 const NO_MAP: MapView = {
   playerX: 0,
@@ -221,6 +258,9 @@ export class TownGame {
   private blocks: Block[] = [];
   private schoolMen: Trooper[] = [];
   private patrolMen: Trooper[] = [];
+  /** Streets (or clumps of short ones) with patrols on them; clearing one wins a flag and fireworks. */
+  private streets: Street[] = [];
+  private readonly fireworks: { at: number; p: THREE.Vector3 }[] = [];
   private guns: Mg[] = [];
   private depot!: Depot;
   private leaving = false;
@@ -449,51 +489,178 @@ export class TownGame {
   }
 
   /**
-   * Patrols walking the streets all over town, three men to a patrol: each walks its own stretch of
-   * one street there and back, spread apart, clear of where you start, the school and the
-   * roadblocks. Only these: once they're down, the streets stay clear.
+   * Patrols walking the streets all over town, three men to a patrol. The streets are taken by name
+   * (short ones clumped with their short neighbours, so a clump of closes counts as one), and each
+   * gets a patrol per couple of hundred metres, each walking its own stretch there and back: spread
+   * apart, clear of where you start, the school, the depot and the roadblocks. Only these: once a
+   * street's patrols are down it stays clear, and our flag goes up on it.
    */
   private placePatrols(rng: () => number): void {
     const s = this.town.start, sc = this.buildings.school.centre;
     const kinds = new Set(['residential', 'unclassified', 'tertiary', 'secondary', 'living_street', 'service']);
-    const roads = this.town.roads.filter((r) => kinds.has(r.kind) && r.pts.length >= 2);
+    const lengthOf = (pts: Pt[]) => pts.reduce((a, p, i) => (i ? a + Math.hypot(p.x - pts[i - 1].x, p.z - pts[i - 1].z) : 0), 0);
+    // Every named street, all its pieces together.
+    const byName = new Map<string, { names: string[]; lines: { pts: Pt[]; width: number }[]; len: number }>();
+    for (const r of this.town.roads) {
+      if (!r.name || !kinds.has(r.kind) || r.pts.length < 2) continue;
+      const g = byName.get(r.name) ?? { names: [r.name], lines: [], len: 0 };
+      g.lines.push({ pts: r.pts, width: r.width });
+      g.len += lengthOf(r.pts);
+      byName.set(r.name, g);
+    }
+    const all = [...byName.values()].sort((a, b) => (a.names[0] < b.names[0] ? -1 : 1));
     // A seeded shuffle, so the patrols are the same every game.
-    for (let i = roads.length - 1; i > 0; i--) {
+    for (let i = all.length - 1; i > 0; i--) {
       const j = Math.floor(rng() * (i + 1));
-      [roads[i], roads[j]] = [roads[j], roads[i]];
+      [all[i], all[j]] = [all[j], all[i]];
+    }
+    // Whether one street's end comes near the other street anywhere along it (a T-junction counts).
+    const ends = (g: (typeof all)[number]) => g.lines.flatMap((l) => [l.pts[0], l.pts[l.pts.length - 1]]);
+    const near = (p: Pt, g: (typeof all)[number]) => g.lines.some((l) => l.pts.some((b, i) => {
+      if (!i) return false;
+      const a = l.pts[i - 1], dx = b.x - a.x, dz = b.z - a.z;
+      const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.z - a.z) * dz) / (dx * dx + dz * dz || 1)));
+      return Math.hypot(p.x - a.x - dx * t, p.z - a.z - dz * t) < CLUMP_REACH;
+    }));
+    const meets = (a: (typeof all)[number], b: (typeof all)[number]) => ends(a).some((p) => near(p, b)) || ends(b).some((p) => near(p, a));
+    // Each short street joins the shortest neighbour it meets (a close joins the road it leads off),
+    // until every clump is long enough or has no room or neighbour left.
+    const groups = all.map((g) => ({ names: [...g.names], lines: [...g.lines], len: g.len }));
+    for (let merged = true; merged; ) {
+      merged = false;
+      for (const g of groups) {
+        if (g.len >= SHORT_STREET) continue;
+        const into = groups.filter((o) => o !== g && o.names.length + g.names.length <= CLUMP_MAX && meets(g, o)).sort((a, b) => a.len - b.len)[0];
+        if (!into) continue;
+        into.names.push(...g.names);
+        into.lines.push(...g.lines);
+        into.len += g.len;
+        groups.splice(groups.indexOf(g), 1);
+        merged = true;
+        break;
+      }
     }
     const mids: Pt[] = [];
-    for (const r of roads) {
-      if (mids.length >= PATROLS) break;
-      // Its first stretch up to BEAT_MAX long.
-      const beat: Pt[] = [r.pts[0]];
-      let len = 0;
-      for (let i = 1; i < r.pts.length && len < BEAT_MAX; i++) {
-        len += Math.hypot(r.pts[i].x - r.pts[i - 1].x, r.pts[i].z - r.pts[i - 1].z);
-        beat.push(r.pts[i]);
+    let patrols = 0;
+    for (const g of groups) {
+      if (patrols >= PATROLS) break;
+      // Each piece cut into stretches no longer than a beat (a short tail joins the stretch before it).
+      const beats: Pt[][] = [];
+      const widths: number[] = [];
+      for (const line of g.lines) {
+        let cur: Pt[] = [line.pts[0]], len = 0;
+        const cut: Pt[][] = [];
+        for (let i = 1; i < line.pts.length; i++) {
+          len += Math.hypot(line.pts[i].x - line.pts[i - 1].x, line.pts[i].z - line.pts[i - 1].z);
+          cur.push(line.pts[i]);
+          if (len >= BEAT_MAX && i < line.pts.length - 1) {
+            cut.push(cur);
+            cur = [line.pts[i]];
+            len = 0;
+          }
+        }
+        if (len >= BEAT_MIN || !cut.length) cut.push(cur);
+        else cut[cut.length - 1].push(...cur.slice(1));
+        for (const b of cut) if (lengthOf(b) >= BEAT_MIN) {
+          beats.push(b);
+          widths.push(line.width);
+        }
       }
-      if (len < 50) continue;
-      const mid = beat[Math.floor(beat.length / 2)];
-      const far = (p: Pt, d: number) => Math.hypot(p.x - mid.x, p.z - mid.z) > d;
-      if (!far(s, PATROL_START_CLEAR) || !far(sc, 90) || !far(this.depot.at, 60)) continue;
-      if (!this.blocks.every((b) => far(b.rb.at, 60)) || !mids.every((m) => far(m, 130))) continue;
-      if (beat.some((p) => Math.abs(p.x) > this.town.half - 30 || Math.abs(p.z) > this.town.half - 30)) continue;
-      mids.push(mid);
-      const color = mids.length % 2 ? ARMY_TAN : ARMY_BLUE;
-      for (let k = 0; k < PATROL_MEN; k++) {
-        // Side by side across the street.
-        const off = (k - (PATROL_MEN - 1) / 2) * 1.4;
-        const path = beat.map((p, i) => {
-          const a = beat[Math.max(0, i - 1)], b = beat[Math.min(beat.length - 1, i + 1)];
-          const l = Math.hypot(b.x - a.x, b.z - a.z) || 1;
-          return new THREE.Vector2(p.x - ((b.z - a.z) / l) * off, p.z + ((b.x - a.x) / l) * off);
-        });
-        const t = new Trooper(this.world, path[0].x, path[0].y, 'enemy', color, ENEMY_HP);
-        this.scene.add(t.root);
-        this.byHandle.set(t.collider.handle, t);
-        this.enemies.patrol(t, path);
-        this.patrolMen.push(t);
+      const order = beats.map((_, i) => i).sort((a, b) => lengthOf(beats[b]) - lengthOf(beats[a]));
+      const want = Math.max(1, Math.min(STREET_PATROLS, Math.round(g.len / PATROL_EVERY), PATROLS - patrols));
+      const street: Street = { name: this.streetLabel(g.names), lines: g.lines.map((l) => l.pts), men: [], cleared: false, beats: [], flagAt: null };
+      for (const i of order) {
+        if (street.beats.length >= want) break;
+        const beat = beats[i];
+        const mid = beat[Math.floor(beat.length / 2)];
+        const far = (p: Pt, d: number) => Math.hypot(p.x - mid.x, p.z - mid.z) > d;
+        if (!far(s, PATROL_START_CLEAR) || !far(sc, 90) || !far(this.depot.at, 60)) continue;
+        if (!this.blocks.every((b) => far(b.rb.at, 60)) || !mids.every((m) => far(m, PATROL_GAP))) continue;
+        if (beat.some((p) => Math.abs(p.x) > this.town.half - 30 || Math.abs(p.z) > this.town.half - 30)) continue;
+        mids.push(mid);
+        street.beats.push(beat);
+        if (!street.flagAt) street.flagAt = this.kerbside(beat, widths[i]);
+        const color = mids.length % 2 ? ARMY_TAN : ARMY_BLUE;
+        for (let k = 0; k < PATROL_MEN; k++) {
+          // Side by side across the street.
+          const off = (k - (PATROL_MEN - 1) / 2) * 1.4;
+          const path = beat.map((p, j) => {
+            const a = beat[Math.max(0, j - 1)], b = beat[Math.min(beat.length - 1, j + 1)];
+            const l = Math.hypot(b.x - a.x, b.z - a.z) || 1;
+            return new THREE.Vector2(p.x - ((b.z - a.z) / l) * off, p.z + ((b.x - a.x) / l) * off);
+          });
+          const t = new Trooper(this.world, path[0].x, path[0].y, 'enemy', color, ENEMY_HP);
+          this.scene.add(t.root);
+          this.byHandle.set(t.collider.handle, t);
+          this.enemies.patrol(t, path);
+          this.patrolMen.push(t);
+          street.men.push(t);
+        }
       }
+      if (!street.beats.length) continue;
+      patrols += street.beats.length;
+      this.streets.push(street);
+    }
+  }
+
+  /** "Ash Lane", "Ash Lane & Oak Way", "Ash Lane, Oak Way & Scott Road". */
+  private streetLabel(names: string[]): string {
+    return names.length < 2 ? names[0] : `${names.slice(0, -1).join(', ')} & ${names[names.length - 1]}`;
+  }
+
+  /** A spot on the pavement halfway along a beat, beside the road rather than in it (and clear of houses). */
+  private kerbside(beat: Pt[], width: number): Pt {
+    const i = Math.max(1, Math.floor(beat.length / 2));
+    const a = beat[i - 1], b = beat[i];
+    const l = Math.hypot(b.x - a.x, b.z - a.z) || 1;
+    const m = { x: (a.x + b.x) / 2, z: (a.z + b.z) / 2 };
+    for (const side of [1, -1]) {
+      const off = width / 2 + 1;
+      const q = { x: m.x - ((b.z - a.z) / l) * off * side, z: m.z + ((b.x - a.x) / l) * off * side };
+      if (this.buildings.clear(q, 0.6)) return q;
+    }
+    return m;
+  }
+
+  /** Our flag on a pole beside a street we've cleared: it runs up the pole, and the fireworks go off along the street. */
+  private streetCleared(st: Street): void {
+    st.cleared = true;
+    const done = this.streets.filter((x) => x.cleared).length;
+    const plural = st.name.includes('&');
+    this.hud.showBanner(`${st.name.toUpperCase()} ${plural ? 'ARE' : 'IS'} CLEAR!`, done === this.streets.length ? 'Every street in town is clear of patrols!' : `Our flag flies here. ${done} / ${this.streets.length} streets cleared of patrols`);
+    this.sound.music.stinger();
+    const spots = st.beats.flatMap((b) => [b[0], b[Math.floor(b.length / 2)], b[b.length - 1]]);
+    for (let i = 0; i < STREET_FIREWORKS; i++) {
+      const q = spots[Math.floor((i / STREET_FIREWORKS) * spots.length)];
+      this.fireworks.push({ at: this.time + i * 0.45, p: new THREE.Vector3(q.x, this.ground(q.x, q.z) + 12 + (i % 2) * 4, q.z) });
+    }
+    if (st.flagAt) {
+      const q = st.flagAt;
+      const g = this.ground(q.x, q.z);
+      const pole = new THREE.Mesh(STREET_POLE_GEO, plastic(0x6b4a2e));
+      pole.position.set(q.x, g + 3.25, q.z);
+      const flag = new THREE.Mesh(STREET_FLAG_GEO, streetFlagMaterial());
+      flag.position.set(q.x, g + 0.8, q.z);
+      flag.rotation.y = Math.random() * Math.PI * 2;
+      this.buildings.group.add(pole, flag);
+      st.flag = { mesh: flag, from: g + 0.8, to: g + 5.7, start: this.time };
+    }
+  }
+
+  /** Fireworks due to go off, and cleared streets' flags on their way up. */
+  private updateStreetRewards(): void {
+    for (let i = this.fireworks.length - 1; i >= 0; i--) {
+      if (this.fireworks[i].at > this.time) continue;
+      this.impacts.confetti(this.fireworks[i].p);
+      this.sound.play('uiConfirm', { volume: 0.35 });
+      this.fireworks.splice(i, 1);
+    }
+    for (const st of this.streets) {
+      const f = st.flag;
+      if (!f) continue;
+      const k = Math.min(1, (this.time - f.start) / STREET_FLAG_RISE);
+      f.mesh.position.y = f.from + (f.to - f.from) * (1 - (1 - k) * (1 - k));
+      if (k >= 1) st.flag = undefined;
     }
   }
 
@@ -1026,6 +1193,7 @@ export class TownGame {
   }
 
   private updateObjectives(dt: number): void {
+    for (const st of this.streets) if (!st.cleared && st.men.every((t) => t.down)) this.streetCleared(st);
     for (const b of this.blocks) {
       if (b.taken || this.standing(b.men) > CLEARED) continue;
       b.taken = true;
@@ -1143,6 +1311,7 @@ export class TownGame {
     this.updatePickups();
     this.depot.update(this.time);
     this.updateObjectives(dt);
+    this.updateStreetRewards();
     this.world.step();
 
     this.cam.update(this.player, dt);
@@ -1177,13 +1346,14 @@ export class TownGame {
     d.school = { x: sc.x, z: sc.z, taken: this.victoryAt !== null };
     d.pens = this.prisons.map((pr) => ({ x: pr.pen.at.x, z: pr.pen.at.z, freed: pr.freed }));
     d.depot = { x: this.depot.at.x, z: this.depot.at.z, stocked: this.depot.tables.some((tb) => tb.item.visible) };
+    d.streets = this.streets.map((st) => ({ lines: st.lines, cleared: st.cleared }));
     const p = one.position;
     this.mapView = { ...NO_MAP, playerX: p.x, playerZ: p.z, playerYaw: one.yaw };
   }
 
   // ---------- HUD ----------
 
-  private waypointTo(point: THREE.Vector3, label: string): HUDState['waypoint'] {
+  private waypointTo(point: THREE.Vector3, label: string, w: number, h: number): HUDState['waypoint'] {
     const view = point.clone().applyMatrix4(this.camera.matrixWorldInverse);
     let x = view.x;
     let y = view.y;
@@ -1201,7 +1371,19 @@ export class TownGame {
       x /= k;
       y /= k;
     }
-    return { x: ((x + 1) / 2) * window.innerWidth, y: ((1 - y) / 2) * window.innerHeight, onScreen, angle: Math.atan2(-y, x), label };
+    return { x: ((x + 1) / 2) * w, y: ((1 - y) / 2) * h, onScreen, angle: Math.atan2(-y, x), label };
+  }
+
+  /**
+   * The green marker to the supply depot, for whichever player still hasn't got all three upgrades
+   * from it (each player sees their own), until the school is cleared or they're standing there.
+   */
+  private depotWaypoint(w: number, h: number): HUDState['waypoint'] {
+    if (this.hud.paused || this.victoryAt !== null || this.schoolCleared || this.upgrades(this.kit) >= 3) return null;
+    const p = this.player.position, a = this.depot.at;
+    const d = Math.hypot(a.x - p.x, a.z - p.z);
+    if (d < 10) return null;
+    return this.waypointTo(new THREE.Vector3(a.x, this.ground(a.x, a.z) + 5, a.z), `UPGRADES ${Math.round(d)} m`, w, h);
   }
 
   /**
@@ -1210,7 +1392,7 @@ export class TownGame {
    * taken). The pen is the nearest one still holding our men; the roadblock is the next one down
    * the hill. When one kind runs out it's the other, and then the school (and its flagpole).
    */
-  private waypoint(): HUDState['waypoint'] {
+  private waypoint(w: number, h: number): HUDState['waypoint'] {
     if (this.hud.paused || this.victoryAt !== null) return null;
     const p = this.player.position;
     const next = this.blocks.find((b) => !b.taken);
@@ -1219,17 +1401,17 @@ export class TownGame {
     const taken = this.blocks.filter((b) => b.taken).length;
     if (pen && (!next || freed <= taken)) {
       const g = pen.pr.pen.gate;
-      return this.waypointTo(new THREE.Vector3(g.x, this.ground(g.x, g.z) + 4, g.z), `FREE ${pen.pr.captives.map((c) => c.name.toUpperCase()).join(' & ')} ${Math.round(pen.d)} m`);
+      return this.waypointTo(new THREE.Vector3(g.x, this.ground(g.x, g.z) + 4, g.z), `FREE ${pen.pr.captives.map((c) => c.name.toUpperCase()).join(' & ')} ${Math.round(pen.d)} m`, w, h);
     }
     if (next) {
       const a = next.rb.at;
-      return this.waypointTo(new THREE.Vector3(a.x, this.ground(a.x, a.z) + 6, a.z), `${next.name.toUpperCase()} ${Math.round(Math.hypot(a.x - p.x, a.z - p.z))} m`);
+      return this.waypointTo(new THREE.Vector3(a.x, this.ground(a.x, a.z) + 6, a.z), `${next.name.toUpperCase()} ${Math.round(Math.hypot(a.x - p.x, a.z - p.z))} m`, w, h);
     }
     const target = this.schoolCleared ? this.buildings.school.pole : (() => {
       const c = this.buildings.school.centre;
       return new THREE.Vector3(c.x, this.ground(c.x, c.z), c.z);
     })();
-    return this.waypointTo(target.clone().setY(target.y + 8), `${this.schoolCleared ? 'FLAGPOLE' : 'MAURICEWOOD PRIMARY'} ${Math.round(Math.hypot(target.x - p.x, target.z - p.z))} m`);
+    return this.waypointTo(target.clone().setY(target.y + 8), `${this.schoolCleared ? 'FLAGPOLE' : 'MAURICEWOOD PRIMARY'} ${Math.round(Math.hypot(target.x - p.x, target.z - p.z))} m`, w, h);
   }
 
   private objectives(): { label: string; done: boolean }[] {
@@ -1238,7 +1420,8 @@ export class TownGame {
     return [
       { label: `Break through the roadblocks on the way down (${taken} / ${this.blocks.length})`, done: taken === this.blocks.length },
       { label: `Free your squad from the enemy's pens (${this.prisons.filter((pr) => pr.freed).length} / ${this.prisons.length}) (optional)`, done: this.prisons.every((pr) => pr.freed) },
-      { label: `Grab the upgrades at the supply depot, south-west (${this.upgrades(this.kit)} / 3) (optional)`, done: this.upgrades(this.kit) === 3 },
+      { label: `Grab the upgrades at the supply depot, south-west: follow the green marker (${this.upgrades(this.kit)} / 3) (optional)`, done: this.upgrades(this.kit) === 3 },
+      { label: `Clear the streets of patrols (${this.streets.filter((st) => st.cleared).length} / ${this.streets.length}) (optional)`, done: this.streets.every((st) => st.cleared) },
       { label: `Clear Mauricewood Primary School (${this.schoolMen.length - left} / ${this.schoolMen.length} defenders)`, done: this.schoolCleared },
       { label: 'Raise our flag on the school flagpole', done: this.victoryAt !== null },
     ];
@@ -1258,7 +1441,7 @@ export class TownGame {
     } else if (this.depot.tables.some((tb) => tb.item.visible && Math.hypot(tb.at.x - p.x, tb.at.z - p.z) < 9)) {
       const missing = this.depot.tables.filter((tb) => Math.hypot(tb.at.x - p.x, tb.at.z - p.z) < 9 && this.upgrades(k) < 3).map((tb) => tb.kind).filter((u) => (u === 'rifle' ? k.gun !== 'rifle' : u === 'armour' ? !k.armour : !k.launcher));
       if (missing.length) prompt = `Walk up to a table to take the ${missing.map((u) => UPGRADE_NAME[u].toLowerCase()).join(', the ')}`;
-    } else if (this.time < 16) prompt = 'Bracken Wynd, on your own with just a pistol. Follow the golden marker down the hill. Off the route, the supply depot in the south-west corner (on your map) has an assault rifle, body armour and a grenade launcher';
+    } else if (this.time < 16) prompt = 'Bracken Wynd, on your own with just a pistol. Follow the golden marker down the hill. The green marker points to the supply depot in the south-west corner: an assault rifle, body armour and a grenade launcher';
     else if (!this.schoolCleared && this.upgrades(k) < 3 && Math.hypot(this.buildings.school.centre.x - p.x, this.buildings.school.centre.z - p.z) < 150) prompt = `Mauricewood Primary is dug in: two machine guns and ${this.schoolMen.length} men. You'll want the upgrades from the supply depot in the south-west corner first`;
     const height = Math.round(this.town.base + this.ground(p.x, p.z));
     const street = this.streetName(p);
@@ -1346,7 +1529,8 @@ export class TownGame {
       buddyMax: 0,
       cinematic: false,
       cinematicLabel: '',
-      waypoint: this.waypoint(),
+      waypoint: this.waypoint(localWidth, localHeight),
+      sideWaypoint: this.depotWaypoint(localWidth, localHeight),
       enemyBasesLeft: 0,
       enemyBasesTotal: 0,
       nearbyBase: null,
