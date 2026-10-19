@@ -30,9 +30,11 @@ const TITLE = 'DOWN THE HILL';
 const PENS = 4;
 const PEN_MEN = 2;
 /** Pens stand this far from the way down the hill (metres), and at least this far from each other. */
-const PEN_MIN = 110;
-const PEN_MAX = 340;
-const PEN_GAP = 170;
+const PEN_MIN = 45;
+const PEN_MAX = 140;
+const PEN_GAP = 110;
+/** The best distance off the route for a pen: a short detour down a side street. */
+const PEN_IDEAL = 80;
 /** Standing at a pen's gate this long lets them out. */
 const GATE_TIME = 1.5;
 const GATE_REACH = 2.2;
@@ -371,42 +373,56 @@ export class TownGame {
   }
 
   /**
-   * The enemy's prisoner pens: open ground well off the way down the hill (but near a road, so
-   * they can be reached), spread out from each other. Each holds two of our squad, by name, with
-   * four guards.
+   * The enemy's prisoner pens: open ground a short detour off the way down the hill (about 80 m,
+   * near a road so they can be reached), one beside each stretch of it: a fifth, two fifths, three
+   * fifths and four fifths of the way down. Each holds two of our squad, by name, with four guards.
    */
   private placePrisons(): void {
     const route = this.town.route;
+    const along = this.routeDistances();
+    const total = along[along.length - 1];
     const s = this.town.start, sc = this.buildings.school.centre;
-    const fromRoute = (p: Pt) => Math.min(...route.map((q) => Math.hypot(q.x - p.x, q.z - p.z)));
-    const spots: { p: Pt; road: Pt }[] = [];
+    // How far off the route a spot is, and how far down the route its nearest point is.
+    const onRoute = (p: Pt) => {
+      let best = Infinity, at = 0;
+      route.forEach((q, i) => {
+        const d = Math.hypot(q.x - p.x, q.z - p.z);
+        if (d < best) {
+          best = d;
+          at = along[i];
+        }
+      });
+      return { d: best, at };
+    };
+    const spots: { p: Pt; road: Pt; d: number; at: number }[] = [];
     const half = this.town.half - 40;
     for (let x = -half; x <= half; x += 12) {
       for (let z = -half; z <= half; z += 12) {
         const p = { x, z };
-        const d = fromRoute(p);
-        if (d < PEN_MIN || d > PEN_MAX || Math.hypot(p.x - s.x, p.z - s.z) < 120 || Math.hypot(p.x - sc.x, p.z - sc.z) < 140) continue;
+        const r = onRoute(p);
+        if (r.d < PEN_MIN || r.d > PEN_MAX || Math.hypot(p.x - s.x, p.z - s.z) < 60 || Math.hypot(p.x - sc.x, p.z - sc.z) < 90) continue;
+        // Not on top of a roadblock either.
+        if (this.blocks.some((b) => Math.hypot(b.rb.at.x - p.x, b.rb.at.z - p.z) < 40)) continue;
         const road = this.buildings.nearestRoad(p);
         if (!road || Math.hypot(road.x - p.x, road.z - p.z) < 9) continue;
         if (!this.buildings.openSpot(p, 7)) continue;
-        spots.push({ p, road });
+        spots.push({ p, road, d: r.d, at: r.at });
       }
     }
-    // Spread them out: each next one as far as it can be from the ones already chosen, starting with the one nearest the start.
+    // One per stretch of the route: the spot beside that stretch nearest the ideal detour, clear of the pens already placed.
     const chosen: { p: Pt; road: Pt }[] = [];
-    spots.sort((a, b) => Math.hypot(a.p.x - s.x, a.p.z - s.z) - Math.hypot(b.p.x - s.x, b.p.z - s.z));
-    if (spots.length) chosen.push(spots[0]);
-    while (chosen.length < PENS) {
-      let best: { p: Pt; road: Pt } | null = null, bestD = PEN_GAP;
+    for (let k = 0; k < PENS; k++) {
+      const target = (total * (k + 1)) / (PENS + 1);
+      let best: (typeof spots)[number] | null = null, bestScore = Infinity;
       for (const c of spots) {
-        const d = Math.min(...chosen.map((q) => Math.hypot(q.p.x - c.p.x, q.p.z - c.p.z)));
-        if (d > bestD) {
-          bestD = d;
+        if (chosen.some((q) => Math.hypot(q.p.x - c.p.x, q.p.z - c.p.z) < PEN_GAP)) continue;
+        const score = Math.abs(c.at - target) + Math.abs(c.d - PEN_IDEAL) * 2;
+        if (score < bestScore) {
+          bestScore = score;
           best = c;
         }
       }
-      if (!best) break;
-      chosen.push(best);
+      if (best) chosen.push(best);
     }
     const names = this.settings.buddyNames;
     chosen.forEach((c, i) => {
