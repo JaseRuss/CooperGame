@@ -648,13 +648,16 @@ export class Buildings {
     const posts: Pt[] = [];
     for (const a of this.town.areas) if (a.kind === 'court' || a.kind === 'lawn' || a.kind === 'yard') posts.push(centroid(a.pts));
     if (court) for (const q of court.pts) posts.push({ x: q.x + (cc.x - q.x) * 0.3, z: q.z + (cc.z - q.z) * 0.3 });
-    for (let i = 0; i < 16 && posts.length < 14; i++) {
-      const ang = (i / 16) * Math.PI * 2;
-      for (let r = 26; r < 45; r += 3) {
-        const q = { x: c.x + Math.cos(ang) * r, z: c.z + Math.sin(ang) * r };
-        if (this.clear(q, 1)) {
-          posts.push(q);
-          break;
+    // Two rings of them: one out round the grounds and one in close by the walls.
+    for (const [n, r0, r1, turn] of [[24, 26, 45, 0], [14, 14, 26, 0.5]]) {
+      for (let i = 0; i < n && posts.length < 34; i++) {
+        const ang = ((i + turn) / n) * Math.PI * 2;
+        for (let r = r0; r < r1; r += 3) {
+          const q = { x: c.x + Math.cos(ang) * r, z: c.z + Math.sin(ang) * r };
+          if (this.clear(q, 1)) {
+            posts.push(q);
+            break;
+          }
         }
       }
     }
